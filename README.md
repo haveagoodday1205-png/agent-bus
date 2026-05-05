@@ -92,7 +92,7 @@ curl -s http://127.0.0.1:8788/agents ^
 curl -s -X POST http://127.0.0.1:8788/route ^
   -H "content-type: application/json" ^
   -H "authorization: Bearer replace-with-a-long-random-token" ^
-  -d "{\"message\":\"修复 Node 测试并检查模型网关\",\"mode\":\"orchestrate\"}"
+  -d "{\"message\":\"Fix Node tests and check the model gateway\",\"mode\":\"orchestrate\"}"
 ```
 
 All gateway endpoints except `GET /health` require the configured bearer token. Edge nodes use the same token for:
@@ -212,7 +212,7 @@ The default `maxParallelAgents` is `1` because multiple adapters may share the s
 Use `route` to preview which machine would handle a task. This does not contact the remote agents.
 
 ```bash
-node server.mjs route "修复 Node 项目的测试失败，并检查模型网关是否可用" --mode orchestrate
+node server.mjs route "Fix a Node project test failure and check whether the model gateway is available" --mode orchestrate
 ```
 
 The current rule-based router is intentionally simple:

@@ -1,0 +1,18 @@
+{
+  "nodeId": "local-dev",
+  "gatewayUrl": "http://127.0.0.1:8788",
+  "token": "change-me",
+  "pollTimeoutMs": 25000,
+  "idleDelayMs": 1000,
+  "defaultTimeoutMs": 600000,
+  "agents": [
+    {
+      "id": "local-echo",
+      "kind": "echo",
+      "role": "executor",
+      "enabled": true,
+      "adapter": "echo",
+      "capabilities": ["shell", "files"]
+    }
+  ]
+}

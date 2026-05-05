@@ -1,0 +1,81 @@
+{
+  "host": "127.0.0.1",
+  "port": 8787,
+  "dataDir": "./data",
+  "sshPath": "C:/Windows/System32/OpenSSH/ssh.exe",
+  "sshViaPowerShell": true,
+  "defaults": {
+    "mode": "broadcast",
+    "timeoutMs": 600000,
+    "maxParallelAgents": 1,
+    "sshRetries": 2,
+    "sshRetryDelayMs": 1500,
+    "sshRetryBackoff": 1.5,
+    "sameHostDelayMs": 1000,
+    "sshOptions": ["LogLevel=ERROR"]
+  },
+  "agents": [
+    {
+      "id": "openclaw-edge",
+      "kind": "openclaw",
+      "role": "executor",
+      "enabled": true,
+      "transport": "ssh-command",
+      "host": "YOUR_OPENCLAW_HOST",
+      "user": "root",
+      "keyPath": "~/.ssh/openclaw_edge",
+      "sshRetries": 4,
+      "sshRetryDelayMs": 2500,
+      "sshRetryBackoff": 1.8,
+      "capabilities": ["shell", "files", "browser", "cron", "skills"],
+      "healthCommand": "openclaw gateway status",
+      "runCommand": "openclaw agent --json --message \"$AGENT_MESSAGE\""
+    },
+    {
+      "id": "hermes-edge",
+      "kind": "hermes",
+      "role": "researcher",
+      "enabled": true,
+      "transport": "ssh-command",
+      "host": "YOUR_HERMES_HOST",
+      "user": "root",
+      "keyPath": "~/.ssh/hermes_edge",
+      "sshRetries": 4,
+      "sshRetryDelayMs": 2500,
+      "sshRetryBackoff": 1.8,
+      "capabilities": ["skills", "memory", "shell", "webhook", "cron"],
+      "healthCommand": "test -x /root/.local/bin/hermes && /root/.local/bin/hermes --help 2>&1 | head -30",
+      "runCommand": "/root/.local/bin/hermes chat -q \"$AGENT_MESSAGE\" -Q"
+    },
+    {
+      "id": "codex-edge",
+      "kind": "codex",
+      "role": "coder",
+      "enabled": true,
+      "transport": "ssh-command",
+      "host": "YOUR_CODEX_HOST",
+      "user": "root",
+      "keyPath": "~/.ssh/codex_edge",
+      "capabilities": ["code", "review", "shell", "files"],
+      "healthCommand": "codex --help | head -40",
+      "runCommand": "codex exec \"$AGENT_MESSAGE\""
+    },
+    {
+      "id": "model-gateway-edge",
+      "kind": "gateway",
+      "role": "model-gateway",
+      "enabled": true,
+      "transport": "ssh-command",
+      "host": "YOUR_MODEL_GATEWAY_HOST",
+      "user": "root",
+      "keyPath": "~/.ssh/model_gateway_edge",
+      "sshRetries": 4,
+      "sshRetryDelayMs": 2500,
+      "sshRetryBackoff": 1.8,
+      "sshRetryOnEmptyFailure": true,
+      "capabilities": ["sub2api", "cliproxyapi", "models"],
+      "healthCommand": "fail=0; printf 'sub2api='; code=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || echo curl_failed); echo \"$code\"; [ \"$code\" = \"200\" ] || fail=1; printf 'cliproxyapi='; code=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8317/management.html || echo curl_failed); echo \"$code\"; [ \"$code\" = \"200\" ] || fail=1; exit $fail",
+      "runCommand": "printf '%s\\n' \"model-gateway-edge is a model/API gateway adapter. It does not execute free-form agent tasks yet.\""
+    }
+  ]
+}

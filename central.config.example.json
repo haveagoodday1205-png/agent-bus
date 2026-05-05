@@ -1,0 +1,37 @@
+{
+  "host": "127.0.0.1",
+  "port": 8788,
+  "dataDir": "./data/central",
+  "token": "change-me",
+  "defaults": {
+    "mode": "orchestrate",
+    "pollTimeoutMs": 25000
+  },
+  "modelRouter": {
+    "enabled": true,
+    "defaultBackend": "sub2api-178",
+    "defaultModel": "gpt-4o-mini",
+    "backends": [
+      {
+        "id": "sub2api-178",
+        "enabled": true,
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "apiKeyEnv": "SUB2API_API_KEY",
+        "models": ["gpt-4o-mini", "gpt-4.1", "gpt-5"],
+        "modelAliases": {
+          "agent-bus-default": "gpt-4o-mini"
+        },
+        "timeoutSeconds": 600
+      },
+      {
+        "id": "cliproxyapi-178",
+        "enabled": false,
+        "baseUrl": "http://127.0.0.1:8317/v1",
+        "apiKeyEnv": "CLIPROXY_API_KEY",
+        "models": ["claude-sonnet", "gemini-pro"],
+        "modelAliases": {},
+        "timeoutSeconds": 600
+      }
+    ]
+  }
+}

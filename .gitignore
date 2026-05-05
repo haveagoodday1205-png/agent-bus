@@ -1,0 +1,26 @@
+# Local config and secrets
+.env
+.env.*
+!.env.example
+central.config.json
+edge.config.json
+config.json
+*.local.json
+
+# Runtime data
+data/
+*.log
+*.pid
+
+# Deployment bundles
+*.tgz
+*.zip
+
+# Dependencies and caches
+node_modules/
+.DS_Store
+Thumbs.db
+
+# Local deployment notes that may contain IPs, domains, or tokens
+LOCAL_DEPLOYMENT.md
+deployment.local.md

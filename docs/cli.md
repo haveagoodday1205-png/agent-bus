@@ -264,13 +264,16 @@ The current CLI runs anywhere Node.js 20+ runs:
 - macOS Intel
 - macOS Apple Silicon
 
-Build a portable release locally:
+Verify and build a portable release locally:
 
 ```bash
+npm run portable:check
 npm run bundle -- --archive
 ```
 
-That writes:
+`portable:check` builds into a temporary directory, verifies the manifest/checksums, rejects private/build paths, extracts the tarball, and runs the bundled launcher without model calls.
+
+A release build writes:
 
 - `dist/agent-bus-vX.Y.Z-portable/`
 - `dist/agent-bus-vX.Y.Z-portable.tar.gz`

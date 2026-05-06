@@ -30,8 +30,8 @@ python3 -m py_compile central_gateway.py edge_node.py
 4. If a change affects packaging or first-run setup, also verify:
 
 ```bash
-npm pack --dry-run
-npm run bundle -- --archive
+npm run pack:check
+npm run portable:check
 ```
 
 5. Document the user-facing path in `README.md`, `docs/cli.md`, or a focused doc under `docs/`. Avoid burying required setup only in PR comments.

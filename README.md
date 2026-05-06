@@ -58,6 +58,7 @@ Contributors can verify the npm artifact before publishing or tagging:
 
 ```bash
 npm run pack:check
+npm run portable:check
 npm run bundle -- --archive
 ```
 

@@ -60,6 +60,8 @@ jobs:
           node agent-bus.mjs probe --config /tmp/edge.config.json
       - name: NPM package smoke
         run: npm run pack:check
+      - name: Portable release smoke
+        run: npm run portable:check
       - name: Offline room smoke
         run: npm run smoke:offline -- --json
       - name: Full smoke

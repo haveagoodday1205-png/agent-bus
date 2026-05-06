@@ -148,6 +148,8 @@ Copy one edge config onto each machine and run `edge-node.mjs connect --config .
 Each edge node sends:
 
 - `AGENT_MESSAGE`: task text
+- `AGENT_MESSAGE_FILE`: path to a UTF-8 file containing the full task text
+- `AGENT_MESSAGE_BYTES`: UTF-8 byte length of the full task text
 - `AGENT_RUN_ID`: run id
 - `AGENT_THREAD_ID`: stable thread id when the task belongs to a thread
 - `AGENT_ROOM_ID`: stable room id when the task belongs to a room
@@ -156,7 +158,7 @@ Each edge node sends:
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
 
-The default OpenClaw wrapper passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, so repeated calls by the same agent inside the same room/thread can reuse upstream prompt-cache state when the configured model gateway supports it. It also starts the message with a stable Agent Bus envelope so OpenClaw does not prepend a changing timestamp before the cacheable prompt prefix.
+For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, and starts the message with a stable Agent Bus envelope so OpenClaw does not prepend a changing timestamp before the cacheable prompt prefix.
 
 The edge node streams stdout/stderr events back to the gateway, then posts a final run result.
 

@@ -3,6 +3,9 @@ set -euo pipefail
 
 agent_id="${OPENCLAW_AGENT_ID:-main}"
 message="${AGENT_MESSAGE:-}"
+if [ -n "${AGENT_MESSAGE_FILE:-}" ] && [ -r "$AGENT_MESSAGE_FILE" ]; then
+  message="$(cat "$AGENT_MESSAGE_FILE")"
+fi
 session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
 timestamp_prefix="${AGENT_BUS_OPENCLAW_TIMESTAMP_PREFIX:-[Agent Bus 2000-01-01 00:00 UTC; cache-stable envelope, not current time]}"
 

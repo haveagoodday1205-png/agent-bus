@@ -3,9 +3,11 @@ import json
 import hashlib
 import os
 import random
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -274,12 +276,18 @@ def now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def agent_runtime_env(config, agent, task):
+MAX_ENV_MESSAGE_BYTES = 24 * 1024
+
+
+def agent_runtime_env(config, agent, task, message_file=""):
     thread_id = str(task.get("thread_id") or "")
     room_id = str(task.get("room_id") or "")
+    message = str(task.get("message", ""))
     cache_key = agent_cache_key(agent, task, room_id or thread_id or task.get("run_id") or "")
     return {
-        "AGENT_MESSAGE": task.get("message", ""),
+        "AGENT_MESSAGE": env_safe_message(message),
+        "AGENT_MESSAGE_FILE": message_file,
+        "AGENT_MESSAGE_BYTES": str(len(message.encode("utf-8"))),
         "AGENT_RUN_ID": task.get("run_id", ""),
         "AGENT_THREAD_ID": thread_id,
         "AGENT_ROOM_ID": room_id,
@@ -288,6 +296,18 @@ def agent_runtime_env(config, agent, task):
         "AGENT_ID": agent["id"],
         "EDGE_NODE_ID": config["nodeId"],
     }
+
+
+def env_safe_message(message):
+    return message if len(message.encode("utf-8")) <= MAX_ENV_MESSAGE_BYTES else ""
+
+
+def write_task_message_file(message):
+    temp_dir = tempfile.mkdtemp(prefix="agent-bus-msg-")
+    file_path = os.path.join(temp_dir, "message.txt")
+    with open(file_path, "w", encoding="utf-8") as handle:
+        handle.write(message)
+    return temp_dir, file_path
 
 
 def agent_cache_key(agent, task, scope_id):
@@ -313,35 +333,39 @@ def bounded_cache_key(value):
 
 
 def run_command(config, agent, task, command, emit=True):
+    message_dir, message_file = write_task_message_file(str(task.get("message", "")))
     env = os.environ.copy()
-    env.update(agent_runtime_env(config, agent, task))
-    proc = subprocess.Popen(
-        command,
-        shell=True,
-        cwd=agent.get("cwd") or config.get("cwd") or os.getcwd(),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
     try:
-        stdout, stderr = proc.communicate(timeout=(int(agent.get("timeoutMs", config["defaultTimeoutMs"])) / 1000))
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        stdout, stderr = proc.communicate()
-        stderr = (stderr or "") + f"\nTimed out after {agent.get('timeoutMs', config['defaultTimeoutMs'])}ms"
-        return {"status": "failed", "exit_code": 124, "stdout": stdout or "", "stderr": stderr.strip()}
-    if emit and stdout:
-        event(config, task, {"type": "run.output", "stream": "stdout", "text": stdout})
-    if emit and stderr:
-        event(config, task, {"type": "run.output", "stream": "stderr", "text": stderr})
-    return {
-        "status": "completed" if proc.returncode == 0 else "failed",
-        "exit_code": proc.returncode,
-        "stdout": stdout or "",
-        "stderr": stderr or "",
-        "summary": (stdout or "").strip()[:2000],
-    }
+        env.update(agent_runtime_env(config, agent, task, message_file))
+        proc = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=agent.get("cwd") or config.get("cwd") or os.getcwd(),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=(int(agent.get("timeoutMs", config["defaultTimeoutMs"])) / 1000))
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            stderr = (stderr or "") + f"\nTimed out after {agent.get('timeoutMs', config['defaultTimeoutMs'])}ms"
+            return {"status": "failed", "exit_code": 124, "stdout": stdout or "", "stderr": stderr.strip()}
+        if emit and stdout:
+            event(config, task, {"type": "run.output", "stream": "stdout", "text": stdout})
+        if emit and stderr:
+            event(config, task, {"type": "run.output", "stream": "stderr", "text": stderr})
+        return {
+            "status": "completed" if proc.returncode == 0 else "failed",
+            "exit_code": proc.returncode,
+            "stdout": stdout or "",
+            "stderr": stderr or "",
+            "summary": (stdout or "").strip()[:2000],
+        }
+    finally:
+        shutil.rmtree(message_dir, ignore_errors=True)
 
 
 def event(config, task, payload):

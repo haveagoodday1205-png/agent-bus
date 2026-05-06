@@ -325,12 +325,17 @@ function mergeHealth(current, next) {
   return { ...(current || {}), ...(next || {}) };
 }
 
-function agentRuntimeEnv(config, agent, task) {
+const MAX_ENV_MESSAGE_BYTES = 24 * 1024;
+
+function agentRuntimeEnv(config, agent, task, messageFile = "") {
   const threadId = String(task.thread_id || "");
   const roomId = String(task.room_id || "");
+  const message = String(task.message || "");
   const cacheKey = agentCacheKey(agent, task, roomId || threadId || task.run_id || "");
   return {
-    AGENT_MESSAGE: task.message || "",
+    AGENT_MESSAGE: envSafeMessage(message),
+    AGENT_MESSAGE_FILE: messageFile,
+    AGENT_MESSAGE_BYTES: String(Buffer.byteLength(message, "utf8")),
     AGENT_RUN_ID: task.run_id || "",
     AGENT_THREAD_ID: threadId,
     AGENT_ROOM_ID: roomId,
@@ -338,6 +343,26 @@ function agentRuntimeEnv(config, agent, task) {
     AGENT_SESSION_ID: cacheKey,
     AGENT_ID: agent.id,
     EDGE_NODE_ID: config.nodeId
+  };
+}
+
+function envSafeMessage(message) {
+  return Buffer.byteLength(message, "utf8") <= MAX_ENV_MESSAGE_BYTES ? message : "";
+}
+
+function writeTaskMessageFile(message) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-msg-"));
+  const file = path.join(dir, "message.txt");
+  fs.writeFileSync(file, message, "utf8");
+  return {
+    file,
+    cleanup: () => {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup only.
+      }
+    }
   };
 }
 
@@ -366,15 +391,26 @@ function boundedCacheKey(value) {
 function spawnCommand(config, agent, task, commandText, options = {}) {
   return new Promise((resolve) => {
     const timeoutMs = Number(agent.timeoutMs || config.defaultTimeoutMs || 600000);
-    const child = spawn(commandText, {
-      shell: true,
-      windowsHide: true,
-      cwd: resolvePath(agent.cwd || config.cwd || process.cwd(), path.dirname(configPath)),
-      env: {
-        ...process.env,
-        ...agentRuntimeEnv(config, agent, task)
-      }
-    });
+    const messageFile = writeTaskMessageFile(String(task.message || ""));
+    const finish = (result) => {
+      messageFile.cleanup();
+      resolve(result);
+    };
+    let child;
+    try {
+      child = spawn(commandText, {
+        shell: true,
+        windowsHide: true,
+        cwd: resolvePath(agent.cwd || config.cwd || process.cwd(), path.dirname(configPath)),
+        env: {
+          ...process.env,
+          ...agentRuntimeEnv(config, agent, task, messageFile.file)
+        }
+      });
+    } catch (err) {
+      finish({ status: "error", exit_code: 1, stdout: "", stderr: err.stack || err.message || String(err) });
+      return;
+    }
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -382,7 +418,7 @@ function spawnCommand(config, agent, task, commandText, options = {}) {
       if (settled) return;
       settled = true;
       child.kill("SIGTERM");
-      resolve({
+      finish({
         status: "failed",
         exit_code: 124,
         stdout,
@@ -404,13 +440,13 @@ function spawnCommand(config, agent, task, commandText, options = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ status: "error", exit_code: 1, stdout, stderr: err.message });
+      finish({ status: "error", exit_code: 1, stdout, stderr: err.message });
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({
+      finish({
         status: code === 0 ? "completed" : "failed",
         exit_code: code ?? 1,
         stdout,

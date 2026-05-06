@@ -172,7 +172,7 @@ async function main() {
   assert(chat.choices?.[0]?.message?.content === "mock: hello smoke test", "chat completion did not route through mock backend");
 
   const envDumpScript = path.join(tempDir, "env-dump.mjs");
-  fs.writeFileSync(envDumpScript, `const keys = ["AGENT_MESSAGE", "AGENT_RUN_ID", "AGENT_THREAD_ID", "AGENT_ROOM_ID", "AGENT_CACHE_KEY", "AGENT_SESSION_ID", "AGENT_ID", "EDGE_NODE_ID"];\nconsole.log(JSON.stringify(Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]))));\n`);
+  fs.writeFileSync(envDumpScript, `import fs from "node:fs";\nconst keys = ["AGENT_MESSAGE", "AGENT_MESSAGE_FILE", "AGENT_MESSAGE_BYTES", "AGENT_RUN_ID", "AGENT_THREAD_ID", "AGENT_ROOM_ID", "AGENT_CACHE_KEY", "AGENT_SESSION_ID", "AGENT_ID", "EDGE_NODE_ID"];\nconst env = Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]));\nconst file = env.AGENT_MESSAGE_FILE;\nconst fileText = file && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";\nconsole.log(JSON.stringify({ ...env, AGENT_MESSAGE_FILE_TEXT_LEN: fileText.length, AGENT_MESSAGE_FILE_TEXT_PREFIX: fileText.slice(0, 64) }));\n`);
   const edgeConfig = path.join(tempDir, "edge-env.config.json");
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "env-smoke-node",
@@ -209,6 +209,10 @@ async function main() {
   assert(envRun.status === "completed", "edge env smoke run did not complete");
   const envOut = JSON.parse(envRun.stdout.trim());
   assert(envOut.AGENT_MESSAGE === "check cache env", "edge env did not include AGENT_MESSAGE");
+  assert(envOut.AGENT_MESSAGE_FILE, "edge env did not include AGENT_MESSAGE_FILE");
+  assert(envOut.AGENT_MESSAGE_BYTES === String("check cache env".length), "edge env did not include AGENT_MESSAGE_BYTES");
+  assert(envOut.AGENT_MESSAGE_FILE_TEXT_LEN === "check cache env".length, "edge message file did not contain the task text");
+  assert(envOut.AGENT_MESSAGE_FILE_TEXT_PREFIX === "check cache env", "edge message file text was wrong");
   assert(envOut.AGENT_RUN_ID === envRun.id, "edge env did not include AGENT_RUN_ID");
   assert(envOut.AGENT_THREAD_ID === envThread.id, "edge env did not include AGENT_THREAD_ID");
   assert(envOut.AGENT_ROOM_ID === "", "edge env should leave AGENT_ROOM_ID empty for normal threads");
@@ -217,6 +221,30 @@ async function main() {
   assert(envOut.AGENT_CACHE_KEY === `agent-bus-env-agent-${envThread.id}`, "edge env did not build a stable AGENT_CACHE_KEY");
   assert(envOut.AGENT_SESSION_ID === envOut.AGENT_CACHE_KEY, "edge env did not mirror cache key as session id");
   if (!edge.killed) edge.kill("SIGTERM");
+
+  const largeEdge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
+  await waitForAgent("env-agent", token);
+  const largeMessage = `large-message-${"x".repeat(50000)}`;
+  const largeThread = await requestJson("http://127.0.0.1:8788/threads", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      message: largeMessage,
+      agents: ["env-agent"],
+      mode: "broadcast"
+    })
+  });
+  const largeRun = await waitForRun(largeThread.runs?.[0]?.id, token);
+  assert(largeRun.status === "completed", "large edge env smoke run did not complete");
+  const largeOut = JSON.parse(largeRun.stdout.trim());
+  assert(largeOut.AGENT_MESSAGE === "", "large edge env should not copy huge messages into AGENT_MESSAGE");
+  assert(largeOut.AGENT_MESSAGE_BYTES === String(Buffer.byteLength(largeMessage, "utf8")), "large edge env did not report AGENT_MESSAGE_BYTES");
+  assert(largeOut.AGENT_MESSAGE_FILE_TEXT_LEN === largeMessage.length, "large edge message file did not contain the full task text");
+  assert(largeOut.AGENT_MESSAGE_FILE_TEXT_PREFIX === largeMessage.slice(0, 64), "large edge message file prefix was wrong");
+  if (!largeEdge.killed) largeEdge.kill("SIGTERM");
 
   const proxy = start(node, ["windows-openai-proxy.mjs"], {
     AGENT_BUS_UPSTREAM: "http://127.0.0.1:8788",

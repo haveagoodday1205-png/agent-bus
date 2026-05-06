@@ -35,6 +35,8 @@ Edge runners derive a stable `AGENT_CACHE_KEY` for each agent plus room/thread s
 
 Room prompts keep stable instructions before volatile wake reasons and recent messages. The OpenClaw wrapper also uses a stable Agent Bus message envelope to prevent OpenClaw from injecting a per-minute timestamp ahead of the cacheable prefix.
 
+Task text is written to `AGENT_MESSAGE_FILE` before command execution. Small messages are also copied into `AGENT_MESSAGE`; large messages can use the file path without hitting operating-system environment-size limits.
+
 ## Model Plane
 
 The central gateway exposes OpenAI-compatible endpoints:

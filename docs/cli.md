@@ -52,6 +52,8 @@ The machine now polls the central gateway and can receive tasks. It does not nee
 Edge commands receive task metadata in environment variables:
 
 - `AGENT_MESSAGE`
+- `AGENT_MESSAGE_FILE`
+- `AGENT_MESSAGE_BYTES`
 - `AGENT_RUN_ID`
 - `AGENT_THREAD_ID`
 - `AGENT_ROOM_ID`
@@ -61,6 +63,8 @@ Edge commands receive task metadata in environment variables:
 - `EDGE_NODE_ID`
 
 `AGENT_CACHE_KEY` and `AGENT_SESSION_ID` are stable for the same agent inside the same room or thread, which lets adapters such as OpenClaw pass a durable session id to model gateways that support prompt caching.
+
+Adapters should prefer `AGENT_MESSAGE_FILE` when it is set. Very large tasks may leave `AGENT_MESSAGE` empty so the edge process can avoid OS environment-size limits.
 
 ## Pairing
 

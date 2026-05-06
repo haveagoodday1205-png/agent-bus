@@ -149,8 +149,14 @@ Each edge node sends:
 
 - `AGENT_MESSAGE`: task text
 - `AGENT_RUN_ID`: run id
+- `AGENT_THREAD_ID`: stable thread id when the task belongs to a thread
+- `AGENT_ROOM_ID`: stable room id when the task belongs to a room
+- `AGENT_CACHE_KEY`: stable per-agent cache key based on the room or thread id
+- `AGENT_SESSION_ID`: same value as `AGENT_CACHE_KEY`, for CLIs that expose session ids
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
+
+The default OpenClaw wrapper passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, so repeated calls by the same agent inside the same room/thread can reuse upstream prompt-cache state when the configured model gateway supports it.
 
 The edge node streams stdout/stderr events back to the gateway, then posts a final run result.
 

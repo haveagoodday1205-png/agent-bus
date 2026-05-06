@@ -49,6 +49,19 @@ agent-bus connect --config edge.config.json
 
 The machine now polls the central gateway and can receive tasks. It does not need an inbound public port.
 
+Edge commands receive task metadata in environment variables:
+
+- `AGENT_MESSAGE`
+- `AGENT_RUN_ID`
+- `AGENT_THREAD_ID`
+- `AGENT_ROOM_ID`
+- `AGENT_CACHE_KEY`
+- `AGENT_SESSION_ID`
+- `AGENT_ID`
+- `EDGE_NODE_ID`
+
+`AGENT_CACHE_KEY` and `AGENT_SESSION_ID` are stable for the same agent inside the same room or thread, which lets adapters such as OpenClaw pass a durable session id to model gateways that support prompt caching.
+
 ## Pairing
 
 Pairing is the faster onboarding path for a new remote assistant node. The central/admin side creates a short one-time code:

@@ -171,6 +171,53 @@ async function main() {
   });
   assert(chat.choices?.[0]?.message?.content === "mock: hello smoke test", "chat completion did not route through mock backend");
 
+  const envDumpScript = path.join(tempDir, "env-dump.mjs");
+  fs.writeFileSync(envDumpScript, `const keys = ["AGENT_MESSAGE", "AGENT_RUN_ID", "AGENT_THREAD_ID", "AGENT_ROOM_ID", "AGENT_CACHE_KEY", "AGENT_SESSION_ID", "AGENT_ID", "EDGE_NODE_ID"];\nconsole.log(JSON.stringify(Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]))));\n`);
+  const edgeConfig = path.join(tempDir, "edge-env.config.json");
+  fs.writeFileSync(edgeConfig, `${JSON.stringify({
+    nodeId: "env-smoke-node",
+    gatewayUrl: "http://127.0.0.1:8788",
+    token,
+    pollTimeoutMs: 25000,
+    idleDelayMs: 100,
+    defaultTimeoutMs: 15000,
+    agents: [{
+      id: "env-agent",
+      kind: "test",
+      role: "worker",
+      enabled: true,
+      adapter: "command",
+      capabilities: ["test"],
+      runCommand: `${quoteCommandArg(node)} ${quoteCommandArg(envDumpScript)}`
+    }]
+  }, null, 2)}\n`);
+  const edge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
+  await waitForAgent("env-agent", token);
+  const envThread = await requestJson("http://127.0.0.1:8788/threads", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      message: "check cache env",
+      agents: ["env-agent"],
+      mode: "broadcast"
+    })
+  });
+  const envRun = await waitForRun(envThread.runs?.[0]?.id, token);
+  assert(envRun.status === "completed", "edge env smoke run did not complete");
+  const envOut = JSON.parse(envRun.stdout.trim());
+  assert(envOut.AGENT_MESSAGE === "check cache env", "edge env did not include AGENT_MESSAGE");
+  assert(envOut.AGENT_RUN_ID === envRun.id, "edge env did not include AGENT_RUN_ID");
+  assert(envOut.AGENT_THREAD_ID === envThread.id, "edge env did not include AGENT_THREAD_ID");
+  assert(envOut.AGENT_ROOM_ID === "", "edge env should leave AGENT_ROOM_ID empty for normal threads");
+  assert(envOut.AGENT_ID === "env-agent", "edge env did not include AGENT_ID");
+  assert(envOut.EDGE_NODE_ID === "env-smoke-node", "edge env did not include EDGE_NODE_ID");
+  assert(envOut.AGENT_CACHE_KEY === `agent-bus-env-agent-${envThread.id}`, "edge env did not build a stable AGENT_CACHE_KEY");
+  assert(envOut.AGENT_SESSION_ID === envOut.AGENT_CACHE_KEY, "edge env did not mirror cache key as session id");
+  if (!edge.killed) edge.kill("SIGTERM");
+
   const proxy = start(node, ["windows-openai-proxy.mjs"], {
     AGENT_BUS_UPSTREAM: "http://127.0.0.1:8788",
     AGENT_BUS_TOKEN: token,
@@ -259,6 +306,31 @@ async function waitForJson(url, timeoutMs = 10000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
+async function waitForAgent(agentId, token, timeoutMs = 10000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const agents = await requestJson("http://127.0.0.1:8788/agents", {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (agents.some((agent) => agent.id === agentId)) return;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for agent ${agentId}`);
+}
+
+async function waitForRun(runId, token, timeoutMs = 15000) {
+  assert(runId, "missing run id");
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const run = await requestJson(`http://127.0.0.1:8788/runs/${runId}`, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (["completed", "failed", "error"].includes(run.status)) return run;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for run ${runId}`);
+}
+
 async function requestJson(url, options = {}) {
   const res = await fetch(url, options);
   const text = await res.text();
@@ -288,4 +360,10 @@ async function assertRequestFails(name, fn) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function quoteCommandArg(value) {
+  const text = String(value || "");
+  if (process.platform === "win32") return `"${text.replace(/"/g, '""')}"`;
+  return `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
 }

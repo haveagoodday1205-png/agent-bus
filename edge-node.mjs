@@ -325,6 +325,44 @@ function mergeHealth(current, next) {
   return { ...(current || {}), ...(next || {}) };
 }
 
+function agentRuntimeEnv(config, agent, task) {
+  const threadId = String(task.thread_id || "");
+  const roomId = String(task.room_id || "");
+  const cacheKey = agentCacheKey(agent, task, roomId || threadId || task.run_id || "");
+  return {
+    AGENT_MESSAGE: task.message || "",
+    AGENT_RUN_ID: task.run_id || "",
+    AGENT_THREAD_ID: threadId,
+    AGENT_ROOM_ID: roomId,
+    AGENT_CACHE_KEY: cacheKey,
+    AGENT_SESSION_ID: cacheKey,
+    AGENT_ID: agent.id,
+    EDGE_NODE_ID: config.nodeId
+  };
+}
+
+function agentCacheKey(agent, task, scopeId) {
+  const agentPart = sanitizeCacheKeyPart(agent.id || task.agent_id || "agent");
+  const scopePart = sanitizeCacheKeyPart(scopeId || task.run_id || "local");
+  return boundedCacheKey(`agent-bus-${agentPart}-${scopePart}`);
+}
+
+function sanitizeCacheKeyPart(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return cleaned || "unknown";
+}
+
+function boundedCacheKey(value) {
+  const text = String(value || "agent-bus-unknown");
+  if (text.length <= 180) return text;
+  const hash = crypto.createHash("sha256").update(text).digest("hex").slice(0, 12);
+  return `${text.slice(0, 167)}-${hash}`;
+}
+
 function spawnCommand(config, agent, task, commandText, options = {}) {
   return new Promise((resolve) => {
     const timeoutMs = Number(agent.timeoutMs || config.defaultTimeoutMs || 600000);
@@ -334,10 +372,7 @@ function spawnCommand(config, agent, task, commandText, options = {}) {
       cwd: resolvePath(agent.cwd || config.cwd || process.cwd(), path.dirname(configPath)),
       env: {
         ...process.env,
-        AGENT_MESSAGE: task.message || "",
-        AGENT_RUN_ID: task.run_id || "",
-        AGENT_ID: agent.id,
-        EDGE_NODE_ID: config.nodeId
+        ...agentRuntimeEnv(config, agent, task)
       }
     });
     let stdout = "";

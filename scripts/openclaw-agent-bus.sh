@@ -3,6 +3,7 @@ set -euo pipefail
 
 agent_id="${OPENCLAW_AGENT_ID:-main}"
 message="${AGENT_MESSAGE:-}"
+session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
 
 prompt=$(cat <<EOF
 Agent Bus request.
@@ -18,7 +19,12 @@ EOF
 raw_file="$(mktemp)"
 trap 'rm -f "$raw_file"' EXIT
 
-openclaw agent --agent "$agent_id" --json --message "$prompt" < /dev/null > "$raw_file"
+args=(agent --agent "$agent_id" --json --message "$prompt")
+if [ -n "$session_id" ]; then
+  args+=(--session-id "$session_id")
+fi
+
+openclaw "${args[@]}" < /dev/null > "$raw_file"
 
 if command -v jq >/dev/null 2>&1; then
   text="$(jq -r '[.result.payloads[]?.text] | map(select(. != null and . != "")) | join("\n")' "$raw_file")"

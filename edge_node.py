@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import hashlib
 import os
 import random
 import socket
@@ -273,14 +274,47 @@ def now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def run_command(config, agent, task, command, emit=True):
-    env = os.environ.copy()
-    env.update({
+def agent_runtime_env(config, agent, task):
+    thread_id = str(task.get("thread_id") or "")
+    room_id = str(task.get("room_id") or "")
+    cache_key = agent_cache_key(agent, task, room_id or thread_id or task.get("run_id") or "")
+    return {
         "AGENT_MESSAGE": task.get("message", ""),
         "AGENT_RUN_ID": task.get("run_id", ""),
+        "AGENT_THREAD_ID": thread_id,
+        "AGENT_ROOM_ID": room_id,
+        "AGENT_CACHE_KEY": cache_key,
+        "AGENT_SESSION_ID": cache_key,
         "AGENT_ID": agent["id"],
         "EDGE_NODE_ID": config["nodeId"],
-    })
+    }
+
+
+def agent_cache_key(agent, task, scope_id):
+    agent_part = sanitize_cache_key_part(agent.get("id") or task.get("agent_id") or "agent")
+    scope_part = sanitize_cache_key_part(scope_id or task.get("run_id") or "local")
+    return bounded_cache_key(f"agent-bus-{agent_part}-{scope_part}")
+
+
+def sanitize_cache_key_part(value):
+    cleaned = "".join(char if char.isalnum() or char in "._-" else "-" for char in str(value or "").strip())
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    cleaned = cleaned.strip("-")
+    return cleaned or "unknown"
+
+
+def bounded_cache_key(value):
+    text = str(value or "agent-bus-unknown")
+    if len(text) <= 180:
+        return text
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return f"{text[:167]}-{digest}"
+
+
+def run_command(config, agent, task, command, emit=True):
+    env = os.environ.copy()
+    env.update(agent_runtime_env(config, agent, task))
     proc = subprocess.Popen(
         command,
         shell=True,

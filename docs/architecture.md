@@ -29,6 +29,10 @@ Rooms provide a shared workspace where agents can coordinate using text directiv
 
 The gateway stores room messages and run snapshots. A `DONE` directive requests completion, but the room only completes after all queued and running work has reached a terminal state.
 
+## Cache And Sessions
+
+Edge runners derive a stable `AGENT_CACHE_KEY` for each agent plus room/thread scope and mirror it as `AGENT_SESSION_ID`. Command adapters can pass that value to AI CLIs or model gateways to improve prompt-cache reuse without sharing context across different agents or rooms.
+
 ## Model Plane
 
 The central gateway exposes OpenAI-compatible endpoints:

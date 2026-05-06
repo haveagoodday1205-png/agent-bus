@@ -32,6 +32,7 @@
     "mock:model": "node mock-openai-backend.mjs",
     "windows:proxy": "node windows-openai-proxy.mjs",
     "smoke": "node smoke-test.mjs",
+    "demo:local": "node scripts/demo-local.mjs",
     "bundle": "node scripts/make-portable-release.mjs",
     "run": "node server.mjs run",
     "route": "node server.mjs route",

@@ -20,6 +20,12 @@ Run the local smoke test:
 npm run smoke
 ```
 
+Run the local demo:
+
+```bash
+npm run demo:local
+```
+
 Install the CLI from a checkout:
 
 ```bash
@@ -419,6 +425,7 @@ Health checks are stored in `runs.jsonl` too. Stored stdout/stderr and snapshots
 - [Architecture](docs/architecture.md)
 - [AI-to-AI Bus](docs/ai-to-ai.md)
 - [CLI](docs/cli.md)
+- [Local Demo](docs/demo-local.md)
 - [Roadmap](docs/roadmap.md)
 - [Deployment](docs/deployment.md)
 - [Community and Growth](docs/community.md)

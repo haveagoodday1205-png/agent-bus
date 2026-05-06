@@ -44,7 +44,7 @@ Use a machine as a remote assistant node:
 agent-bus detect
 agent-bus init edge --auto --out edge.config.json
 # edit gatewayUrl, edge/admin token, pingUrl, and runCommand if needed
-agent-bus doctor --config edge.config.json
+agent-bus doctor --config edge.config.json   # add --json for CI/setup automation
 agent-bus connect --config edge.config.json
 ```
 

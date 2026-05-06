@@ -150,7 +150,7 @@ Usage:
   agent-bus openclaw prepare [--config ~/.openclaw/openclaw.json] [--workspace ./openclaw-workspace]
   agent-bus serve --config central.config.json
   agent-bus connect --config edge.config.json
-  agent-bus doctor --config edge.config.json
+  agent-bus doctor --config edge.config.json [--json]
   agent-bus smoke --offline
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
@@ -418,6 +418,7 @@ async function doctor(args) {
   const configPath = optionValue(args, "--config") || "edge.config.json";
   const gatewayArg = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL;
   const tokenArg = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN;
+  const jsonOut = args.includes("--json");
   const checks = [];
   let config = null;
 
@@ -428,7 +429,7 @@ async function doctor(args) {
     addCheck(checks, "pass", "Read edge config", configPath);
   } catch (err) {
     addCheck(checks, "fail", "Read edge config", err.message);
-    printDoctor(checks);
+    printDoctorResult(checks, jsonOut);
     process.exitCode = 1;
     return;
   }
@@ -441,7 +442,7 @@ async function doctor(args) {
   await checkGateway(checks, gatewayUrl, token);
   await checkLocalProbe(checks, configPath);
 
-  printDoctor(checks);
+  printDoctorResult(checks, jsonOut);
   if (checks.some((item) => item.status === "fail")) {
     process.exitCode = 1;
   }
@@ -764,6 +765,26 @@ function runScriptCapture(name, args, timeoutMs) {
 
 function addCheck(checks, status, name, detail) {
   checks.push({ status, name, detail: detail || "" });
+}
+
+function printDoctorResult(checks, jsonOut = false) {
+  if (jsonOut) {
+    console.log(JSON.stringify(doctorResult(checks), null, 2));
+    return;
+  }
+  printDoctor(checks);
+}
+
+function doctorResult(checks) {
+  const counts = { pass: 0, warn: 0, fail: 0 };
+  for (const item of checks) {
+    if (Object.hasOwn(counts, item.status)) counts[item.status] += 1;
+  }
+  return {
+    ok: counts.fail === 0,
+    counts,
+    checks
+  };
 }
 
 function printDoctor(checks) {

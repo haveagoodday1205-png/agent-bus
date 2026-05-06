@@ -177,7 +177,10 @@ This runs the edge health checks locally. URL ping checks do not run model infer
 
 ```bash
 agent-bus doctor --config edge.config.json
+agent-bus doctor --config edge.config.json --json
 ```
+
+Use `--json` for automation/CI. It prints `{ ok, counts, checks }` and keeps the same exit-code behavior as the human output.
 
 `doctor` checks:
 

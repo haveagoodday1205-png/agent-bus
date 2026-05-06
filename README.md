@@ -156,7 +156,7 @@ Each edge node sends:
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
 
-The default OpenClaw wrapper passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, so repeated calls by the same agent inside the same room/thread can reuse upstream prompt-cache state when the configured model gateway supports it.
+The default OpenClaw wrapper passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, so repeated calls by the same agent inside the same room/thread can reuse upstream prompt-cache state when the configured model gateway supports it. It also starts the message with a stable Agent Bus envelope so OpenClaw does not prepend a changing timestamp before the cacheable prompt prefix.
 
 The edge node streams stdout/stderr events back to the gateway, then posts a final run result.
 

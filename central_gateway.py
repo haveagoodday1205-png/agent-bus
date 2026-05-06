@@ -988,22 +988,9 @@ def autonomous_prompt(room, agent, reason):
         "You are an autonomous agent inside an Agent Bus room.",
         f"Room: {room.get('title') or room['id']}",
         f"Your identity: {agent['id']} ({agent.get('kind')}/{agent.get('role')}).",
-        f"Wake reason: {reason}",
         "",
         "Goal:",
         room.get("goal", ""),
-        "",
-        "Shared blackboard:",
-        json.dumps(room.get("blackboard") or {}, ensure_ascii=False, indent=2),
-        "",
-        "Recent room messages:",
-    ]
-    for item in (room.get("messages") or [])[-18:]:
-        speaker = item.get("speaker") or item.get("role") or "unknown"
-        content = str(item.get("content") or "").strip()
-        if content:
-            lines.append(f"{speaker}: {content}")
-    lines.extend([
         "",
         "Autonomy protocol:",
         "- Permissions are open by default in this room. You may ask capable agents to execute, inspect, code, deploy, browse, or verify as needed.",
@@ -1015,7 +1002,20 @@ def autonomous_prompt(room, agent, reason):
         "- To update shared state, include a line like: BLACKBOARD: concise state update",
         "- If the room goal is complete, include: DONE",
         "- Be concise. Do not repeat the full protocol.",
-    ])
+        "",
+        "Shared blackboard:",
+        json.dumps(room.get("blackboard") or {}, ensure_ascii=False, indent=2),
+        "",
+        "Latest wake reason:",
+        str(reason or "").strip(),
+        "",
+        "Recent room messages:",
+    ]
+    for item in (room.get("messages") or [])[-18:]:
+        speaker = item.get("speaker") or item.get("role") or "unknown"
+        content = str(item.get("content") or "").strip()
+        if content:
+            lines.append(f"{speaker}: {content}")
     return "\n".join(lines)
 
 

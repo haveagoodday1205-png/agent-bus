@@ -33,6 +33,8 @@ The gateway stores room messages and run snapshots. A `DONE` directive requests 
 
 Edge runners derive a stable `AGENT_CACHE_KEY` for each agent plus room/thread scope and mirror it as `AGENT_SESSION_ID`. Command adapters can pass that value to AI CLIs or model gateways to improve prompt-cache reuse without sharing context across different agents or rooms.
 
+Room prompts keep stable instructions before volatile wake reasons and recent messages. The OpenClaw wrapper also uses a stable Agent Bus message envelope to prevent OpenClaw from injecting a per-minute timestamp ahead of the cacheable prefix.
+
 ## Model Plane
 
 The central gateway exposes OpenAI-compatible endpoints:

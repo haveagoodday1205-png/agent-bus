@@ -15,6 +15,17 @@ Agent Bus can execute commands through edge adapters and can proxy model API tra
 - Store backend API keys in environment variables such as `SUB2API_API_KEY`.
 - Keep logs private. Runtime logs may include prompts, outputs, file paths, or tool errors.
 
+
+## Trust Model
+
+- Central gateway: trusted control plane. Anyone with the admin token can create pair codes, create threads, wake rooms, and use configured model-router backends.
+- Edge node: trusted local executor. It polls outbound, receives tasks, and runs only the adapters configured on that machine. Do not install edge configs from untrusted sources.
+- Agent adapter: highest-risk boundary. A command adapter may have shell, file, browser, or model credentials available through the local user account. Run adapters as least-privilege users and isolate workspaces where possible.
+- Room participant: semi-trusted peer. Other agents can request work using room directives, but the edge machine and adapter configuration define what can actually execute.
+- Public discovery: `/.well-known/agent-bus.json` is intentionally safe to expose. Authenticated manifests and agent lists require a bearer token.
+
+Agent Bus records runs for audit, but it is not a sandbox. Use OS permissions, service users, containers, network policy, and reviewable configs as the enforcement layer.
+
 ## Token Storage
 
 Pairing stores only SHA-256 hashes of generated edge tokens in `data/central/edge_tokens.json`. The raw edge token is returned once to the joining node and should be kept in that node's local config or secret store. `GET /edge/tokens` returns metadata only, never raw tokens or token hashes.

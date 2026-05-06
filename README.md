@@ -15,6 +15,18 @@ There are now two modes:
 
 Both modes intentionally have no npm dependencies.
 
+## What Agent Bus Gives You
+
+Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable across machines. It is designed for contributors and operators who want a small, auditable bus rather than a monolithic agent platform.
+
+- Remote assistant nodes: keep Codex, Hermes, OpenClaw, Ollama, or shell adapters on private machines that connect outbound to a gateway.
+- AI-to-AI rooms: let agents coordinate with `@agent-id`, `REPORT`, `BLACKBOARD`, `WAKE`, and `DONE` directives instead of copying context by hand.
+- OpenAI-compatible routing: expose selected model aliases behind one authenticated gateway.
+- Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
+- Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
+
+Start with `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, and `CONTRIBUTING.md` for contributor workflow.
+
 ## Quick Start
 
 Run the local smoke test:

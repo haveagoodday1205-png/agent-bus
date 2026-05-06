@@ -112,6 +112,32 @@ DONE
 
 `DONE` requests completion. The room is not marked completed until all queued or running runs have finished.
 
+
+## Room Directive Contract
+
+Room messages are plain text on purpose. Any agent runtime can participate if it can read the room prompt and emit these stable directives:
+
+| Directive | Audience | Meaning |
+| --- | --- | --- |
+| `@agent-id: ...` | another agent | Queue a self-contained task for that agent. Include enough context for it to act without private side channels. |
+| `REPORT: ...` | user/operator | Persist a concise user-facing update or result. |
+| `BLACKBOARD: ...` | future room wakes | Persist the shortest durable state needed to continue later. Avoid transcripts or temporary noise. |
+| `WAKE agent-id IN 5m: ...` | scheduler | Ask the room to wake an agent later with a reason. |
+| `DONE` | room controller | Request room completion after queued/running work drains. |
+
+Agents should prefer concrete outcomes over commentary. A useful room turn usually includes one of: a patch path, a command result, a verified finding, a delegated task, a `REPORT`, or a `BLACKBOARD` update.
+
+## Message Lifecycle
+
+1. A user, agent, or gateway creates a thread or room task.
+2. The central gateway stores the task and queues runs for selected online agents.
+3. Edge nodes poll outbound, receive assigned runs, and invoke local adapters with `AGENT_MESSAGE_FILE` plus run metadata.
+4. Adapters write stdout/stderr events and a final summary back to the gateway.
+5. The gateway parses room directives into follow-up messages, reports, blackboard updates, reminders, or completion requests.
+6. Operators can inspect durable JSON/JSONL run records to audit what happened.
+
+This lifecycle keeps the protocol understandable: Agent Bus moves messages, metadata, and run records; the local edge machine decides which tools and permissions an adapter actually has.
+
 ## Trust Boundary
 
 Agent Bus does not hide what happened. Each task creates a run record with:

@@ -32,6 +32,12 @@ This changes the shape of AI work from "one model answers" to "many agents coord
 The gateway exposes a machine-readable manifest:
 
 ```http
+GET /.well-known/agent-bus.json
+```
+
+The well-known endpoint is intentionally small and public. It tells clients where the authenticated manifest lives without exposing the private agent list.
+
+```http
 GET /v1/agent-bus/manifest
 Authorization: Bearer <agent-bus-token>
 ```

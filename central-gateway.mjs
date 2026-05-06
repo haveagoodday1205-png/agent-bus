@@ -103,6 +103,9 @@ async function serve(config) {
           queued: [...state.queues.values()].reduce((sum, queue) => sum + queue.length, 0)
         });
       }
+      if (req.method === "GET" && url.pathname === "/.well-known/agent-bus.json") {
+        return sendJson(res, agentBusWellKnown());
+      }
       if (req.method === "GET" && (url.pathname === "/console" || url.pathname.startsWith("/console/"))) {
         return sendConsoleAsset(res, url.pathname);
       }
@@ -277,6 +280,19 @@ function agentBusManifest(config) {
     model_router: {
       enabled: config.modelRouter?.enabled !== false,
       models: openAiModels(config).data.map((item) => item.id)
+    }
+  };
+}
+
+function agentBusWellKnown() {
+  return {
+    name: "agent-bus",
+    protocol: "agent-bus.v1",
+    manifest: "/v1/agent-bus/manifest",
+    health: "/health",
+    auth: {
+      type: "bearer",
+      manifest_required: true
     }
   };
 }

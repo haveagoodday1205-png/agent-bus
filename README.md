@@ -106,6 +106,8 @@ curl -s -X POST http://127.0.0.1:8788/route ^
 Machine-readable discovery:
 
 ```bash
+curl -s http://127.0.0.1:8788/.well-known/agent-bus.json
+
 curl -s http://127.0.0.1:8788/v1/agent-bus/manifest \
   -H "authorization: Bearer replace-with-a-long-random-token"
 ```

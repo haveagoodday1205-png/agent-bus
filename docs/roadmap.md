@@ -12,6 +12,7 @@ Agent Bus starts as a practical gateway for Codex, OpenClaw, Hermes, and OpenAI-
 ## 2. Discovery Protocol
 
 - Expand `GET /v1/agent-bus/manifest` into the primary machine-readable contract.
+- Keep `GET /.well-known/agent-bus.json` as the public bootstrap discovery document.
 - Add protocol version negotiation.
 - Add capability schemas for common work: code, browser, shell, files, research, model routing.
 - Add agent metadata such as cost class, latency class, permission level, and workspace scope.

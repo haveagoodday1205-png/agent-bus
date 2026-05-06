@@ -88,6 +88,8 @@ class Handler(BaseHTTPRequestHandler):
                     "registered_agents": sum(len(node.get("agents", [])) for node in STATE["nodes"].values()),
                     "queued": sum(len(q) for q in STATE["queues"].values()),
                 })
+            if path == "/.well-known/agent-bus.json":
+                return self.json(agent_bus_well_known())
             if path == "/console" or path.startswith("/console/"):
                 return self.console_asset(path)
             self.require_auth()
@@ -362,6 +364,19 @@ def agent_bus_manifest(config):
         "model_router": {
             "enabled": config.get("modelRouter", {}).get("enabled", True) is not False,
             "models": [item["id"] for item in openai_models(config)["data"]],
+        },
+    }
+
+
+def agent_bus_well_known():
+    return {
+        "name": "agent-bus",
+        "protocol": "agent-bus.v1",
+        "manifest": "/v1/agent-bus/manifest",
+        "health": "/health",
+        "auth": {
+            "type": "bearer",
+            "manifest_required": True,
         },
     }
 

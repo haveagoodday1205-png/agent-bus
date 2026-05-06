@@ -119,6 +119,13 @@ async function main() {
   assert(cliStatus.ok === true, "CLI status did not report ok=true");
   assert(cliStatus.summary?.online_agents === 1, "CLI status did not count the online smoke agent");
   assert(cliStatus.rooms?.some((item) => item.id === finalRoom.id), "CLI status did not include the smoke room");
+  const cliExport = await runCliText(["room", "export", finalRoom.id, "--gateway", base, "--token", token]);
+  assert(cliExport.includes(`# Agent Bus Room: ${finalRoom.title}`), "CLI room export did not render markdown title");
+  assert(cliExport.includes("offline smoke run completed"), "CLI room export did not include report content");
+  const exportJson = path.join(tempDir, "room-export.json");
+  await runCliText(["room", "export", finalRoom.id, "--format", "json", "--out", exportJson, "--gateway", base, "--token", token]);
+  const exportedRoom = JSON.parse(fs.readFileSync(exportJson, "utf8"));
+  assert(exportedRoom.id === finalRoom.id, "CLI room export --format json wrote the wrong room");
 
   const result = {
     ok: true,
@@ -131,7 +138,8 @@ async function main() {
     room_status: finalRoom.status,
     run_id: run.id,
     reports: finalRoom.reports?.length || 0,
-    blackboard_notes: finalRoom.blackboard?.notes?.length || 0
+    blackboard_notes: finalRoom.blackboard?.notes?.length || 0,
+    export_bytes: Buffer.byteLength(cliExport)
   };
 
   if (jsonOut) {
@@ -177,6 +185,16 @@ function smokeChildEnv(overrides = {}) {
 }
 
 function runCliJson(commandArgs, timeoutMs = 10000) {
+  return runCliText(commandArgs, timeoutMs).then((stdout) => {
+    try {
+      return JSON.parse(stdout);
+    } catch (err) {
+      throw new Error(`CLI did not return JSON: ${stdout || err.message}`);
+    }
+  });
+}
+
+function runCliText(commandArgs, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(root, "agent-bus.mjs"), ...commandArgs], {
       cwd: root,
@@ -202,11 +220,7 @@ function runCliJson(commandArgs, timeoutMs = 10000) {
         reject(new Error(`CLI exited with ${code}: ${stderr || stdout}`));
         return;
       }
-      try {
-        resolve(JSON.parse(stdout));
-      } catch (err) {
-        reject(new Error(`CLI did not return JSON: ${stdout || stderr || err.message}`));
-      }
+      resolve(stdout);
     });
   });
 }

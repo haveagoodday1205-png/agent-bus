@@ -173,6 +173,26 @@ export AGENT_BUS_TOKEN=...
 agent-bus agents
 ```
 
+## Rooms
+
+Rooms are durable AI-to-AI workspaces. Use them to wake several agents, keep a shared blackboard, and export the transcript for demos or debugging.
+
+```bash
+agent-bus room create \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --token ... \
+  --title release-check \
+  --goal "Inspect the release and report blockers." \
+  --agents codex-120,hermes-hk,openclaw-hk \
+  --wake-agents codex-120,hermes-hk,openclaw-hk
+
+agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room export room_xxx --format markdown --out room.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room export room_xxx --format json --out room.json --gateway https://YOUR-DOMAIN/agent-bus --token ...
+```
+
+The Markdown export includes the room goal, reports, blackboard notes, runs, and messages. It is safe for sharing only after you have reviewed it for private prompts, secrets, logs, domains, and internal machine names.
+
 ## Local Probe
 
 ```bash

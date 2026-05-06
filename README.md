@@ -281,6 +281,7 @@ agent-bus room create \
   --no-auto-rotate
 
 agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room export room_xxx --format markdown --out room.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room message room_xxx --message "New context" --agents openclaw-hk
 agent-bus room wake room_xxx --agents hermes-hk --reason "Continue from the latest report."
 ```

@@ -168,6 +168,7 @@ Usage:
   agent-bus edge-agents --config edge.config.json
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -1094,6 +1095,26 @@ async function room(args) {
     const roomId = requiredPositional(args, 1, "room id");
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args }));
   }
+  if (action === "export" || action === "dump") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const format = optionValue(args, "--format") || (args.includes("--json") ? "json" : "markdown");
+    const out = optionValue(args, "--out") || optionValue(args, "-o") || "";
+    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    let text = "";
+    if (format === "json") {
+      text = `${JSON.stringify(roomData, null, 2)}\n`;
+    } else if (format === "markdown" || format === "md") {
+      text = formatRoomMarkdown(roomData);
+    } else {
+      throw new Error("room export --format must be markdown or json.");
+    }
+    if (out) {
+      fs.writeFileSync(path.resolve(out), text);
+      return;
+    }
+    process.stdout.write(text);
+    return;
+  }
   if (action === "create") {
     const goal = optionValue(args, "--goal") || optionValue(args, "--message") || "";
     const agents = csvOption(args, "--agents");
@@ -1137,7 +1158,79 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|create|wake|message [options]");
+  throw new Error("Usage: agent-bus room list|show|export|create|wake|message [options]");
+}
+
+function formatRoomMarkdown(room) {
+  const reports = room.reports || room.blackboard?.reports || [];
+  const notes = room.blackboard?.notes || [];
+  const messages = room.messages || [];
+  const runs = room.runs || [];
+  const lines = [];
+  lines.push(`# Agent Bus Room: ${room.title || room.id || "untitled"}`);
+  lines.push("");
+  lines.push(`- id: \`${room.id || "-"}\``);
+  lines.push(`- status: \`${room.status || "unknown"}\``);
+  lines.push(`- agents: ${formatInlineList(room.agents)}`);
+  lines.push(`- created: ${room.created_at || "-"}`);
+  lines.push(`- updated: ${room.updated_at || "-"}`);
+  lines.push("");
+  if (room.goal) {
+    lines.push("## Goal");
+    lines.push("");
+    lines.push(markdownFence(room.goal));
+    lines.push("");
+  }
+  if (reports.length) {
+    lines.push("## Reports");
+    lines.push("");
+    for (const report of reports) {
+      lines.push(`- ${report.at || "-"} ${report.speaker || "unknown"}: ${report.content || ""}`);
+    }
+    lines.push("");
+  }
+  if (notes.length) {
+    lines.push("## Blackboard Notes");
+    lines.push("");
+    for (const note of notes) {
+      lines.push(`- ${note.at || "-"} ${note.speaker || "unknown"}: ${note.content || ""}`);
+    }
+    lines.push("");
+  }
+  if (runs.length) {
+    lines.push("## Runs");
+    lines.push("");
+    for (const run of runs) {
+      lines.push(`- ${run.id || "-"}: ${run.agent_id || "-"} ${run.status || "unknown"}${run.exit_code === undefined || run.exit_code === null ? "" : ` exit=${run.exit_code}`}`);
+    }
+    lines.push("");
+  }
+  if (messages.length) {
+    lines.push("## Messages");
+    lines.push("");
+    for (const message of messages) {
+      const heading = [message.speaker || "unknown", message.role || "", message.status ? `status=${message.status}` : "", message.at || ""]
+        .filter(Boolean)
+        .join(" ");
+      lines.push(`### ${heading}`);
+      lines.push("");
+      lines.push(markdownFence(message.content || ""));
+      lines.push("");
+    }
+  }
+  return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
+function formatInlineList(value) {
+  const list = Array.isArray(value) ? value : [];
+  return list.length ? list.map((item) => `\`${item}\``).join(", ") : "-";
+}
+
+function markdownFence(value) {
+  const text = String(value ?? "").replace(/\r\n/g, "\n");
+  const longest = Math.max(0, ...Array.from(text.matchAll(/`+/g), (match) => match[0].length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}text\n${text}\n${fence}`;
 }
 
 async function status(args) {

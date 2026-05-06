@@ -41,7 +41,8 @@ prune_oversized_session() {
   esac
   [ "$max_bytes" -gt 0 ] || return 0
 
-  local state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+  local home_dir="${HOME:-${TMPDIR:-/tmp}}"
+  local state_dir="${OPENCLAW_STATE_DIR:-$home_dir/.openclaw}"
   local session_dir="$state_dir/agents/$agent_id/sessions"
   [ -d "$session_dir" ] || return 0
 

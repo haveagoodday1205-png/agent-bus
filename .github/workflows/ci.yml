@@ -40,6 +40,17 @@ jobs:
           printf '%s\n' "$output"
           grep -F "falling back to the hermes CLI command" <<<"$output"
           grep -F "chat -q hello -Q" <<<"$output"
+          mkdir -p "$tmpdir/bin" "$tmpdir/tmp/.openclaw/agents/agent-bus/sessions"
+          cat > "$tmpdir/bin/openclaw" <<'SH'
+          #!/usr/bin/env bash
+          printf '%s\n' '{"result":{"payloads":[{"text":"REPORT: fake openclaw ok\nDONE"}]}}'
+          SH
+          chmod +x "$tmpdir/bin/openclaw"
+          printf 'oversized-session-file' > "$tmpdir/tmp/.openclaw/agents/agent-bus/sessions/room-1.jsonl"
+          output="$(env -u HOME PATH="$tmpdir/bin:$PATH" TMPDIR="$tmpdir/tmp" OPENCLAW_AGENT_ID=agent-bus AGENT_MESSAGE='hello' AGENT_SESSION_ID='room-1' OPENCLAW_AGENT_BUS_MAX_SESSION_BYTES=1 bash scripts/openclaw-agent-bus.sh 2>&1)"
+          printf '%s\n' "$output"
+          grep -F "fake openclaw ok" <<<"$output"
+          test -f "$tmpdir/tmp/.openclaw/agents/agent-bus/sessions/room-1.jsonl.bak-agent-bus-pruned-"*
       - name: CLI smoke
         run: |
           node agent-bus.mjs --help

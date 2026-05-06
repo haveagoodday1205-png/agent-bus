@@ -445,7 +445,8 @@ def create_room(config, body):
         err = Exception("room requires at least one agent")
         err.status_code = 400
         raise err
-    max_steps = max(1, min(int(body.get("max_steps") or body.get("maxSteps") or 12), 80))
+    max_steps = int(body.get("max_steps") if body.get("max_steps") is not None else body.get("maxSteps", 0))
+    max_steps = max(0, max_steps)
     room = {
         "id": "room_" + str(uuid.uuid4()),
         "title": body.get("title") or goal[:80],
@@ -461,11 +462,15 @@ def create_room(config, body):
         "autonomy": {
             "steps": 0,
             "max_steps": max_steps,
+            "budget": "unlimited",
+            "permissions": "all",
             "auto_rotate": body.get("auto_rotate", body.get("autoRotate", True)) is not False,
             "next_index": 0,
         },
         "blackboard": {
             "goal": goal,
+            "permissions": "all",
+            "budget": "unlimited",
             "open_questions": [],
             "next_actions": [],
         },
@@ -531,8 +536,8 @@ def wake_room_agents(config, room, agent_ids, reason):
             continue
         autonomy = room.setdefault("autonomy", {})
         steps = int(autonomy.get("steps") or 0)
-        max_steps = int(autonomy.get("max_steps") or 12)
-        if steps >= max_steps:
+        max_steps = int(autonomy.get("max_steps") or 0)
+        if max_steps > 0 and steps >= max_steps:
             room["status"] = "paused"
             room.setdefault("reports", []).append({"at": now(), "speaker": "system", "content": "Paused: max autonomous steps reached."})
             break
@@ -575,10 +580,13 @@ def autonomous_prompt(room, agent, reason):
     lines.extend([
         "",
         "Autonomy protocol:",
+        "- Permissions are open by default in this room. You may ask capable agents to execute, inspect, code, deploy, browse, or verify as needed.",
+        "- There is no budget ceiling configured for this room. Continue until the goal is complete or you need the user.",
         "- Reply with your useful update to the room.",
         "- To call another agent, include a line like: @agent-id: task for that agent",
         "- To write a user-facing report, include a line like: REPORT: concise report",
         "- To wake an agent later, include a line like: WAKE agent-id IN 5m: reason",
+        "- To update shared state, include a line like: BLACKBOARD: concise state update",
         "- If the room goal is complete, include: DONE",
         "- Be concise. Do not repeat the full protocol.",
     ])
@@ -852,7 +860,8 @@ def continue_room_run(config, run):
         "at": run.get("completed_at") or now(),
     })
     actions = process_room_directives(config, room, run, content)
-    if not actions and room.get("status") == "active" and room.get("autonomy", {}).get("auto_rotate", True):
+    scheduled_actions = {"wake", "reminder", "done"}
+    if not any(action in scheduled_actions for action in actions) and room.get("status") == "active" and room.get("autonomy", {}).get("auto_rotate", True):
         wake_room_agents(config, room, [next_room_agent(room)], "Continue the room from the latest message.")
     room["updated_at"] = now()
     write_room(config, room)
@@ -876,9 +885,17 @@ def process_room_directives(config, room, run, content):
             room.setdefault("blackboard", {}).setdefault("reports", []).append(report)
             actions.append("report")
             continue
+        match = re.match(r"^BLACKBOARD\s*:\s*(.+)", line, re.I)
+        if match:
+            note = {"at": now(), "speaker": run.get("agent_id"), "content": match.group(1).strip(), "run_id": run["id"]}
+            room.setdefault("blackboard", {}).setdefault("notes", []).append(note)
+            actions.append("blackboard")
+            continue
         match = re.match(r"^WAKE\s+@?([A-Za-z0-9_.-]+)\s+IN\s+([0-9]+)\s*([smhd]?)\s*:\s*(.+)", line, re.I)
         if match:
             agent_id, amount, unit, reason = match.groups()
+            if agent_id.lower() in ("self", "me"):
+                agent_id = run.get("agent_id")
             if agent_id in agent_ids:
                 add_room_reminder(config, room["id"], {
                     "agent": agent_id,

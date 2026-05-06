@@ -43,7 +43,7 @@ const messages = {
     modelPromptEmpty: "model prompt is empty",
     modelRouter: "Model Router",
     models: "Models",
-    maxSteps: "Max Steps",
+    maxSteps: "Max Steps (0 = unlimited)",
     modelsLoaded: "loaded {count} models",
     noAgents: "No registered agents.",
     noRoom: "No room selected.",
@@ -134,7 +134,7 @@ const messages = {
     modelPromptEmpty: "模型提示词不能为空",
     modelRouter: "模型路由",
     models: "模型",
-    maxSteps: "最大步数",
+    maxSteps: "最大步数（0 = 不限制）",
     modelsLoaded: "已加载 {count} 个模型",
     noAgents: "没有已注册的智能体。",
     noRoom: "尚未选择房间。",
@@ -401,7 +401,7 @@ async function createRoom(event) {
     const body = {
       goal,
       agents,
-      maxSteps: Number($("roomMaxSteps").value || 12),
+      maxSteps: Number($("roomMaxSteps").value || 0),
       wakeAgents: $("roomWakeMode").value === "all" ? agents : agents.slice(0, 1)
     };
     const room = await request("rooms", { method: "POST", body });

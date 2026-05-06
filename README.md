@@ -158,7 +158,7 @@ Each edge node sends:
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
 
-For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, and starts the message with a stable Agent Bus envelope so OpenClaw does not prepend a changing timestamp before the cacheable prompt prefix.
+For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, and falls back to a prompt file when the final OpenClaw CLI argument would be too large.
 
 The edge node streams stdout/stderr events back to the gateway, then posts a final run result.
 

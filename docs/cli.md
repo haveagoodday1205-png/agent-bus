@@ -16,6 +16,20 @@ Portable release bundles are published on GitHub Releases. Unpack one and run `.
 On any machine that should receive work:
 
 ```bash
+agent-bus detect
+agent-bus init edge --auto --out edge.config.json
+```
+
+`detect` looks for supported local tools:
+
+- Codex: `codex`
+- OpenClaw: `openclaw` or `OPENCLAW_AGENT_COMMAND`
+- Hermes: `hermes`
+- Ollama: `ollama` plus the local `/api/tags` endpoint when available
+
+If you want a specific preset instead of auto-detection:
+
+```bash
 agent-bus init edge --preset codex --out edge.config.json
 ```
 
@@ -53,7 +67,8 @@ On the new machine, redeem the code into a local edge config:
 agent-bus pair join \
   --gateway https://YOUR-DOMAIN/agent-bus \
   --code ABCD-2345 \
-  --out edge.config.json
+  --out edge.config.json \
+  --auto
 ```
 
 Then run:
@@ -63,7 +78,7 @@ agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
 ```
 
-The join command writes the gateway URL and bearer token into the local config file, but it does not print the token. Codes are single-use and expire automatically.
+The join command writes the gateway URL and bearer token into the local config file, but it does not print the token. Codes are single-use and expire automatically. With `--auto`, it also detects local AI tools and registers each one as an agent.
 
 ## Central Gateway
 
@@ -114,6 +129,7 @@ agent-bus doctor --config edge.config.json
 
 - Node.js runtime
 - config file readability
+- local tool availability for command adapters
 - missing or placeholder gateway URL
 - missing or placeholder token
 - enabled agents

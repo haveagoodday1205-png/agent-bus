@@ -4,6 +4,7 @@ Agent Bus should be easy to understand in five minutes:
 
 ```text
 download agent-bus
+detect local tools
 pair with a gateway
 connect local AI tools as remote assistant nodes
 let agents discover and call each other
@@ -50,6 +51,7 @@ Create issues that a stranger can finish without private infrastructure:
 Before a public push, aim for:
 
 - `agent-bus pair create/join` works locally and over HTTPS.
+- `agent-bus detect` and `agent-bus init edge --auto` make a useful config on machines with Codex, OpenClaw, Hermes, or Ollama.
 - `agent-bus doctor` gives useful next steps.
 - `npm run smoke` passes on CI.
 - README has a 5-minute path.

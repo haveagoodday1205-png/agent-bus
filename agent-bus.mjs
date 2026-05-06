@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,7 +24,11 @@ async function main() {
     return;
   }
   if (command === "init") {
-    initConfig(argv.slice(1));
+    await initConfig(argv.slice(1));
+    return;
+  }
+  if (command === "detect") {
+    await detect(argv.slice(1));
     return;
   }
   if (command === "serve") {
@@ -79,12 +83,14 @@ function printHelp() {
 
 Usage:
   agent-bus init central [--out central.config.json] [--force]
-  agent-bus init edge [--out edge.config.json] [--preset echo|codex|openclaw|hermes] [--force]
+  agent-bus init edge [--out edge.config.json] [--preset echo|codex|openclaw|hermes|ollama] [--force]
+  agent-bus init edge --auto [--gateway https://YOUR-DOMAIN/agent-bus] [--token ...] [--out edge.config.json]
+  agent-bus detect [--json]
   agent-bus serve --config central.config.json
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
-  agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json
+  agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
   agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
   agent-bus edge-agents --config edge.config.json
@@ -264,6 +270,7 @@ async function doctor(args) {
   const gatewayUrl = gatewayArg || config.gatewayUrl || "http://127.0.0.1:8788";
   const token = tokenArg || config.token || "";
   validateEdgeConfig(checks, config, gatewayUrl, token);
+  checkConfiguredTools(checks, config, path.dirname(path.resolve(configPath)));
 
   await checkGateway(checks, gatewayUrl, token);
   await checkLocalProbe(checks, configPath);
@@ -272,6 +279,19 @@ async function doctor(args) {
   if (checks.some((item) => item.status === "fail")) {
     process.exitCode = 1;
   }
+}
+
+async function detect(args) {
+  const tools = await discoverLocalTools();
+  if (args.includes("--json")) {
+    console.log(JSON.stringify({
+      ok: true,
+      hostname: os.hostname(),
+      tools
+    }, null, 2));
+    return;
+  }
+  printToolDetection(tools);
 }
 
 async function pair(args) {
@@ -334,8 +354,11 @@ async function joinPairCode(args) {
     nodeId,
     preset: requestedPreset || undefined
   }, 10000);
+  const useAuto = args.includes("--auto") || (!requestedPreset && !result.agentPreset && args.includes("--detect"));
   const preset = requestedPreset || result.agentPreset || "codex";
-  const config = edgeTemplate(preset);
+  const config = useAuto
+    ? await edgeAutoTemplate(args)
+    : edgeTemplate(preset);
   config.nodeId = result.nodeId || nodeId;
   config.gatewayUrl = result.gatewayUrl || gateway;
   config.token = result.token || "";
@@ -520,7 +543,7 @@ function trimOneLine(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
-function initConfig(args) {
+async function initConfig(args) {
   const kind = args[0];
   if (!["central", "edge"].includes(kind)) {
     throw new Error("Usage: agent-bus init central|edge [--out file] [--preset name] [--force]");
@@ -532,7 +555,15 @@ function initConfig(args) {
   }
   const config = kind === "central"
     ? centralTemplate()
-    : edgeTemplate(optionValue(args, "--preset") || "echo");
+    : args.includes("--auto")
+      ? await edgeAutoTemplate(args)
+      : edgeTemplate(optionValue(args, "--preset") || "echo");
+  if (kind === "edge") {
+    const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL;
+    const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN;
+    if (gateway) config.gatewayUrl = gateway;
+    if (token) config.token = token;
+  }
   fs.writeFileSync(out, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
   console.log(`Wrote ${out}`);
 }
@@ -566,8 +597,8 @@ function centralTemplate() {
   };
 }
 
-function edgeTemplate(preset) {
-  const agents = {
+function presetAgents() {
+  return {
     echo: [{
       id: "local-echo",
       kind: "echo",
@@ -576,42 +607,39 @@ function edgeTemplate(preset) {
       adapter: "echo",
       capabilities: ["shell", "files"]
     }],
-    codex: [{
-      id: "codex-local",
-      kind: "codex",
-      role: "coder",
-      enabled: true,
-      adapter: "command",
-      capabilities: ["code", "review", "shell", "files"],
-      pingUrl: "https://api.openai.com/v1/models",
-      runCommand: "codex exec --color never --dangerously-bypass-approvals-and-sandbox \"$AGENT_MESSAGE\" < /dev/null"
-    }],
-    openclaw: [{
-      id: "openclaw-local",
-      kind: "openclaw",
-      role: "executor",
-      enabled: true,
-      adapter: "command",
-      capabilities: ["shell", "files", "browser", "cron", "skills"],
-      pingUrl: "https://YOUR-MODEL-GATEWAY/v1/models",
-      runCommand: "OPENCLAW_AGENT_ID=main ./scripts/openclaw-agent-bus.sh"
-    }],
-    hermes: [{
-      id: "hermes-local",
-      kind: "hermes",
-      role: "researcher",
-      enabled: true,
-      adapter: "command",
-      capabilities: ["skills", "memory", "shell", "webhook", "cron"],
-      pingUrl: "https://YOUR-MODEL-GATEWAY/v1/models",
-      runCommand: "/root/.local/bin/hermes chat -q \"$AGENT_MESSAGE\" -Q"
-    }]
+    codex: [codexAgent("codex")],
+    openclaw: [openclawAgent("./scripts/openclaw-agent-bus.sh")],
+    hermes: [hermesAgent(defaultHermesCommand())],
+    ollama: [ollamaAgent("ollama", "llama3.1")]
   };
+}
+
+function edgeTemplate(preset) {
+  const agents = presetAgents();
   if (!agents[preset]) {
     throw new Error(`Unknown edge preset: ${preset}`);
   }
+  return edgeConfigWithAgents(agents[preset]);
+}
+
+async function edgeAutoTemplate(args = []) {
+  const include = parseListOption(optionValue(args, "--tools"));
+  const tools = await discoverLocalTools();
+  const selected = tools.filter((tool) => {
+    if (include.length && !include.includes(tool.id)) return false;
+    return tool.available && tool.agent;
+  });
+  if (!selected.length) {
+    const detected = tools.map((tool) => `${tool.id}:${tool.available ? "found" : "missing"}`).join(", ");
+    throw new Error(`No supported local AI tools were detected. Found: ${detected}. Install Codex, OpenClaw, Hermes, or Ollama, or use --preset echo.`);
+  }
+  const agents = selected.map((tool) => tool.agent);
+  return edgeConfigWithAgents(agents);
+}
+
+function edgeConfigWithAgents(agents) {
   return {
-    nodeId: os.hostname(),
+    nodeId: safeId(os.hostname()),
     gatewayUrl: "https://YOUR-GATEWAY-DOMAIN/agent-bus",
     token: "change-me-to-the-central-token",
     pollTimeoutMs: 25000,
@@ -619,8 +647,265 @@ function edgeTemplate(preset) {
     defaultTimeoutMs: 600000,
     healthProbeIntervalMs: 60000,
     healthProbeTimeoutMs: 5000,
-    agents: agents[preset]
+    agents
   };
+}
+
+async function discoverLocalTools() {
+  const host = safeId(os.hostname() || "local");
+  const codexPath = findExecutable("codex");
+  const hermesPath = findExecutable("hermes", commonHermesPaths());
+  const ollamaPath = findExecutable("ollama");
+  const openclawCommand = process.env.OPENCLAW_AGENT_COMMAND || "";
+  const openclawScript = findFirstExisting([
+    path.resolve(process.cwd(), "scripts", "openclaw-agent-bus.sh"),
+    path.resolve(__dirname, "scripts", "openclaw-agent-bus.sh"),
+    "/root/agent-bus/scripts/openclaw-agent-bus.sh"
+  ]);
+  const openclawPath = openclawCommand ? "" : findExecutable("openclaw");
+  const openclawRunner = openclawCommand || (openclawPath && openclawScript) || openclawPath;
+  const ollamaModels = ollamaPath ? await readOllamaModels() : [];
+  const ollamaModel = ollamaModels[0] || process.env.AGENT_BUS_OLLAMA_MODEL || "llama3.1";
+  const tools = [
+    {
+      id: "codex",
+      name: "Codex",
+      available: Boolean(codexPath),
+      command: codexPath || "codex",
+      version: codexPath ? commandVersion(codexPath) : "",
+      agent: codexPath ? codexAgent(codexPath, `codex-${host}`) : null
+    },
+    {
+      id: "openclaw",
+      name: "OpenClaw",
+      available: Boolean(openclawRunner),
+      command: openclawRunner || "openclaw",
+      version: openclawPath ? commandVersion(openclawPath) : "",
+      note: openclawCommand
+        ? "Using OPENCLAW_AGENT_COMMAND."
+        : openclawPath && openclawScript
+          ? "Using bundled/openclaw bridge script."
+          : openclawPath
+            ? "Generic OpenClaw command detected; review runCommand after generation."
+            : "Not found. Set OPENCLAW_AGENT_COMMAND or add openclaw to PATH.",
+      agent: openclawRunner
+        ? openclawAgent(openclawRunner, `openclaw-${host}`, {
+          generic: Boolean(!openclawCommand && !openclawScript && openclawPath),
+          rawCommand: Boolean(openclawCommand)
+        })
+        : null
+    },
+    {
+      id: "hermes",
+      name: "Hermes",
+      available: Boolean(hermesPath),
+      command: hermesPath || defaultHermesCommand(),
+      version: hermesPath ? commandVersion(hermesPath) : "",
+      agent: hermesPath ? hermesAgent(hermesPath, `hermes-${host}`) : null
+    },
+    {
+      id: "ollama",
+      name: "Ollama",
+      available: Boolean(ollamaPath),
+      command: ollamaPath || "ollama",
+      version: ollamaPath ? commandVersion(ollamaPath) : "",
+      models: ollamaModels,
+      note: ollamaModels.length ? `Defaulting to local model ${ollamaModel}.` : "Set AGENT_BUS_OLLAMA_MODEL or edit runCommand if llama3.1 is not installed.",
+      agent: ollamaPath ? ollamaAgent(ollamaPath, ollamaModel, `ollama-${host}`) : null
+    }
+  ];
+  return tools;
+}
+
+function printToolDetection(tools) {
+  for (const tool of tools) {
+    const mark = tool.available ? "FOUND" : "MISS ";
+    console.log(`${mark} ${tool.id.padEnd(9)} ${tool.command || ""}${tool.version ? ` - ${tool.version}` : ""}`);
+    if (tool.note) console.log(`      ${tool.note}`);
+    if (tool.agent) console.log(`      agent: ${tool.agent.id} (${tool.agent.kind}/${tool.agent.role})`);
+  }
+  const available = tools.filter((tool) => tool.available).map((tool) => tool.id);
+  if (available.length) {
+    console.log(`\nNext: agent-bus init edge --auto --out edge.config.json`);
+  } else {
+    console.log("\nNo supported tools found. Install Codex, OpenClaw, Hermes, or Ollama, then run agent-bus detect again.");
+  }
+}
+
+function checkConfiguredTools(checks, config, baseDir) {
+  for (const agent of config.agents || []) {
+    if (agent.enabled === false || (agent.adapter || "command") !== "command") continue;
+    const command = configuredExecutable(agent.runCommand || "");
+    if (!command) {
+      addCheck(checks, "warn", `agent ${agent.id} tool`, "could not parse runCommand");
+      continue;
+    }
+    const resolved = resolveConfiguredExecutable(command, baseDir);
+    if (resolved) {
+      addCheck(checks, "pass", `agent ${agent.id} tool`, resolved);
+    } else {
+      addCheck(checks, "warn", `agent ${agent.id} tool`, `${command} not found; run agent-bus detect`);
+    }
+  }
+}
+
+function codexAgent(commandPath, id = "codex-local") {
+  return {
+    id,
+    kind: "codex",
+    role: "coder",
+    enabled: true,
+    adapter: "command",
+    capabilities: ["code", "review", "shell", "files"],
+    pingUrl: "https://api.openai.com/v1/models",
+    runCommand: `${quoteCommand(commandPath)} exec --color never --dangerously-bypass-approvals-and-sandbox ${messageArgument()}${nullInputRedirect()}`
+  };
+}
+
+function openclawAgent(commandPath, id = "openclaw-local", options = {}) {
+  const command = String(commandPath || "").trim();
+  return {
+    id,
+    kind: "openclaw",
+    role: "executor",
+    enabled: true,
+    adapter: "command",
+    capabilities: ["shell", "files", "browser", "cron", "skills"],
+    pingUrl: "https://YOUR-MODEL-GATEWAY/v1/models",
+    runCommand: options.rawCommand
+      ? command
+      : options.generic
+      ? `${quoteCommand(command)} ${messageArgument()}`
+      : `OPENCLAW_AGENT_ID=main ${quoteCommand(command)}`
+  };
+}
+
+function hermesAgent(commandPath, id = "hermes-local") {
+  return {
+    id,
+    kind: "hermes",
+    role: "researcher",
+    enabled: true,
+    adapter: "command",
+    capabilities: ["skills", "memory", "shell", "webhook", "cron"],
+    pingUrl: "https://YOUR-MODEL-GATEWAY/v1/models",
+    runCommand: `${quoteCommand(commandPath)} chat -q ${messageArgument()} -Q`
+  };
+}
+
+function ollamaAgent(commandPath, model, id = "ollama-local") {
+  return {
+    id,
+    kind: "ollama",
+    role: "model",
+    enabled: true,
+    adapter: "command",
+    capabilities: ["local-model", "chat", "private"],
+    pingUrl: "http://127.0.0.1:11434/api/tags",
+    runCommand: `${quoteCommand(commandPath)} run ${quoteCommand(model || "llama3.1")} ${messageArgument()}`
+  };
+}
+
+function messageArgument() {
+  return process.platform === "win32" ? "\"%AGENT_MESSAGE%\"" : "\"$AGENT_MESSAGE\"";
+}
+
+function nullInputRedirect() {
+  return process.platform === "win32" ? " < NUL" : " < /dev/null";
+}
+
+function defaultHermesCommand() {
+  return process.platform === "win32" ? "hermes" : "/root/.local/bin/hermes";
+}
+
+function commonHermesPaths() {
+  const paths = [path.join(os.homedir(), ".local", "bin", process.platform === "win32" ? "hermes.exe" : "hermes")];
+  if (process.platform !== "win32") paths.push("/root/.local/bin/hermes");
+  return paths;
+}
+
+async function readOllamaModels() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  try {
+    const res = await fetch("http://127.0.0.1:11434/api/tags", { signal: controller.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.models || []).map((item) => item.name).filter(Boolean);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function findExecutable(name, extraPaths = []) {
+  for (const candidate of extraPaths) {
+    if (candidate && fs.existsSync(expandHome(candidate))) return expandHome(candidate);
+  }
+  if (!name) return "";
+  if (/[\\/]/.test(name)) return fs.existsSync(expandHome(name)) ? expandHome(name) : "";
+  const result = process.platform === "win32"
+    ? spawnSync("where.exe", [name], { encoding: "utf8", windowsHide: true })
+    : spawnSync("sh", ["-lc", "command -v \"$1\"", "sh", name], { encoding: "utf8" });
+  if (result.status !== 0) return "";
+  return String(result.stdout || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+}
+
+function findFirstExisting(values) {
+  for (const value of values) {
+    if (value && fs.existsSync(expandHome(value))) return expandHome(value);
+  }
+  return "";
+}
+
+function commandVersion(commandPath) {
+  const result = spawnSync(commandPath, ["--version"], { encoding: "utf8", windowsHide: true, timeout: 3000 });
+  const text = String(result.stdout || result.stderr || "").replace(/\s+/g, " ").trim();
+  return text.slice(0, 120);
+}
+
+function quoteCommand(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  if (/^[A-Za-z0-9_./:=@+-]+$/.test(text)) return text;
+  if (process.platform === "win32") return `"${text.replace(/"/g, '""')}"`;
+  return `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function configuredExecutable(commandText) {
+  const tokens = String(commandText || "").match(/"[^"]+"|'[^']+'|\S+/g) || [];
+  while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens.shift();
+  if (!tokens.length) return "";
+  return stripShellQuotes(tokens[0]);
+}
+
+function stripShellQuotes(value) {
+  return String(value || "").replace(/^["']|["']$/g, "");
+}
+
+function resolveConfiguredExecutable(command, baseDir) {
+  const text = expandHome(command);
+  if (/[\\/]/.test(text)) {
+    const absolute = path.isAbsolute(text) || /^[A-Za-z]:[\\/]/.test(text) ? text : path.resolve(baseDir || process.cwd(), text);
+    return fs.existsSync(absolute) ? absolute : "";
+  }
+  return findExecutable(text);
+}
+
+function expandHome(value) {
+  const text = String(value || "");
+  if (text === "~") return os.homedir();
+  if (text.startsWith("~/") || text.startsWith("~\\")) return path.join(os.homedir(), text.slice(2));
+  return text;
+}
+
+function safeId(value) {
+  return String(value || "local").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "local";
+}
+
+function parseListOption(value) {
+  return String(value || "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
 }
 
 async function getJson(pathname, options) {

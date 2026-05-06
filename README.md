@@ -41,8 +41,9 @@ Or download a portable bundle from [GitHub Releases](https://github.com/haveagoo
 Use a machine as a remote assistant node:
 
 ```bash
-agent-bus init edge --preset codex --out edge.config.json
-# edit gatewayUrl, token, pingUrl, and runCommand
+agent-bus detect
+agent-bus init edge --auto --out edge.config.json
+# edit gatewayUrl, token, pingUrl, and runCommand if needed
 agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
 ```
@@ -54,7 +55,7 @@ Or use a one-time pairing code so the new machine never needs the central token 
 agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
 
 # On the machine that should become a remote assistant node
-agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json
+agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json --auto
 agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
 ```

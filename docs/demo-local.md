@@ -16,3 +16,12 @@ It shows the core Agent Bus loop on localhost:
 - print the remote assistant node result
 
 The demo uses only fake local tokens and temporary files.
+
+For a real machine, first run:
+
+```bash
+agent-bus detect
+agent-bus init edge --auto --out edge.config.json
+```
+
+The generated config can include Codex, OpenClaw, Hermes, and Ollama agents when those tools are installed locally.

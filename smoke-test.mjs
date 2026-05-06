@@ -57,6 +57,21 @@ async function main() {
   const consoleHtml = await requestText("http://127.0.0.1:8788/console/");
   assert(consoleHtml.includes("Agent Bus"), "console HTML did not load");
 
+  const fakeBin = path.join(tempDir, "fake-bin");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  createFakeTool(fakeBin, "codex");
+  createFakeTool(fakeBin, "hermes");
+  const fakeEnv = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}` };
+  const detected = JSON.parse((await runNode(["agent-bus.mjs", "detect", "--json"], fakeEnv)).stdout);
+  assert(detected.tools?.some((tool) => tool.id === "codex" && tool.available), "detect did not find fake codex");
+  assert(detected.tools?.some((tool) => tool.id === "hermes" && tool.available), "detect did not find fake hermes");
+  const autoOut = path.join(tempDir, "auto-edge.config.json");
+  await runNode(["agent-bus.mjs", "init", "edge", "--auto", "--out", autoOut, "--gateway", "http://127.0.0.1:8788", "--token", token], fakeEnv);
+  const autoConfig = JSON.parse(fs.readFileSync(autoOut, "utf8"));
+  assert(autoConfig.agents?.some((agent) => agent.kind === "codex"), "auto init did not create a Codex agent");
+  assert(autoConfig.agents?.some((agent) => agent.kind === "hermes"), "auto init did not create a Hermes agent");
+  assert(autoConfig.gatewayUrl === "http://127.0.0.1:8788", "auto init did not apply gateway URL");
+
   const pair = await requestJson("http://127.0.0.1:8788/pair-codes", {
     method: "POST",
     headers: {
@@ -149,6 +164,14 @@ function start(cmd, args, env = {}) {
   });
   procs.push(child);
   return child;
+}
+
+function createFakeTool(dir, name) {
+  const shellPath = path.join(dir, name);
+  fs.writeFileSync(shellPath, `#!/usr/bin/env sh\necho "${name} fake 0.0.0"\n`);
+  fs.chmodSync(shellPath, 0o755);
+  const cmdPath = path.join(dir, `${name}.cmd`);
+  fs.writeFileSync(cmdPath, `@echo off\r\necho ${name} fake 0.0.0\r\n`);
 }
 
 function runNode(args, env = {}, timeoutMs = 15000) {

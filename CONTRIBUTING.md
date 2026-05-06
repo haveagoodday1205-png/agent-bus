@@ -6,13 +6,14 @@ Agent Bus is trying to make AI tools addressable to each other: a coding agent c
 
 ## Good First Contributions
 
-- Add an adapter preset for another agent runtime.
-- Improve `agent-bus doctor` checks for a platform or shell.
-- Package standalone binaries for Windows, Linux, Ubuntu, or macOS.
-- Add examples for systemd, launchd, Windows Service, Docker, and reverse proxies.
-- Improve room coordination behavior, reports, reminders, or blackboard state.
-- Add security hardening around tokens, pairing codes, per-agent permissions, or audit logs.
-- Write short demos, screenshots, diagrams, and setup guides.
+See `docs/good-first-issues.md` for starter tasks that do not require private infrastructure or live model calls. Good categories include:
+
+- adapter presets for local agent runtimes
+- clearer `agent-bus doctor` checks for a platform or shell
+- packaging/docs improvements for Windows, Linux, Ubuntu, or macOS
+- room coordination, reports-only export, reminders, or blackboard polish
+- security hardening around tokens, pairing codes, per-agent permissions, or audit logs
+- short demos, screenshots, diagrams, and setup guides
 
 
 ## Contributor Workflow

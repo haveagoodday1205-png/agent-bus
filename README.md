@@ -7,13 +7,13 @@ A lightweight distributed agent and OpenAI-compatible model router for connectin
 
 Agent Bus is also an early AI-to-AI protocol surface: agents can discover each other, advertise capabilities, report shallow health, receive tasks, and coordinate inside shared rooms.
 
-There are now two modes:
+There are three entrypoint families:
 
 - `server.mjs`: the original SSH-based prototype.
-- `central-gateway.mjs` + `edge-node.mjs`: the preferred gateway/edge architecture where each machine connects outward to the central gateway and runs local adapters.
+- `central-gateway.mjs` + `edge-node.mjs`: the preferred Node.js gateway/edge architecture where each machine connects outward to the central gateway and runs local adapters.
 - `central_gateway.py` + `edge_node.py`: the same gateway/edge protocol for machines without Node.js.
 
-Both modes intentionally have no npm dependencies.
+The core entrypoints intentionally have no npm runtime dependencies.
 
 ## What Agent Bus Gives You
 
@@ -25,7 +25,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
 
-Start with `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, and `CHANGELOG.md` for release highlights.
+Start with `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
 
 ## Quick Start
 

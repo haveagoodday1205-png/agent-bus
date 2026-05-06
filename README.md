@@ -51,6 +51,12 @@ agent-bus init central --out central.config.json
 docker compose up --build
 ```
 
+Generate a long-running service:
+
+```bash
+agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --cwd /opt/agent-bus --agent-bus-path /usr/bin/agent-bus --out agent-bus-edge.service
+```
+
 Or start the demo pieces manually:
 
 ```bash

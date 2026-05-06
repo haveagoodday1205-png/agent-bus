@@ -109,6 +109,39 @@ The image uses the same CLI entrypoint:
 docker run --rm agent-bus:local --help
 ```
 
+## Services
+
+Generate a Linux systemd unit:
+
+```bash
+agent-bus service systemd \
+  --mode edge \
+  --config /opt/agent-bus/edge.config.json \
+  --cwd /opt/agent-bus \
+  --agent-bus-path /usr/bin/agent-bus \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --out agent-bus-edge.service
+```
+
+Generate a macOS launchd plist:
+
+```bash
+agent-bus service launchd \
+  --mode edge \
+  --config /opt/agent-bus/edge.config.json \
+  --cwd /opt/agent-bus \
+  --agent-bus-path /usr/local/bin/agent-bus \
+  --out com.agent-bus.edge.plist
+```
+
+Generate Windows Service Control commands:
+
+```powershell
+agent-bus service windows --mode edge --config C:\agent-bus\edge.config.json --cwd C:\agent-bus --agent-bus-path C:\agent-bus\agent-bus.exe
+```
+
+The generated templates do not print or store your bearer token. Put `AGENT_BUS_TOKEN` in an environment file, system secret store, service account environment, or another deployment-specific secret mechanism.
+
 ## Cross-Platform Packaging
 
 The current CLI runs anywhere Node.js 20+ runs:

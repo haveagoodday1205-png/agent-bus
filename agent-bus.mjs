@@ -43,6 +43,10 @@ async function main() {
     await doctor(argv.slice(1));
     return;
   }
+  if (command === "service") {
+    service(argv.slice(1));
+    return;
+  }
   if (command === "edge-agents") {
     await runScript("edge-node.mjs", ["agents", ...stripCliOnlyArgs(argv.slice(1))]);
     return;
@@ -75,6 +79,7 @@ Usage:
   agent-bus serve --config central.config.json
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json
+  agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
   agent-bus edge-agents --config edge.config.json
 
@@ -88,6 +93,147 @@ Environment:
   AGENT_BUS_GATEWAY_URL  default gateway URL for query/connect commands
   AGENT_BUS_TOKEN        bearer token for protected gateway queries
 `);
+}
+
+function service(args) {
+  const target = args[0];
+  if (!["systemd", "launchd", "windows"].includes(target)) {
+    throw new Error("Usage: agent-bus service systemd|launchd|windows --mode edge|central --config file [--out file]");
+  }
+  const mode = optionValue(args, "--mode") || "edge";
+  if (!["edge", "central"].includes(mode)) {
+    throw new Error("--mode must be edge or central");
+  }
+  const configPath = optionValue(args, "--config") || (mode === "central" ? "central.config.json" : "edge.config.json");
+  const name = optionValue(args, "--name") || (mode === "central" ? "agent-bus-central" : "agent-bus-edge");
+  const cwd = optionValue(args, "--cwd") || process.cwd();
+  const gateway = optionValue(args, "--gateway") || "";
+  const dataDir = optionValue(args, "--data-dir") || "";
+  const tokenEnv = optionValue(args, "--token-env") || "AGENT_BUS_TOKEN";
+  const agentBusPath = optionValue(args, "--agent-bus-path") || "";
+  const content = target === "systemd"
+    ? systemdService({ mode, configPath, name, cwd, gateway, dataDir, tokenEnv, agentBusPath })
+    : target === "launchd"
+      ? launchdService({ mode, configPath, name, cwd, gateway, dataDir, tokenEnv, agentBusPath })
+      : windowsService({ mode, configPath, name, cwd, gateway, dataDir, tokenEnv, agentBusPath });
+  const out = optionValue(args, "--out");
+  if (out) {
+    fs.writeFileSync(out, content);
+    console.log(`Wrote ${out}`);
+  } else {
+    console.log(content);
+  }
+}
+
+function serviceCommand(mode, configPath, agentBusPath = "", cwd = "") {
+  return serviceCommandParts(mode, configPath, agentBusPath, cwd).map(quoteForShell).join(" ");
+}
+
+function serviceEnvironment(gateway, dataDir, tokenEnv) {
+  const env = [];
+  if (gateway) env.push(["AGENT_BUS_GATEWAY_URL", gateway]);
+  if (dataDir) env.push(["AGENT_BUS_DATA_DIR", dataDir]);
+  return env;
+}
+
+function systemdService(options) {
+  const env = serviceEnvironment(options.gateway, options.dataDir, options.tokenEnv)
+    .map(([key, value]) => `Environment=${key}=${systemdEscape(value)}`)
+    .join("\n");
+  return `[Unit]
+Description=${options.name}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${options.cwd}
+${env ? `${env}\n` : ""}ExecStart=${serviceCommand(options.mode, options.configPath, options.agentBusPath, options.cwd)}
+# Put AGENT_BUS_TOKEN in an EnvironmentFile or system secret store. Do not commit it.
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+`;
+}
+
+function launchdService(options) {
+  const parts = serviceCommandParts(options.mode, options.configPath, options.agentBusPath, options.cwd);
+  const env = serviceEnvironment(options.gateway, options.dataDir, options.tokenEnv);
+  const envXml = env.length
+    ? `  <key>EnvironmentVariables</key>
+  <dict>
+${env.map(([key, value]) => `    <key>${escapeXml(key)}</key><string>${escapeXml(value)}</string>`).join("\n")}
+  </dict>
+`
+    : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${escapeXml(options.name)}</string>
+  <key>WorkingDirectory</key><string>${escapeXml(options.cwd)}</string>
+${envXml}  <key>ProgramArguments</key>
+  <array>
+${parts.map((part) => `    <string>${escapeXml(part)}</string>`).join("\n")}
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/${escapeXml(options.name)}.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/${escapeXml(options.name)}.err.log</string>
+</dict>
+</plist>
+`;
+}
+
+function windowsService(options) {
+  const command = serviceCommand(options.mode, options.configPath, options.agentBusPath, options.cwd).replace(/"/g, '\\"');
+  const env = serviceEnvironment(options.gateway, options.dataDir, options.tokenEnv);
+  const envLines = env.map(([key, value]) => `setx ${key} "${value.replace(/"/g, '\\"')}" /M`).join("\n");
+  return `# Run in an elevated PowerShell prompt.
+# This uses Windows Service Control Manager and expects Node.js to be installed.
+${envLines ? `${envLines}\n` : ""}# Set AGENT_BUS_TOKEN separately, for example with the Windows service account environment.
+sc.exe create ${options.name} binPath= "${command}" start= auto DisplayName= "${options.name}"
+sc.exe failure ${options.name} reset= 60 actions= restart/5000
+sc.exe start ${options.name}
+`;
+}
+
+function serviceCommandParts(mode, configPath, agentBusPath = "", cwd = "") {
+  const action = mode === "central" ? "serve" : "connect";
+  const resolvedConfig = resolveServicePath(configPath, cwd);
+  if (agentBusPath) return [agentBusPath, action, "--config", resolvedConfig];
+  const cliPath = process.argv[1] && fs.existsSync(process.argv[1]) ? process.argv[1] : path.join(__dirname, "agent-bus.mjs");
+  return [process.execPath, cliPath, action, "--config", resolvedConfig];
+}
+
+function resolveServicePath(value, cwd) {
+  const text = String(value || "");
+  if (text.startsWith("/") || text.startsWith("~") || /^[A-Za-z]:[\\/]/.test(text)) return text;
+  const base = String(cwd || "");
+  if (base.startsWith("/")) return `${base.replace(/\/$/, "")}/${text}`;
+  if (/^[A-Za-z]:[\\/]/.test(base)) return `${base.replace(/[\\/]$/, "")}\\${text}`;
+  return path.resolve(text);
+}
+
+function quoteForShell(value) {
+  const text = String(value);
+  return /^[A-Za-z0-9_./:=@+-]+$/.test(text) ? text : `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function systemdEscape(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function doctor(args) {

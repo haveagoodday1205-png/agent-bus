@@ -32,6 +32,7 @@ jobs:
         run: |
           node agent-bus.mjs --help
           node agent-bus.mjs init edge --preset echo --out /tmp/edge.config.json
+          node agent-bus.mjs service systemd --mode edge --config /opt/agent-bus/edge.config.json --cwd /opt/agent-bus --agent-bus-path /usr/bin/agent-bus >/tmp/agent-bus-edge.service
           node agent-bus.mjs doctor --config /tmp/edge.config.json || true
           node agent-bus.mjs probe --config /tmp/edge.config.json
       - name: Full smoke

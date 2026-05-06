@@ -53,6 +53,12 @@ This check does not send a completion request. It only records whether the URL i
 
 ## Systemd
 
+Generate a unit with the CLI:
+
+```bash
+agent-bus service systemd --mode edge --config /root/agent-bus/edge.config.json --cwd /root/agent-bus --agent-bus-path /usr/bin/agent-bus --out agent-bus-edge.service
+```
+
 Example central unit:
 
 ```ini

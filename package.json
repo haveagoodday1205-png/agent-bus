@@ -1,19 +1,25 @@
 {
   "name": "agent-bus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A lightweight distributed agent bus and OpenAI-compatible model router for connecting AI tools across machines.",
   "private": false,
   "license": "MIT",
+  "bin": {
+    "agent-bus": "./agent-bus.mjs"
+  },
   "keywords": [
     "agent",
     "ai",
     "openai",
     "model-router",
+    "ai-to-ai",
+    "cli",
     "codex",
     "distributed"
   ],
   "type": "module",
   "scripts": {
+    "cli": "node agent-bus.mjs",
     "start": "node central-gateway.mjs serve",
     "ssh-prototype": "node server.mjs serve",
     "central": "node central-gateway.mjs serve",

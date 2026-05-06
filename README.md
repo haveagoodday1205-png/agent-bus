@@ -20,6 +20,29 @@ Run the local smoke test:
 npm run smoke
 ```
 
+Install the CLI from a checkout:
+
+```bash
+npm install -g .
+agent-bus --help
+```
+
+Use a machine as a remote assistant node:
+
+```bash
+agent-bus init edge --preset codex --out edge.config.json
+# edit gatewayUrl, token, pingUrl, and runCommand
+agent-bus connect --config edge.config.json
+```
+
+Run a central gateway:
+
+```bash
+agent-bus init central --out central.config.json
+# edit token and modelRouter backends
+agent-bus serve --config central.config.json
+```
+
 Or start the demo pieces manually:
 
 ```bash
@@ -364,6 +387,7 @@ Health checks are stored in `runs.jsonl` too. Stored stdout/stderr and snapshots
 
 - [Architecture](docs/architecture.md)
 - [AI-to-AI Bus](docs/ai-to-ai.md)
+- [CLI](docs/cli.md)
 - [Roadmap](docs/roadmap.md)
 - [Deployment](docs/deployment.md)
 - [Web Console](docs/console.md)

@@ -164,13 +164,13 @@ document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
 
-$("languageSelect").addEventListener("change", () => {
+["change", "input"].forEach((eventName) => $("languageSelect").addEventListener(eventName, () => {
   state.lang = $("languageSelect").value;
   localStorage.setItem("agentBusLanguage", state.lang);
   applyLanguage();
   renderAgents();
   if (state.currentThread) renderThread(state.currentThread);
-});
+}));
 $("saveTokenButton").addEventListener("click", saveToken);
 $("tokenInput").addEventListener("keydown", (event) => {
   if (event.key === "Enter") saveToken();

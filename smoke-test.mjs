@@ -198,6 +198,36 @@ async function main() {
   assert(pairedConfig.gatewayUrl === "http://127.0.0.1:8788", "pair join wrote the wrong gateway URL");
   assert(pairedConfig.agents?.[0]?.adapter === "echo", "pair join did not use the echo preset");
 
+  const setupOut = path.join(tempDir, "setup-edge.config.json");
+  const setupService = path.join(tempDir, "setup-edge.service");
+  const setupRun = await runNode([
+    "agent-bus.mjs",
+    "setup",
+    "edge",
+    "--preset",
+    "echo",
+    "--gateway",
+    "http://127.0.0.1:8788",
+    "--token",
+    token,
+    "--out",
+    setupOut,
+    "--service",
+    "systemd",
+    "--service-out",
+    setupService,
+    "--cwd",
+    tempDir,
+    "--agent-bus-path",
+    "/usr/bin/agent-bus"
+  ], {}, 30000);
+  assert(setupRun.stdout.includes("Step 3/3: running zero-quota doctor checks"), "setup did not run doctor");
+  const setupConfig = JSON.parse(fs.readFileSync(setupOut, "utf8"));
+  assert(setupConfig.gatewayUrl === "http://127.0.0.1:8788", "setup wrote the wrong gateway URL");
+  assert(setupConfig.token === token, "setup did not write the configured token");
+  assert(setupConfig.agents?.[0]?.adapter === "echo", "setup did not use the requested preset");
+  assert(fs.readFileSync(setupService, "utf8").includes("ExecStart=/usr/bin/agent-bus connect --config"), "setup did not write a usable systemd service");
+
   const models = await requestJson("http://127.0.0.1:8788/v1/models", {
     headers: { authorization: `Bearer ${token}` }
   });

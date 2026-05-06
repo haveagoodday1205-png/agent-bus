@@ -104,6 +104,10 @@ async function main() {
     await pair(argv.slice(1));
     return;
   }
+  if (command === "setup") {
+    await setup(argv.slice(1));
+    return;
+  }
   if (command === "service") {
     service(argv.slice(1));
     return;
@@ -145,6 +149,7 @@ Usage:
   agent-bus doctor --config edge.config.json
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
+  agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --auto --service auto
   agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
   agent-bus edge-agents --config edge.config.json
@@ -266,6 +271,108 @@ sc.exe create ${options.name} binPath= "${command}" start= auto DisplayName= "${
 sc.exe failure ${options.name} reset= 60 actions= restart/5000
 sc.exe start ${options.name}
 `;
+}
+
+async function setup(args) {
+  const target = args[0] || "edge";
+  if (target !== "edge") {
+    throw new Error("Usage: agent-bus setup edge [--gateway url] [--code pair-code] [--auto|--preset name] [--service auto|systemd|launchd|windows]");
+  }
+
+  const out = optionValue(args, "--out") || "edge.config.json";
+  const force = args.includes("--force");
+  if (fs.existsSync(out) && !force) {
+    throw new Error(`Refusing to overwrite ${out}; pass --force to replace it.`);
+  }
+
+  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "";
+  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || "";
+  const code = optionValue(args, "--code") || process.env.AGENT_BUS_PAIR_CODE || "";
+  const preset = optionValue(args, "--preset") || "";
+  const auto = args.includes("--auto") || (!preset && !args.includes("--no-auto"));
+  const nodeId = optionValue(args, "--node-id") || os.hostname();
+
+  console.log("Agent Bus edge setup");
+  if (code) {
+    console.log("Step 1/3: redeeming pair code and writing edge config");
+    await writePairedEdgeConfig({ args, gateway, code, out, force, preset, auto, nodeId });
+  } else {
+    console.log("Step 1/3: writing edge config");
+    await writeSetupEdgeConfig({ args, gateway, token, out, preset, auto });
+  }
+
+  const serviceTarget = resolveSetupServiceTarget(optionValue(args, "--service") || "");
+  if (serviceTarget) {
+    const serviceOut = optionValue(args, "--service-out") || defaultServiceOut(serviceTarget, "edge");
+    const cwd = optionValue(args, "--cwd") || path.dirname(path.resolve(out));
+    const agentBusPath = optionValue(args, "--agent-bus-path") || defaultAgentBusPath();
+    const content = serviceTarget === "systemd"
+      ? systemdService({ mode: "edge", configPath: out, name: optionValue(args, "--name") || "agent-bus-edge", cwd, gateway, dataDir: optionValue(args, "--data-dir") || "", tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath })
+      : serviceTarget === "launchd"
+        ? launchdService({ mode: "edge", configPath: out, name: optionValue(args, "--name") || "agent-bus-edge", cwd, gateway, dataDir: optionValue(args, "--data-dir") || "", tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath })
+        : windowsService({ mode: "edge", configPath: out, name: optionValue(args, "--name") || "agent-bus-edge", cwd, gateway, dataDir: optionValue(args, "--data-dir") || "", tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath });
+    fs.writeFileSync(serviceOut, content);
+    console.log(`Step 2/3: wrote ${serviceTarget} service template to ${serviceOut}`);
+    console.log(serviceInstallHint(serviceTarget, serviceOut));
+  } else {
+    console.log("Step 2/3: service template skipped; pass --service auto to generate one");
+  }
+
+  if (args.includes("--skip-doctor")) {
+    console.log("Step 3/3: doctor skipped");
+  } else {
+    console.log("Step 3/3: running zero-quota doctor checks");
+    await doctor(["--config", out, ...(gateway ? ["--gateway", gateway] : []), ...(token && !code ? ["--token", token] : [])]);
+  }
+
+  console.log(`Next: agent-bus connect --config ${out}`);
+}
+
+async function writePairedEdgeConfig({ args, gateway, code, out, force, preset, auto, nodeId }) {
+  const joinArgs = ["--gateway", gateway || "http://127.0.0.1:8788", "--code", code, "--out", out, "--node-id", nodeId];
+  if (force) joinArgs.push("--force");
+  if (preset) joinArgs.push("--preset", preset);
+  if (auto) joinArgs.push("--auto");
+  const tools = optionValue(args, "--tools");
+  if (tools) joinArgs.push("--tools", tools);
+  await joinPairCode(joinArgs);
+}
+
+async function writeSetupEdgeConfig({ args, gateway, token, out, preset, auto }) {
+  const config = auto ? await edgeAutoTemplate(args) : edgeTemplate(preset || "echo");
+  if (gateway) config.gatewayUrl = gateway;
+  if (token) config.token = token;
+  fs.writeFileSync(out, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+  console.log(`Wrote ${out}`);
+}
+
+function resolveSetupServiceTarget(value) {
+  const target = String(value || "").toLowerCase();
+  if (!target || target === "none" || target === "off") return "";
+  if (target === "auto") {
+    if (process.platform === "win32") return "windows";
+    if (process.platform === "darwin") return "launchd";
+    return "systemd";
+  }
+  if (["systemd", "launchd", "windows"].includes(target)) return target;
+  throw new Error("--service must be auto, systemd, launchd, windows, or none");
+}
+
+function defaultServiceOut(target, mode) {
+  if (target === "launchd") return mode === "central" ? "com.agent-bus.central.plist" : "com.agent-bus.edge.plist";
+  if (target === "windows") return mode === "central" ? "agent-bus-central-service.ps1" : "agent-bus-edge-service.ps1";
+  return mode === "central" ? "agent-bus-central.service" : "agent-bus-edge.service";
+}
+
+function defaultAgentBusPath() {
+  if (process.platform === "win32") return path.join(process.cwd(), "agent-bus.cmd");
+  return path.join(process.cwd(), "agent-bus");
+}
+
+function serviceInstallHint(target, file) {
+  if (target === "systemd") return `Install hint: sudo cp ${file} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now agent-bus-edge`;
+  if (target === "launchd") return `Install hint: cp ${file} ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/${path.basename(file)}`;
+  return `Install hint: review ${file}, then run it from an elevated PowerShell prompt.`;
 }
 
 function serviceCommandParts(mode, configPath, agentBusPath = "", cwd = "") {

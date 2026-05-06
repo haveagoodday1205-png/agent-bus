@@ -104,7 +104,7 @@ Pair a new remote assistant node without pasting the central admin token:
 agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
 
 # New edge machine
-./agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json --auto
+./agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json --auto --service auto
 \`\`\`
 
 Generate a long-running service template:

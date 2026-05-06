@@ -60,6 +60,19 @@ agent-bus connect --config edge.config.json
 
 The machine now polls the central gateway and can receive tasks. It does not need an inbound public port.
 
+For the shortest first-run path, use `setup edge` to combine config creation, zero-quota doctor checks, and optional service template generation:
+
+```bash
+agent-bus setup edge \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --code ABCD-2345 \
+  --auto \
+  --service auto \
+  --out edge.config.json
+```
+
+Without `--code`, pass `--token` or `AGENT_BUS_TOKEN` for a trusted manual config. `--service auto` chooses systemd on Linux, launchd on macOS, and Windows Service Control commands on Windows. It writes a template only; review and install it using your normal OS service workflow.
+
 Edge commands receive task metadata in environment variables:
 
 - `AGENT_MESSAGE`

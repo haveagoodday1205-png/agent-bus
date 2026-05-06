@@ -55,8 +55,7 @@ Or use a one-time pairing code so the new machine never needs the central token 
 agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
 
 # On the machine that should become a remote assistant node
-agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json --auto
-agent-bus doctor --config edge.config.json
+agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --auto --service auto --out edge.config.json
 agent-bus connect --config edge.config.json
 ```
 

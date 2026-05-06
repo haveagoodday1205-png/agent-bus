@@ -84,7 +84,11 @@ async function main() {
   const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig, "--once"], {
     AGENT_BUS_CONFIG: edgeConfig
   });
-  await waitForAgent(base, token, "offline-agent");
+  const agent = await waitForAgent(base, token, "offline-agent");
+  assert(agent.status === "online", "agent discovery did not expose online status");
+  assert(agent.node_status === "online", "agent discovery did not expose online node status");
+  assert(Boolean(agent.last_seen_at), "agent discovery did not expose last_seen_at");
+  assert(agent.ping_status === "not_configured", "offline agent should report ping_status=not_configured");
 
   const room = await requestJson(`${base}/rooms`, {
     method: "POST",
@@ -112,6 +116,8 @@ async function main() {
     mode: "offline",
     quota: "no_model_calls",
     gateway: base,
+    agent_status: agent.status,
+    ping_status: agent.ping_status,
     room_id: finalRoom.id,
     room_status: finalRoom.status,
     run_id: run.id,
@@ -214,7 +220,8 @@ async function waitForAgent(base, token, agentId, timeoutMs = 10000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const agents = await requestJson(`${base}/agents`, { headers: authHeaders(token) });
-    if (agents.some((agent) => agent.id === agentId)) return;
+    const agent = agents.find((item) => item.id === agentId);
+    if (agent) return agent;
     await delay(250);
   }
   throw new Error(`Timed out waiting for agent ${agentId}`);

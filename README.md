@@ -221,9 +221,10 @@ Admins can also manage edge tokens directly with `GET /edge/tokens`, `POST /edge
 
 `GET /agents` separates node reachability from model readiness:
 
+- `status` / `last_seen_at`: the agent is advertised by an online edge node.
 - `node_status`: the edge process is online and polling the gateway.
-- `health.ping_status`: optional shallow URL reachability from the edge machine. This does not run inference.
-- `health.last_run_status`: the latest real task result, when available.
+- `ping_status`: optional shallow URL reachability from the edge machine, flattened from `health.ping_status` for quick CLI checks.
+- `health.last_run_status` / `last_run_status`: the latest real task result, when available.
 
 Configure `pingUrl`, `healthUrl`, or `modelUrl` on an edge agent to check a URL without spending model credits:
 

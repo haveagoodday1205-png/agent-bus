@@ -498,8 +498,19 @@ def public_agents():
             if agent.get("enabled") is False:
                 continue
             item = dict(agent)
+            health = item.get("health") if isinstance(item.get("health"), dict) else {}
+            item["status"] = "online"
+            item["last_seen_at"] = node.get("last_seen_at")
             item["node_status"] = node.get("status")
             item["node_last_seen_at"] = node.get("last_seen_at")
+            item["node_online"] = True
+            if health:
+                item["ping_status"] = health.get("ping_status")
+                item["ping_target"] = health.get("ping_target")
+                item["ping_checked_at"] = health.get("checked_at")
+                item["ping_latency_ms"] = health.get("latency_ms")
+                item["last_run_status"] = health.get("last_run_status")
+                item["last_run_at"] = health.get("last_run_at")
             out.append(item)
     return sorted(out, key=lambda item: item["id"])
 

@@ -298,7 +298,7 @@ async function serve(config) {
       if (req.method === "POST" && url.pathname === "/edge/poll") {
         requireAuth(req, config, ["admin", "edge"]);
         const body = await readJson(req);
-        const payload = await pollNode(body.node_id, Number(body.timeout_ms || config.defaults.pollTimeoutMs || 25000));
+        const payload = await pollNode(body, Number(body.timeout_ms || config.defaults.pollTimeoutMs || 25000));
         return sendJson(res, payload);
       }
       if (req.method === "POST" && url.pathname === "/edge/events") {
@@ -521,19 +521,26 @@ function registerNode(config, body) {
     status: "online",
     registered_at: state.nodes.get(body.node_id)?.registered_at || new Date().toISOString(),
     last_seen_at: new Date().toISOString(),
-    agents: agents.map((agent) => ({
-      id: agent.id,
-      node_id: body.node_id,
-      kind: agent.kind || "agent",
-      role: agent.role || "worker",
-      enabled: agent.enabled !== false,
-      capabilities: agent.capabilities || []
-    }))
+    agents: agents.map((agent) => normalizeAgent(body.node_id, agent))
   };
   state.nodes.set(body.node_id, node);
   state.queues.set(body.node_id, state.queues.get(body.node_id) || []);
   appendJsonl(config, "nodes.jsonl", node);
   return publicNode(node);
+}
+
+function normalizeAgent(nodeId, agent) {
+  const item = {
+    id: agent.id,
+    node_id: nodeId,
+    kind: agent.kind || "agent",
+    role: agent.role || "worker",
+    enabled: agent.enabled !== false,
+    capabilities: agent.capabilities || []
+  };
+  if (agent.adapter) item.adapter = agent.adapter;
+  if (agent.health && typeof agent.health === "object" && !Array.isArray(agent.health)) item.health = agent.health;
+  return item;
 }
 
 function publicNode(node) {
@@ -548,13 +555,28 @@ function publicNode(node) {
 
 function publicAgents() {
   return [...state.nodes.values()]
-    .flatMap((node) => node.agents.map((agent) => ({
-      ...agent,
-      node_status: node.status,
-      node_last_seen_at: node.last_seen_at
-    })))
+    .filter((node) => node.status === "online")
+    .flatMap((node) => node.agents.map((agent) => publicAgent(node, agent)))
     .filter((agent) => agent.enabled !== false)
     .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function publicAgent(node, agent) {
+  const health = agent.health && typeof agent.health === "object" && !Array.isArray(agent.health) ? agent.health : {};
+  return {
+    ...agent,
+    status: "online",
+    last_seen_at: node.last_seen_at,
+    node_status: node.status,
+    node_last_seen_at: node.last_seen_at,
+    node_online: true,
+    ...(health.ping_status ? { ping_status: health.ping_status } : {}),
+    ...(health.ping_target ? { ping_target: health.ping_target } : {}),
+    ...(health.checked_at ? { ping_checked_at: health.checked_at } : {}),
+    ...(health.latency_ms != null ? { ping_latency_ms: health.latency_ms } : {}),
+    ...(health.last_run_status ? { last_run_status: health.last_run_status } : {}),
+    ...(health.last_run_at ? { last_run_at: health.last_run_at } : {})
+  };
 }
 
 function agentBusManifest(config) {
@@ -874,7 +896,8 @@ function enqueueTask(nodeId, task) {
   state.queues.set(nodeId, queue);
 }
 
-function pollNode(nodeId, timeoutMs) {
+function pollNode(body, timeoutMs) {
+  const nodeId = body?.node_id;
   if (!nodeId || !state.nodes.has(nodeId)) {
     const err = new Error("unknown node_id");
     err.statusCode = 404;
@@ -883,6 +906,9 @@ function pollNode(nodeId, timeoutMs) {
   const node = state.nodes.get(nodeId);
   node.last_seen_at = new Date().toISOString();
   node.status = "online";
+  if (Array.isArray(body.agents)) {
+    node.agents = mergeAgentUpdates(nodeId, node.agents || [], body.agents);
+  }
 
   const queue = state.queues.get(nodeId) || [];
   const task = queue.shift();
@@ -902,6 +928,15 @@ function pollNode(nodeId, timeoutMs) {
     waiters.push(waiter);
     state.waiters.set(nodeId, waiters);
   });
+}
+
+function mergeAgentUpdates(nodeId, current, updates) {
+  const byId = new Map((current || []).filter((agent) => agent.id).map((agent) => [agent.id, { ...agent }]));
+  for (const update of updates || []) {
+    if (!update?.id) continue;
+    byId.set(update.id, { ...(byId.get(update.id) || {}), ...normalizeAgent(nodeId, update) });
+  }
+  return [...byId.values()];
 }
 
 function recordRunEvent(config, body) {

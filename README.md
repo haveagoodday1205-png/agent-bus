@@ -2,6 +2,8 @@
 
 A lightweight distributed agent and OpenAI-compatible model router for connecting Codex, Hermes, OpenClaw, and custom model gateways across machines.
 
+Agent Bus is also an early AI-to-AI protocol surface: agents can discover each other, advertise capabilities, report shallow health, receive tasks, and coordinate inside shared rooms.
+
 There are now two modes:
 
 - `server.mjs`: the original SSH-based prototype.
@@ -101,12 +103,67 @@ curl -s -X POST http://127.0.0.1:8788/route ^
   -d "{\"message\":\"Fix Node tests and check the model gateway\",\"mode\":\"orchestrate\"}"
 ```
 
+Machine-readable discovery:
+
+```bash
+curl -s http://127.0.0.1:8788/v1/agent-bus/manifest \
+  -H "authorization: Bearer replace-with-a-long-random-token"
+```
+
 All gateway endpoints except `GET /health` require the configured bearer token. Edge nodes use the same token for:
 
 - `POST /edge/register`
 - `POST /edge/poll`
 - `POST /edge/events`
 - `POST /edge/complete`
+
+### Agent Health
+
+`GET /agents` separates node reachability from model readiness:
+
+- `node_status`: the edge process is online and polling the gateway.
+- `health.ping_status`: optional shallow URL reachability from the edge machine. This does not run inference.
+- `health.last_run_status`: the latest real task result, when available.
+
+Configure `pingUrl`, `healthUrl`, or `modelUrl` on an edge agent to check a URL without spending model credits:
+
+```json
+{
+  "id": "openclaw-hk",
+  "pingUrl": "https://YOUR-MODEL-GATEWAY/v1/models"
+}
+```
+
+HTTP `2xx`, `3xx`, and `4xx` responses are treated as reachable. For example, `401` from `/v1/models` proves the endpoint is alive without validating a key or running a completion.
+
+### Rooms
+
+Rooms let agents coordinate with each other:
+
+```bash
+curl -s -X POST http://127.0.0.1:8788/rooms \
+  -H "content-type: application/json" \
+  -H "authorization: Bearer replace-with-a-long-random-token" \
+  -d '{
+    "title": "deploy-check",
+    "goal": "Check the deployment, fix obvious issues, and report status.",
+    "agents": ["codex-120", "openclaw-hk", "hermes-hk"],
+    "wakeAgents": ["codex-120", "openclaw-hk", "hermes-hk"],
+    "autoRotate": false
+  }'
+```
+
+Inside a room, agents can call each other with plain text:
+
+```text
+@agent-id: task for that agent
+REPORT: concise user-facing report
+BLACKBOARD: concise shared state update
+WAKE agent-id IN 5m: reason
+DONE
+```
+
+`DONE` requests completion; the room waits for all queued and running work to finish before becoming completed.
 
 ## OpenAI-Compatible Model Router
 
@@ -304,6 +361,8 @@ Health checks are stored in `runs.jsonl` too. Stored stdout/stderr and snapshots
 ## More Docs
 
 - [Architecture](docs/architecture.md)
+- [AI-to-AI Bus](docs/ai-to-ai.md)
+- [Roadmap](docs/roadmap.md)
 - [Deployment](docs/deployment.md)
 - [Web Console](docs/console.md)
 - [Windows Client](docs/windows-client.md)

@@ -32,6 +32,59 @@ node edge-node.mjs connect --config edge.config.json
 
 Use `edge_node.py` on machines without Node.js.
 
+Add a shallow `pingUrl` when an agent depends on a model gateway or local service:
+
+```json
+{
+  "id": "openclaw-hk",
+  "pingUrl": "https://YOUR-MODEL-GATEWAY/v1/models"
+}
+```
+
+This check does not send a completion request. It only records whether the URL is reachable from the edge machine. Real model errors are reported by real task runs.
+
+## Systemd
+
+Example central unit:
+
+```ini
+[Unit]
+Description=Agent Bus Central Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/agent-bus
+EnvironmentFile=/etc/agent-bus/central.env
+ExecStart=/usr/bin/python3 /root/agent-bus/central_gateway.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Example edge unit:
+
+```ini
+[Unit]
+Description=Agent Bus Edge Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/agent-bus
+Environment=AGENT_BUS_GATEWAY_URL=https://YOUR-GATEWAY-DOMAIN/agent-bus
+ExecStart=/usr/bin/node /root/agent-bus/edge-node.mjs connect --config /root/agent-bus/edge.config.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ## Nginx Reverse Proxy
 
 Example location block:

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import calendar
 import json
 import mimetypes
 import os
@@ -22,6 +23,16 @@ STATE = {
     "reminders": {},
     "conditions": {},
 }
+
+
+def int_env(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+NODE_STALE_SECONDS = max(1, int_env("AGENT_BUS_NODE_STALE_SECONDS", 180))
 
 
 def main():
@@ -67,10 +78,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urlparse(self.path).path
             if path == "/health":
+                agents = public_agents()
+                nodes = public_nodes()
                 return self.json({
                     "ok": True,
-                    "nodes": len(STATE["nodes"]),
-                    "agents": len(public_agents()),
+                    "nodes": len(nodes),
+                    "agents": len(agents),
+                    "registered_nodes": len(STATE["nodes"]),
+                    "registered_agents": sum(len(node.get("agents", [])) for node in STATE["nodes"].values()),
                     "queued": sum(len(q) for q in STATE["queues"].values()),
                 })
             if path == "/console" or path.startswith("/console/"):
@@ -78,6 +93,8 @@ class Handler(BaseHTTPRequestHandler):
             self.require_auth()
             if path == "/agents":
                 return self.json(public_agents())
+            if path in ("/manifest", "/v1/agent-bus/manifest"):
+                return self.json(agent_bus_manifest(self.config))
             if path == "/rooms":
                 return self.json([room_summary(room) for room in STATE["rooms"].values()])
             if path.startswith("/rooms/"):
@@ -121,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/edge/register":
                 return self.json(register_node(self.config, body))
             if path == "/edge/poll":
-                return self.json(poll_node(body.get("node_id"), int(body.get("timeout_ms") or self.config["defaults"]["pollTimeoutMs"])))
+                return self.json(poll_node(self.config, body, int(body.get("timeout_ms") or self.config["defaults"]["pollTimeoutMs"])))
             if path == "/edge/events":
                 record_event(self.config, body)
                 return self.json({"ok": True})
@@ -234,18 +251,7 @@ def register_node(config, body):
         err = Exception("node_id is required")
         err.status_code = 400
         raise err
-    agents = []
-    for agent in body.get("agents") or []:
-        if not agent.get("id"):
-            continue
-        agents.append({
-            "id": agent["id"],
-            "node_id": node_id,
-            "kind": agent.get("kind", "agent"),
-            "role": agent.get("role", "worker"),
-            "enabled": agent.get("enabled", True) is not False,
-            "capabilities": agent.get("capabilities") or [],
-        })
+    agents = normalize_agents(node_id, body.get("agents") or [])
     old = STATE["nodes"].get(node_id, {})
     node = {
         "node_id": node_id,
@@ -263,9 +269,47 @@ def register_node(config, body):
     return node
 
 
+def normalize_agents(node_id, agents):
+    out = []
+    for agent in agents or []:
+        if not agent.get("id"):
+            continue
+        item = {
+            "id": agent["id"],
+            "node_id": node_id,
+            "kind": agent.get("kind", "agent"),
+            "role": agent.get("role", "worker"),
+            "enabled": agent.get("enabled", True) is not False,
+            "capabilities": agent.get("capabilities") or [],
+        }
+        if agent.get("adapter"):
+            item["adapter"] = agent.get("adapter")
+        if isinstance(agent.get("health"), dict):
+            item["health"] = agent["health"]
+        out.append(item)
+    return out
+
+
+def public_nodes():
+    return [node for node in STATE["nodes"].values() if node_is_online(node)]
+
+
+def node_is_online(node):
+    if node.get("status") != "online":
+        return False
+    last_seen_at = node.get("last_seen_at")
+    if not last_seen_at:
+        return False
+    try:
+        last_seen = calendar.timegm(time.strptime(last_seen_at, "%Y-%m-%dT%H:%M:%SZ"))
+    except Exception:
+        return False
+    return time.time() - last_seen <= NODE_STALE_SECONDS
+
+
 def public_agents():
     out = []
-    for node in STATE["nodes"].values():
+    for node in public_nodes():
         for agent in node.get("agents", []):
             if agent.get("enabled") is False:
                 continue
@@ -274,6 +318,52 @@ def public_agents():
             item["node_last_seen_at"] = node.get("last_seen_at")
             out.append(item)
     return sorted(out, key=lambda item: item["id"])
+
+
+def agent_bus_manifest(config):
+    return {
+        "name": "agent-bus",
+        "protocol": "agent-bus.v1",
+        "description": "A lightweight AI-to-AI bus for discovering agents, routing tasks, and coordinating shared rooms.",
+        "auth": {
+            "type": "bearer",
+            "health_public": True,
+        },
+        "endpoints": {
+            "health": "GET /health",
+            "manifest": "GET /v1/agent-bus/manifest",
+            "agents": "GET /agents",
+            "route": "POST /route",
+            "threads": "POST /threads",
+            "rooms": "POST /rooms",
+            "room": "GET /rooms/{room_id}",
+            "room_message": "POST /rooms/{room_id}/messages",
+            "room_wake": "POST /rooms/{room_id}/wake",
+            "models": "GET /v1/models",
+            "chat_completions": "POST /v1/chat/completions",
+        },
+        "agent_contract": {
+            "identity": ["id", "node_id", "kind", "role"],
+            "capabilities": "Free-form strings that describe what the agent can do.",
+            "health": {
+                "node_status": "Edge process is polling the central gateway.",
+                "ping_status": "Optional shallow URL reachability check; it does not run model inference.",
+                "last_run_status": "Most recent real task outcome, when available.",
+            },
+        },
+        "room_protocol": {
+            "mention": "@agent-id: task for that agent",
+            "report": "REPORT: concise user-facing report",
+            "blackboard": "BLACKBOARD: concise shared state update",
+            "wake_later": "WAKE agent-id IN 5m: reason",
+            "done": "DONE",
+        },
+        "agents": public_agents(),
+        "model_router": {
+            "enabled": config.get("modelRouter", {}).get("enabled", True) is not False,
+            "models": [item["id"] for item in openai_models(config)["data"]],
+        },
+    }
 
 
 def openai_models(config):
@@ -782,7 +872,8 @@ def enqueue(node_id, task):
         cond.notify()
 
 
-def poll_node(node_id, timeout_ms):
+def poll_node(config, body, timeout_ms):
+    node_id = body.get("node_id")
     if node_id not in STATE["nodes"]:
         err = Exception("unknown node_id")
         err.status_code = 404
@@ -790,6 +881,8 @@ def poll_node(node_id, timeout_ms):
     node = STATE["nodes"][node_id]
     node["last_seen_at"] = now()
     node["status"] = "online"
+    if "agents" in body:
+        node["agents"] = merge_agent_updates(node_id, node.get("agents") or [], body.get("agents") or [])
     queue = STATE["queues"].setdefault(node_id, [])
     if queue:
         return {"type": "task", "task": queue.pop(0)}
@@ -799,6 +892,15 @@ def poll_node(node_id, timeout_ms):
     if queue:
         return {"type": "task", "task": queue.pop(0)}
     return {"type": "idle"}
+
+
+def merge_agent_updates(node_id, current, updates):
+    by_id = {agent.get("id"): dict(agent) for agent in current if agent.get("id")}
+    for update in normalize_agents(node_id, updates):
+        existing = by_id.get(update["id"], {})
+        existing.update(update)
+        by_id[update["id"]] = existing
+    return list(by_id.values())
 
 
 def record_event(config, body):
@@ -834,6 +936,7 @@ def complete_run(config, body):
     run["stdout"] = trim(redact_text(result.get("stdout", run.get("stdout", ""))))
     run["stderr"] = trim(redact_text(result.get("stderr", run.get("stderr", ""))))
     run["summary"] = trim(redact_text(result.get("summary", "")))
+    update_agent_run_health(run)
     STATE["runs"][run["id"]] = run
     write_snapshot(config, "runs", run["id"], run)
     update_thread_run(config, run)
@@ -843,11 +946,31 @@ def complete_run(config, body):
     return run
 
 
+def update_agent_run_health(run):
+    node = STATE["nodes"].get(run.get("node_id"))
+    if not node:
+        return
+    for agent in node.get("agents") or []:
+        if agent.get("id") != run.get("agent_id"):
+            continue
+        health = dict(agent.get("health") or {})
+        health["last_run_status"] = run.get("status")
+        health["last_run_at"] = run.get("completed_at") or now()
+        if run.get("status") == "completed":
+            health["last_success_at"] = health["last_run_at"]
+        else:
+            health["last_error_at"] = health["last_run_at"]
+            health["last_error"] = trim(run.get("stderr") or run.get("summary") or "run failed")[:2000]
+        agent["health"] = health
+        return
+
+
 def continue_room_run(config, run):
     room_id = run.get("room_id") or run.get("thread_id")
     room = STATE["rooms"].get(room_id) or read_snapshot(config, "rooms", room_id)
     if not room:
         return
+    sync_room_run(room, run)
     if any(item.get("run_id") == run["id"] for item in room.get("messages") or []):
         return
     content = (run.get("stdout") or run.get("summary") or run.get("stderr") or "").strip()
@@ -860,6 +983,7 @@ def continue_room_run(config, run):
         "at": run.get("completed_at") or now(),
     })
     actions = process_room_directives(config, room, run, content)
+    finalize_room_completion(room)
     scheduled_actions = {"wake", "reminder", "done"}
     if not any(action in scheduled_actions for action in actions) and room.get("status") == "active" and room.get("autonomy", {}).get("auto_rotate", True):
         wake_room_agents(config, room, [next_room_agent(room)], "Continue the room from the latest message.")
@@ -875,7 +999,7 @@ def process_room_directives(config, room, run, content):
         if not line:
             continue
         if re.match(r"^DONE\b", line, re.I):
-            room["status"] = "completed"
+            request_room_completion(room, run)
             actions.append("done")
             continue
         match = re.match(r"^REPORT\s*:\s*(.+)", line, re.I)
@@ -912,6 +1036,47 @@ def process_room_directives(config, room, run, content):
                 actions.append("wake")
             continue
     return actions
+
+
+TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "canceled", "skipped"}
+
+
+def sync_room_run(room, run):
+    room["runs"] = [run if item.get("id") == run.get("id") else item for item in room.get("runs", [])]
+
+
+def active_room_runs(room):
+    return [
+        item for item in room.get("runs", [])
+        if (item.get("status") or "queued").lower() not in TERMINAL_RUN_STATUSES
+    ]
+
+
+def request_room_completion(room, run):
+    completion = room.setdefault("completion", {})
+    completion["requested"] = True
+    requests = completion.setdefault("requests", [])
+    if not any(item.get("run_id") == run.get("id") for item in requests):
+        requests.append({
+            "at": now(),
+            "speaker": run.get("agent_id"),
+            "run_id": run.get("id"),
+        })
+    finalize_room_completion(room)
+
+
+def finalize_room_completion(room):
+    if room.get("status") in ("completed", "paused"):
+        return
+    completion = room.get("completion") or {}
+    if not completion.get("requested"):
+        return
+    if active_room_runs(room):
+        room["status"] = "finishing"
+        return
+    completion["completed_at"] = completion.get("completed_at") or now()
+    room["completion"] = completion
+    room["status"] = "completed"
 
 
 def continue_group_thread(config, run):

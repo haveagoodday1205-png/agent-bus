@@ -110,6 +110,9 @@ async function serve(config) {
       if (req.method === "GET" && url.pathname === "/agents") {
         return sendJson(res, publicAgents());
       }
+      if (req.method === "GET" && (url.pathname === "/manifest" || url.pathname === "/v1/agent-bus/manifest")) {
+        return sendJson(res, agentBusManifest(config));
+      }
       if (req.method === "GET" && url.pathname === "/v1/models") {
         return sendJson(res, openAiModels(config));
       }
@@ -241,6 +244,41 @@ function publicAgents() {
     })))
     .filter((agent) => agent.enabled !== false)
     .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function agentBusManifest(config) {
+  return {
+    name: "agent-bus",
+    protocol: "agent-bus.v1",
+    description: "A lightweight AI-to-AI bus for discovering agents, routing tasks, and coordinating shared work.",
+    auth: {
+      type: "bearer",
+      health_public: true
+    },
+    endpoints: {
+      health: "GET /health",
+      manifest: "GET /v1/agent-bus/manifest",
+      agents: "GET /agents",
+      route: "POST /route",
+      threads: "POST /threads",
+      models: "GET /v1/models",
+      chat_completions: "POST /v1/chat/completions"
+    },
+    agent_contract: {
+      identity: ["id", "node_id", "kind", "role"],
+      capabilities: "Free-form strings that describe what the agent can do.",
+      health: {
+        node_status: "Edge process is polling the central gateway.",
+        ping_status: "Optional shallow URL reachability check; it does not run model inference.",
+        last_run_status: "Most recent real task outcome, when available."
+      }
+    },
+    agents: publicAgents(),
+    model_router: {
+      enabled: config.modelRouter?.enabled !== false,
+      models: openAiModels(config).data.map((item) => item.id)
+    }
+  };
 }
 
 function openAiModels(config) {

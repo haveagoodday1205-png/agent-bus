@@ -31,7 +31,7 @@ async function main() {
     return;
   }
   if (command === "health") {
-    const results = await Promise.all(publicAgents(config).map((agent) => runLocalHealth(config, agent)));
+    const results = await Promise.all(config.agents.filter((agent) => agent.enabled !== false).map((agent) => runLocalHealth(config, agent)));
     console.log(JSON.stringify(results, null, 2));
     return;
   }
@@ -64,7 +64,11 @@ function loadConfig(file) {
   config.pollTimeoutMs ||= 25000;
   config.idleDelayMs ||= 1000;
   config.defaultTimeoutMs ||= 600000;
+  config.healthProbeIntervalMs ||= 60000;
+  config.healthProbeTimeoutMs ||= 5000;
   config.agents ||= [];
+  config._agentHealth = {};
+  config._nextHealthProbeAt = 0;
   return config;
 }
 
@@ -77,32 +81,66 @@ function publicAgents(config) {
       role: agent.role || "worker",
       enabled: agent.enabled !== false,
       adapter: agent.adapter || "command",
-      capabilities: agent.capabilities || []
+      capabilities: agent.capabilities || [],
+      health: agentHealth(config, agent)
     }));
 }
 
+function agentHealth(config, agent) {
+  const cached = config._agentHealth?.[agent.id];
+  if (cached) return cached;
+  const pingUrl = agentPingUrl(agent);
+  return {
+    kind: pingUrl ? "url" : "none",
+    ping_status: pingUrl ? "unknown" : "not_configured",
+    checked_at: null,
+    ...(pingUrl ? { ping_target: safeUrlForStatus(pingUrl) } : {})
+  };
+}
+
 async function connectLoop(config, options = {}) {
-  await register(config);
-  console.log(`edge-node ${config.nodeId} connected to ${config.gatewayUrl}`);
+  let registered = false;
+  let failures = 0;
 
   while (true) {
-    const payload = await postJson(config, "/edge/poll", {
-      node_id: config.nodeId,
-      timeout_ms: config.pollTimeoutMs
-    });
+    try {
+      if (!registered) {
+        await register(config);
+        registered = true;
+        failures = 0;
+        console.log(`edge-node ${config.nodeId} connected to ${config.gatewayUrl}`);
+      }
 
-    if (payload.type === "task" && payload.task) {
-      await handleTask(config, payload.task);
+      await refreshAgentHealth(config);
+      const payload = await postJson(config, "/edge/poll", {
+        node_id: config.nodeId,
+        timeout_ms: config.pollTimeoutMs,
+        agents: publicAgents(config)
+      });
+
+      failures = 0;
+      if (payload.type === "task" && payload.task) {
+        await handleTask(config, payload.task);
+        if (options.once) return;
+        continue;
+      }
+
       if (options.once) return;
-      continue;
+      await delay(config.idleDelayMs);
+    } catch (err) {
+      if (isAuthError(err) || isPermanentClientError(err)) throw err;
+      if (isRegistrationLost(err)) registered = false;
+      failures += 1;
+      const waitMs = reconnectDelayMs(config, failures);
+      console.error(`edge-node ${config.nodeId} transient error: ${err.message || err}; retrying in ${waitMs}ms`);
+      if (options.once) throw err;
+      await delay(waitMs);
     }
-
-    if (options.once) return;
-    await delay(config.idleDelayMs);
   }
 }
 
 async function register(config) {
+  await refreshAgentHealth(config, { force: true });
   return postJson(config, "/edge/register", {
     node_id: config.nodeId,
     hostname: os.hostname(),
@@ -137,6 +175,7 @@ async function handleTask(config, task) {
     };
   }
   result.duration_ms = Date.now() - started;
+  recordRunHealth(config, agent, result);
   await complete(config, task, result);
 }
 
@@ -164,6 +203,10 @@ async function runAgent(config, agent, task) {
 }
 
 async function runLocalHealth(config, agent) {
+  const pingUrl = agentPingUrl(agent);
+  if (pingUrl) {
+    return { agent_id: agent.id, ...(await probePingUrl(config, agent, pingUrl)) };
+  }
   if (agent.adapter === "echo") {
     return { agent_id: agent.id, status: "completed", exit_code: 0, stdout: "echo adapter ok\n", stderr: "" };
   }
@@ -173,6 +216,113 @@ async function runLocalHealth(config, agent) {
   const task = { run_id: `local_${crypto.randomUUID()}`, message: "" };
   const result = await spawnCommand(config, agent, task, agent.healthCommand, { emit: false });
   return { agent_id: agent.id, ...result };
+}
+
+async function refreshAgentHealth(config, options = {}) {
+  const nowMs = Date.now();
+  if (!options.force && nowMs < Number(config._nextHealthProbeAt || 0)) return;
+  config._nextHealthProbeAt = nowMs + Number(config.healthProbeIntervalMs || 60000);
+  const enabledAgents = config.agents.filter((agent) => agent.enabled !== false);
+  const results = await Promise.all(enabledAgents.map(async (agent) => [agent.id, await probeAgent(config, agent)]));
+  for (const [agentId, health] of results) {
+    config._agentHealth[agentId] = mergeHealth(config._agentHealth[agentId], health);
+  }
+}
+
+async function probeAgent(config, agent) {
+  const pingUrl = agentPingUrl(agent);
+  if (!pingUrl) return agentHealth(config, agent);
+  return probePingUrl(config, agent, pingUrl);
+}
+
+async function probePingUrl(config, agent, pingUrl) {
+  const started = Date.now();
+  const timeoutMs = Number(agent.healthProbeTimeoutMs || config.healthProbeTimeoutMs || 5000);
+  try {
+    const res = await fetchWithTimeout(pingUrl, { method: "HEAD" }, timeoutMs);
+    return pingHealth("HEAD", res.status, started, pingUrl);
+  } catch (err) {
+    if (err?.statusCode === 405 || /405/.test(err?.message || "")) {
+      try {
+        const res = await fetchWithTimeout(pingUrl, { method: "GET" }, timeoutMs);
+        return pingHealth("GET", res.status, started, pingUrl);
+      } catch (getErr) {
+        return pingFailure(getErr, started, pingUrl);
+      }
+    }
+    return pingFailure(err, started, pingUrl);
+  }
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    if (res.status === 405) {
+      const err = new Error("405 Method Not Allowed");
+      err.statusCode = 405;
+      throw err;
+    }
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function pingHealth(method, statusCode, started, pingUrl) {
+  return {
+    kind: "url",
+    ping_status: statusCode >= 500 ? "unhealthy" : "reachable",
+    http_status: statusCode,
+    method,
+    latency_ms: Date.now() - started,
+    checked_at: new Date().toISOString(),
+    ping_target: safeUrlForStatus(pingUrl)
+  };
+}
+
+function pingFailure(err, started, pingUrl) {
+  return {
+    kind: "url",
+    ping_status: "unreachable",
+    latency_ms: Date.now() - started,
+    checked_at: new Date().toISOString(),
+    ping_target: safeUrlForStatus(pingUrl),
+    error: String(err?.message || err).slice(0, 500)
+  };
+}
+
+function agentPingUrl(agent) {
+  return agent.pingUrl || agent.healthUrl || agent.modelUrl || "";
+}
+
+function safeUrlForStatus(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function recordRunHealth(config, agent, result) {
+  const nowText = new Date().toISOString();
+  config._agentHealth[agent.id] = mergeHealth(config._agentHealth[agent.id], {
+    last_run_status: result.status,
+    last_run_at: nowText,
+    ...(result.status === "completed"
+      ? { last_success_at: nowText }
+      : { last_error_at: nowText, last_error: String(result.stderr || result.summary || "run failed").slice(0, 2000) })
+  });
+}
+
+function mergeHealth(current, next) {
+  return { ...(current || {}), ...(next || {}) };
 }
 
 function spawnCommand(config, agent, task, commandText, options = {}) {
@@ -253,14 +403,20 @@ async function complete(config, task, result) {
 }
 
 async function postJson(config, pathname, body) {
-  const res = await fetch(gatewayEndpoint(config.gatewayUrl, pathname), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(config.token ? { authorization: `Bearer ${config.token}` } : {})
-    },
-    body: JSON.stringify(body)
-  });
+  let res;
+  try {
+    res = await fetch(gatewayEndpoint(config.gatewayUrl, pathname), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(config.token ? { authorization: `Bearer ${config.token}` } : {})
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (err) {
+    err.transient = true;
+    throw err;
+  }
   const text = await res.text();
   let data = {};
   try {
@@ -274,6 +430,25 @@ async function postJson(config, pathname, body) {
     throw err;
   }
   return data;
+}
+
+function isAuthError(err) {
+  return err?.statusCode === 401 || err?.statusCode === 403 || /unauthorized|forbidden/i.test(err?.message || "");
+}
+
+function isPermanentClientError(err) {
+  return err?.statusCode >= 400 && err?.statusCode < 500 && !isRegistrationLost(err);
+}
+
+function isRegistrationLost(err) {
+  return err?.statusCode === 404 && /unknown node_id/i.test(err?.message || "");
+}
+
+function reconnectDelayMs(config, failures) {
+  const base = Number(config.reconnectBaseDelayMs || 1000);
+  const max = Number(config.reconnectMaxDelayMs || 30000);
+  const delayMs = Math.min(max, base * (2 ** Math.min(failures - 1, 5)));
+  return Math.round(delayMs + Math.random() * Math.min(1000, delayMs / 2));
 }
 
 function gatewayEndpoint(gatewayUrl, pathname) {

@@ -13,6 +13,20 @@ The central gateway stores threads, runs, events, and node registrations. Edge n
 
 This keeps edge machines private. They do not need public inbound ports.
 
+Agents can also publish shallow health during registration and polling. URL ping health is intentionally non-inference health: it proves an endpoint is reachable, not that a model key, quota, or completion request will succeed.
+
+## Room Plane
+
+Rooms provide a shared workspace where agents can coordinate using text directives:
+
+- `@agent-id: task`
+- `REPORT: ...`
+- `BLACKBOARD: ...`
+- `WAKE agent-id IN 5m: ...`
+- `DONE`
+
+The gateway stores room messages and run snapshots. A `DONE` directive requests completion, but the room only completes after all queued and running work has reached a terminal state.
+
 ## Model Plane
 
 The central gateway exposes OpenAI-compatible endpoints:

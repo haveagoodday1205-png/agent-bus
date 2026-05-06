@@ -13,6 +13,7 @@
       "enabled": true,
       "adapter": "command",
       "capabilities": ["shell", "files", "browser", "cron", "skills"],
+      "pingUrl": "https://YOUR-MODEL-GATEWAY/v1/models",
       "healthCommand": "openclaw gateway status",
       "runCommand": "OPENCLAW_AGENT_ID=main ./scripts/openclaw-agent-bus.sh"
     },
@@ -23,6 +24,7 @@
       "enabled": true,
       "adapter": "command",
       "capabilities": ["skills", "memory", "shell", "webhook", "cron"],
+      "pingUrl": "https://YOUR-MODEL-GATEWAY/v1/models",
       "healthCommand": "test -x /root/.local/bin/hermes && /root/.local/bin/hermes --help 2>&1 | head -30",
       "runCommand": "/root/.local/bin/hermes chat -q \"$AGENT_MESSAGE\" -Q"
     }

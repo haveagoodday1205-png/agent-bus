@@ -193,6 +193,7 @@ The edge node streams stdout/stderr events back to the gateway, then posts a fin
 curl -s http://127.0.0.1:8788/health
 curl -s http://127.0.0.1:8788/agents ^
   -H "authorization: Bearer replace-with-a-long-random-token"
+agent-bus status --gateway http://127.0.0.1:8788 --token replace-with-a-long-random-token
 curl -s -X POST http://127.0.0.1:8788/route ^
   -H "content-type: application/json" ^
   -H "authorization: Bearer replace-with-a-long-random-token" ^

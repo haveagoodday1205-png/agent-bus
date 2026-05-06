@@ -136,6 +136,10 @@ async function main() {
     await room(argv.slice(1));
     return;
   }
+  if (command === "status") {
+    await status(argv.slice(1));
+    return;
+  }
   if (command === "health") {
     await getJson("/health", { auth: false });
     return;
@@ -166,6 +170,7 @@ Usage:
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
+  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ...
 
 Gateway queries:
   agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
@@ -1133,6 +1138,90 @@ async function room(args) {
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
   throw new Error("Usage: agent-bus room list|show|create|wake|message [options]");
+}
+
+async function status(args) {
+  const jsonOut = args.includes("--json");
+  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || "";
+  const health = await gatewayJson("/health", { auth: false, args });
+  let agents = [];
+  let rooms = [];
+  let authWarning = "";
+
+  if (token) {
+    agents = await gatewayJson("/agents", { auth: true, args });
+    rooms = await gatewayJson("/rooms", { auth: true, args });
+  } else {
+    authWarning = "Pass --token or AGENT_BUS_TOKEN to include agents and rooms.";
+  }
+
+  const result = summarizeStatus({ health, agents, rooms, authWarning });
+  if (jsonOut) {
+    printJson(result);
+    return;
+  }
+  printStatus(result);
+}
+
+function summarizeStatus({ health, agents, rooms, authWarning }) {
+  const agentList = Array.isArray(agents) ? agents : [];
+  const roomList = Array.isArray(rooms) ? rooms : [];
+  const onlineAgents = agentList.filter((agent) => agent.status === "online");
+  const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
+  const activeRooms = roomList.filter((room) => room.status === "active");
+  return {
+    ok: Boolean(health?.ok),
+    health,
+    summary: {
+      nodes: health?.nodes ?? 0,
+      agents: health?.agents ?? 0,
+      registered_nodes: health?.registered_nodes ?? health?.nodes ?? 0,
+      registered_agents: health?.registered_agents ?? health?.agents ?? 0,
+      queued: health?.queued ?? 0,
+      online_agents: onlineAgents.length,
+      reachable_agents: reachableAgents.length,
+      rooms: roomList.length,
+      active_rooms: activeRooms.length
+    },
+    agents: agentList.map((agent) => ({
+      id: agent.id,
+      status: agent.status || "unknown",
+      ping_status: agent.ping_status || agent.health?.ping_status || "unknown",
+      last_run_status: agent.last_run_status || agent.health?.last_run_status || null,
+      last_seen_at: agent.last_seen_at || agent.node_last_seen_at || null
+    })),
+    rooms: roomList.slice(0, 8).map((room) => ({
+      id: room.id,
+      status: room.status,
+      agents: room.agents || [],
+      updated_at: room.updated_at,
+      reports: room.report_count ?? null,
+      messages: room.message_count ?? null
+    })),
+    warnings: authWarning ? [authWarning] : []
+  };
+}
+
+function printStatus(result) {
+  const s = result.summary || {};
+  console.log(`Agent Bus status: ${result.ok ? "OK" : "WARN"}`);
+  console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, queued ${s.queued}`);
+  if (result.warnings?.length) {
+    for (const warning of result.warnings) console.log(`Warning: ${warning}`);
+  }
+  if (result.agents.length) {
+    console.log("\nAgents:");
+    for (const agent of result.agents) {
+      const run = agent.last_run_status ? ` last_run=${agent.last_run_status}` : "";
+      console.log(`- ${agent.id}: ${agent.status}, ping=${agent.ping_status}${run}`);
+    }
+  }
+  if (result.rooms.length) {
+    console.log("\nRecent rooms:");
+    for (const room of result.rooms) {
+      console.log(`- ${room.id}: ${room.status}, agents=${room.agents.join(",") || "-"}, updated=${room.updated_at || "-"}`);
+    }
+  }
 }
 
 function ollamaAgent(commandPath, model, id = "ollama-local") {

@@ -22,6 +22,7 @@ jobs:
       - name: Checks
         run: |
           npm run release:check
+          npm run portable:check:zip
           node smoke-test.mjs
       - name: Build portable bundle
         run: |

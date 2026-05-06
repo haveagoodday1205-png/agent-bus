@@ -49,6 +49,7 @@
     "agents": "node server.mjs agents",
     "pack:check": "node scripts/verify-package.mjs",
     "portable:check": "node scripts/verify-portable-release.mjs",
+    "portable:check:zip": "node scripts/verify-portable-release.mjs --zip",
     "release:check": "node scripts/release-check.mjs"
   },
   "engines": {

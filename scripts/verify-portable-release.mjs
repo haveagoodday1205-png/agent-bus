@@ -6,6 +6,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-portable-check-"));
+const checkZip = process.argv.includes("--zip") || process.env.AGENT_BUS_PORTABLE_CHECK_ZIP === "1";
 
 try {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -13,18 +14,20 @@ try {
   const bundleDir = path.join(tempDir, bundleName);
   const launcherName = process.platform === "win32" ? "agent-bus.cmd" : "agent-bus";
   const tarPath = path.join(tempDir, `${bundleName}.tar.gz`);
+  const zipPath = path.join(tempDir, `${bundleName}.zip`);
   const releaseManifestPath = path.join(tempDir, `${bundleName}.manifest.json`);
   const sumsPath = path.join(tempDir, "SHA256SUMS");
 
-  run(process.execPath, [
+  const buildArgs = [
     path.join(root, "scripts", "make-portable-release.mjs"),
     "--archive",
-    "--no-zip",
     "--out",
     tempDir,
     "--name",
     bundleName
-  ]);
+  ];
+  if (!checkZip) buildArgs.splice(2, 0, "--no-zip");
+  run(process.execPath, buildArgs);
 
   for (const file of [bundleDir, tarPath, releaseManifestPath, sumsPath]) {
     assert(fs.existsSync(file), `portable release output missing: ${file}`);
@@ -91,6 +94,14 @@ try {
 
   const sums = fs.readFileSync(sumsPath, "utf8");
   assert(sums.includes(`${sha256File(tarPath)}  ${path.basename(tarPath)}`), "SHA256SUMS missing tar.gz checksum");
+  if (checkZip) {
+    assert(fs.existsSync(zipPath), `portable zip output missing: ${zipPath}`);
+    const zipEntry = releaseManifest.artifacts?.find((artifact) => artifact.file === path.basename(zipPath));
+    assert(zipEntry, "release manifest missing zip artifact");
+    assert(zipEntry.bytes === fs.statSync(zipPath).size, "release manifest zip size mismatch");
+    assert(zipEntry.sha256 === sha256File(zipPath), "release manifest zip sha256 mismatch");
+    assert(sums.includes(`${sha256File(zipPath)}  ${path.basename(zipPath)}`), "SHA256SUMS missing zip checksum");
+  }
 
   const extractDir = path.join(tempDir, "extract");
   fs.mkdirSync(extractDir);
@@ -100,12 +111,22 @@ try {
   const help = run(extractedLauncher, ["--help"]);
   assert(help.stdout.includes("agent-bus"), "portable launcher did not print help text");
   assert(help.stdout.includes("agent-bus setup edge"), "portable launcher help is missing setup edge command");
+  if (checkZip) {
+    const zipExtractDir = path.join(tempDir, "zip-extract");
+    fs.mkdirSync(zipExtractDir);
+    extractZip(zipPath, zipExtractDir);
+    const zipLauncher = path.join(zipExtractDir, bundleName, launcherName);
+    assert(fs.existsSync(zipLauncher), `zip did not extract the ${launcherName} launcher`);
+    const zipHelp = run(zipLauncher, ["--help"]);
+    assert(zipHelp.stdout.includes("agent-bus"), "zip portable launcher did not print help text");
+  }
 
   console.log(JSON.stringify({
     ok: true,
     package: `${pkg.name}@${pkg.version}`,
     bundle: bundleName,
     artifact: path.basename(tarPath),
+    zip: checkZip ? path.basename(zipPath) : null,
     files: manifestFiles.size,
     bytes: fs.statSync(tarPath).size
   }, null, 2));
@@ -136,6 +157,34 @@ function commandInvocation(command, args) {
     };
   }
   return { command, args };
+}
+
+function extractZip(zipPath, outDir) {
+  if (runOptional("unzip", ["-q", zipPath, "-d", outDir])) return;
+  const ps = process.platform === "win32" ? "powershell.exe" : "pwsh";
+  const command = `Expand-Archive -LiteralPath ${powerShellQuote(zipPath)} -DestinationPath ${powerShellQuote(outDir)} -Force`;
+  if (runOptional(ps, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])) return;
+  throw new Error("Could not extract zip archive. Install unzip or PowerShell, or run without --zip.");
+}
+
+function runOptional(command, args, options = {}) {
+  try {
+    const invocation = commandInvocation(command, args);
+    const result = spawnSync(invocation.command, invocation.args, {
+      cwd: options.cwd || root,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: "ignore",
+      env: { ...process.env, npm_config_loglevel: "error" }
+    });
+    return !result.error && result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function powerShellQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
 }
 
 function sha256File(file) {

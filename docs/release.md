@@ -30,6 +30,8 @@ npm run release:check
 
 `portable:check` is the GitHub Release bundle gate. It builds a temporary portable archive, validates the bundle manifest, SHA-256 values, launcher executable bit, forbidden paths, release manifest, `SHA256SUMS`, archive extraction, and bundled `agent-bus --help`.
 
+`portable:check:zip` also builds and extracts the `.zip` artifact. It is required in the GitHub release workflow and useful locally when `zip`/`unzip` or PowerShell is available.
+
 Do not tag if either gate reports forbidden paths such as `.git`, `.github`, `data`, `dist`, `.env`, real `central.config.json`, real `edge.config.json`, or `node_modules`.
 
 ## Install Matrix for Release Notes

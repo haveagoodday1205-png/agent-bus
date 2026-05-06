@@ -11,6 +11,7 @@ try {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const bundleName = `agent-bus-v${pkg.version}-portable-check`;
   const bundleDir = path.join(tempDir, bundleName);
+  const launcherName = process.platform === "win32" ? "agent-bus.cmd" : "agent-bus";
   const tarPath = path.join(tempDir, `${bundleName}.tar.gz`);
   const releaseManifestPath = path.join(tempDir, `${bundleName}.manifest.json`);
   const sumsPath = path.join(tempDir, "SHA256SUMS");
@@ -48,8 +49,10 @@ try {
     assert(fs.existsSync(path.join(bundleDir, relative)), `portable bundle missing required file: ${relative}`);
   }
 
-  const unixLauncher = fs.statSync(path.join(bundleDir, "agent-bus"));
-  assert((unixLauncher.mode & 0o111) !== 0, "portable Unix launcher must be executable");
+  if (process.platform !== "win32") {
+    const unixLauncher = fs.statSync(path.join(bundleDir, "agent-bus"));
+    assert((unixLauncher.mode & 0o111) !== 0, "portable Unix launcher must be executable");
+  }
 
   const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "manifest.json"), "utf8"));
   assert(manifest.name === pkg.name, "bundle manifest has wrong package name");
@@ -90,8 +93,8 @@ try {
   const extractDir = path.join(tempDir, "extract");
   fs.mkdirSync(extractDir);
   run("tar", ["-xzf", tarPath, "-C", extractDir]);
-  const extractedLauncher = path.join(extractDir, bundleName, "agent-bus");
-  assert(fs.existsSync(extractedLauncher), "tar.gz did not extract the Unix launcher");
+  const extractedLauncher = path.join(extractDir, bundleName, launcherName);
+  assert(fs.existsSync(extractedLauncher), `tar.gz did not extract the ${launcherName} launcher`);
   const help = run(extractedLauncher, ["--help"]);
   assert(help.stdout.includes("agent-bus"), "portable launcher did not print help text");
   assert(help.stdout.includes("agent-bus setup edge"), "portable launcher help is missing setup edge command");
@@ -109,7 +112,8 @@ try {
 }
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const invocation = commandInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: options.cwd || root,
     encoding: "utf8",
     windowsHide: true,
@@ -120,6 +124,16 @@ function run(command, args, options = {}) {
     throw new Error(`${command} ${args.join(" ")} failed with ${result.status}: ${result.stderr || result.stdout}`);
   }
   return result;
+}
+
+function commandInvocation(command, args) {
+  if (process.platform === "win32" && /\.cmd$/i.test(String(command))) {
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/c", command, ...args]
+    };
+  }
+  return { command, args };
 }
 
 function sha256File(file) {

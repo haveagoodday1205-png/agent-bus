@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import mimetypes
 import os
 import re
 import threading
@@ -68,6 +69,8 @@ class Handler(BaseHTTPRequestHandler):
                     "agents": len(public_agents()),
                     "queued": sum(len(q) for q in STATE["queues"].values()),
                 })
+            if path == "/console" or path.startswith("/console/"):
+                return self.console_asset(path)
             self.require_auth()
             if path == "/agents":
                 return self.json(public_agents())
@@ -134,6 +137,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("cache-control", "no-store")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def console_asset(self, request_path):
+        root = Path(__file__).resolve().parent / "console"
+        relative = "index.html" if request_path in ("/console", "/console/") else request_path.replace("/console/", "", 1)
+        file_path = (root / relative).resolve()
+        if not str(file_path).startswith(str(root.resolve())) or not file_path.exists() or file_path.is_dir():
+            return self.json({"error": "not_found"}, 404)
+        content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+        if file_path.suffix == ".js":
+            content_type = "text/javascript"
+        data = file_path.read_bytes()
+        self.send_response(200)
+        self.send_header("content-type", content_type + ("; charset=utf-8" if content_type.startswith("text/") else ""))
+        self.send_header("cache-control", "no-store" if file_path.name == "index.html" else "public, max-age=60")
         self.send_header("content-length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)

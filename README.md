@@ -43,6 +43,12 @@ Start the central gateway:
 node central-gateway.mjs serve
 ```
 
+Open the web console:
+
+```text
+http://127.0.0.1:8788/console/
+```
+
 Start one edge node:
 
 ```bash
@@ -299,5 +305,6 @@ Health checks are stored in `runs.jsonl` too. Stored stdout/stderr and snapshots
 
 - [Architecture](docs/architecture.md)
 - [Deployment](docs/deployment.md)
+- [Web Console](docs/console.md)
 - [Windows Client](docs/windows-client.md)
 - [Security](SECURITY.md)

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Bus Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Agent Bus</h1>
+        <p id="gatewayLabel">Console</p>
+      </div>
+      <div class="topbar-actions">
+        <label class="token-field">
+          <span>Token</span>
+          <input id="tokenInput" type="password" autocomplete="off" placeholder="Bearer token" />
+        </label>
+        <button id="saveTokenButton" type="button">Save</button>
+        <button id="refreshButton" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="status-band" aria-label="Gateway status">
+        <div>
+          <span class="metric-label">Gateway</span>
+          <strong id="gatewayStatus">checking</strong>
+        </div>
+        <div>
+          <span class="metric-label">Nodes</span>
+          <strong id="nodeCount">-</strong>
+        </div>
+        <div>
+          <span class="metric-label">Agents</span>
+          <strong id="agentCount">-</strong>
+        </div>
+        <div>
+          <span class="metric-label">Queued</span>
+          <strong id="queuedCount">-</strong>
+        </div>
+      </section>
+
+      <nav class="tabs" aria-label="Console sections">
+        <button class="tab active" type="button" data-tab="agents">Agents</button>
+        <button class="tab" type="button" data-tab="tasks">Tasks</button>
+        <button class="tab" type="button" data-tab="models">Models</button>
+        <button class="tab" type="button" data-tab="events">Events</button>
+      </nav>
+
+      <section id="agentsPanel" class="panel active">
+        <div class="section-head">
+          <h2>Agents</h2>
+          <button id="loadAgentsButton" type="button">Reload</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Agent</th>
+                <th>Node</th>
+                <th>Kind</th>
+                <th>Role</th>
+                <th>Capabilities</th>
+                <th>Seen</th>
+              </tr>
+            </thead>
+            <tbody id="agentsTable"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tasksPanel" class="panel">
+        <div class="split">
+          <form id="taskForm" class="tool-surface">
+            <div class="section-head">
+              <h2>Task</h2>
+              <button id="routeButton" type="button">Route</button>
+            </div>
+            <label>
+              <span>Message</span>
+              <textarea id="taskMessage" rows="7" placeholder="Ask connected agents to do something"></textarea>
+            </label>
+            <div class="form-row">
+              <label>
+                <span>Mode</span>
+                <select id="taskMode">
+                  <option value="orchestrate">orchestrate</option>
+                  <option value="broadcast">broadcast</option>
+                  <option value="explicit">selected agents</option>
+                </select>
+              </label>
+              <button id="submitTaskButton" type="submit">Run Task</button>
+            </div>
+          </form>
+
+          <div class="tool-surface">
+            <div class="section-head">
+              <h2>Thread</h2>
+              <button id="stopPollingButton" type="button">Stop Polling</button>
+            </div>
+            <div id="threadSummary" class="muted">No thread selected.</div>
+            <div id="runsList" class="runs-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="modelsPanel" class="panel">
+        <div class="split">
+          <form id="chatForm" class="tool-surface">
+            <div class="section-head">
+              <h2>Model Router</h2>
+              <button id="loadModelsButton" type="button">Models</button>
+            </div>
+            <label>
+              <span>Model</span>
+              <input id="modelInput" value="agent-bus-default" />
+            </label>
+            <label>
+              <span>Prompt</span>
+              <textarea id="chatPrompt" rows="7" placeholder="Send a message through /v1/chat/completions"></textarea>
+            </label>
+            <button type="submit">Send</button>
+          </form>
+          <div class="tool-surface">
+            <div class="section-head">
+              <h2>Response</h2>
+              <button id="clearModelOutputButton" type="button">Clear</button>
+            </div>
+            <pre id="modelOutput" class="output"></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="eventsPanel" class="panel">
+        <div class="section-head">
+          <h2>Events</h2>
+          <button id="clearEventsButton" type="button">Clear</button>
+        </div>
+        <pre id="eventLog" class="event-log"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

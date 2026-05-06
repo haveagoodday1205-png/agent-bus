@@ -54,6 +54,8 @@ async function main() {
     AGENT_BUS_PORT: "8788"
   });
   await waitForJson("http://127.0.0.1:8788/health");
+  const consoleHtml = await requestText("http://127.0.0.1:8788/console/");
+  assert(consoleHtml.includes("Agent Bus"), "console HTML did not load");
 
   const models = await requestJson("http://127.0.0.1:8788/v1/models", {
     headers: { authorization: `Bearer ${token}` }
@@ -130,6 +132,13 @@ async function requestJson(url, options = {}) {
   const text = await res.text();
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
   return text.trim() ? JSON.parse(text) : {};
+}
+
+async function requestText(url, options = {}) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  return text;
 }
 
 function assert(condition, message) {

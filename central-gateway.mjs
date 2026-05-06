@@ -103,6 +103,9 @@ async function serve(config) {
           queued: [...state.queues.values()].reduce((sum, queue) => sum + queue.length, 0)
         });
       }
+      if (req.method === "GET" && (url.pathname === "/console" || url.pathname.startsWith("/console/"))) {
+        return sendConsoleAsset(res, url.pathname);
+      }
       requireAuth(req, config);
       if (req.method === "GET" && url.pathname === "/agents") {
         return sendJson(res, publicAgents());
@@ -611,6 +614,30 @@ function sendJson(res, value, status = 200) {
     "cache-control": "no-store"
   });
   res.end(body);
+}
+
+function sendConsoleAsset(res, pathname) {
+  const consoleDir = path.join(__dirname, "console");
+  const relative = pathname === "/console" || pathname === "/console/" ? "index.html" : pathname.replace(/^\/console\//, "");
+  const file = path.resolve(consoleDir, relative);
+  if (!file.startsWith(path.resolve(consoleDir))) {
+    return sendJson(res, { error: "not_found" }, 404);
+  }
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    return sendJson(res, { error: "not_found" }, 404);
+  }
+  const ext = path.extname(file).toLowerCase();
+  const contentType = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8"
+  }[ext] || "application/octet-stream";
+  res.writeHead(200, {
+    "content-type": contentType,
+    "cache-control": ext === ".html" ? "no-store" : "public, max-age=60"
+  });
+  fs.createReadStream(file).pipe(res);
 }
 
 function appendJsonl(config, fileName, value) {

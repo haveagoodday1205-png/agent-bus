@@ -52,6 +52,7 @@
 
       <nav class="tabs" aria-label="Console sections">
         <button class="tab active" type="button" data-tab="agents" data-i18n="agents">Agents</button>
+        <button class="tab" type="button" data-tab="rooms" data-i18n="rooms">Rooms</button>
         <button class="tab" type="button" data-tab="tasks" data-i18n="tasks">Tasks</button>
         <button class="tab" type="button" data-tab="models" data-i18n="models">Models</button>
         <button class="tab" type="button" data-tab="events" data-i18n="events">Events</button>
@@ -77,6 +78,44 @@
             </thead>
             <tbody id="agentsTable"></tbody>
           </table>
+        </div>
+      </section>
+
+      <section id="roomsPanel" class="panel">
+        <div class="split">
+          <form id="roomForm" class="tool-surface">
+            <div class="section-head">
+              <h2 data-i18n="autonomousRoom">Autonomous Room</h2>
+              <button id="loadRoomsButton" type="button" data-i18n="reload">Reload</button>
+            </div>
+            <label>
+              <span data-i18n="goal">Goal</span>
+              <textarea id="roomGoal" rows="7" placeholder="Describe the goal for the autonomous agent room" data-i18n-placeholder="roomGoalPlaceholder"></textarea>
+            </label>
+            <div class="form-row">
+              <label>
+                <span data-i18n="maxSteps">Max Steps</span>
+                <input id="roomMaxSteps" type="number" min="1" max="80" value="12" />
+              </label>
+              <label>
+                <span data-i18n="wake">Wake</span>
+                <select id="roomWakeMode">
+                  <option value="first" data-i18n="wakeFirst">first selected</option>
+                  <option value="all" data-i18n="wakeAll">all selected</option>
+                </select>
+              </label>
+              <button type="submit" data-i18n="createRoom">Create Room</button>
+            </div>
+          </form>
+          <div class="tool-surface">
+            <div class="section-head">
+              <h2 data-i18n="roomTimeline">Room Timeline</h2>
+              <button id="wakeRoomButton" type="button" data-i18n="wakeNext">Wake Next</button>
+            </div>
+            <div id="roomSummary" class="muted" data-i18n="noRoom">No room selected.</div>
+            <div id="roomMessages" class="conversation-list"></div>
+            <div id="roomReports" class="runs-list"></div>
+          </div>
         </div>
       </section>
 
@@ -157,6 +196,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260506-group1"></script>
+    <script type="module" src="./app.js?v=20260506-rooms1"></script>
   </body>
 </html>

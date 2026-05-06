@@ -147,7 +147,7 @@ Usage:
   agent-bus init edge [--out edge.config.json] [--preset echo|codex|openclaw|hermes|ollama] [--force]
   agent-bus init edge --auto [--gateway https://YOUR-DOMAIN/agent-bus] [--token ...] [--out edge.config.json]
   agent-bus detect [--json]
-  agent-bus openclaw prepare [--config ~/.openclaw/openclaw.json] [--workspace ./openclaw-workspace]
+  agent-bus openclaw prepare [--config ~/.openclaw/openclaw.json] [--workspace ./openclaw-workspace] [--context-tokens 48000]
   agent-bus serve --config central.config.json
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json [--json]
@@ -467,7 +467,7 @@ async function openclaw(args) {
     prepareOpenClawAgentBus(args.slice(1));
     return;
   }
-  throw new Error("Usage: agent-bus openclaw prepare [--config file] [--workspace dir] [--agent-id agent-bus]");
+  throw new Error("Usage: agent-bus openclaw prepare [--config file] [--workspace dir] [--agent-id agent-bus] [--context-tokens 48000]");
 }
 
 function prepareOpenClawAgentBus(args) {
@@ -475,6 +475,9 @@ function prepareOpenClawAgentBus(args) {
   const configPath = path.resolve(expandHome(optionValue(args, "--config") || process.env.OPENCLAW_CONFIG_PATH || path.join(os.homedir(), ".openclaw", "openclaw.json")));
   const workspaceDir = path.resolve(expandHome(optionValue(args, "--workspace") || path.join(process.cwd(), "openclaw-workspace")));
   const keepBootstrap = args.includes("--keep-bootstrap");
+  const contextTokens = args.includes("--no-context-cap")
+    ? 0
+    : positiveIntegerOption(optionValue(args, "--context-tokens") || process.env.OPENCLAW_AGENT_BUS_CONTEXT_TOKENS || "48000", 48000, 200000);
 
   const config = readJsonObjectIfExists(configPath);
   config.agents = isPlainObject(config.agents) ? config.agents : {};
@@ -500,6 +503,9 @@ function prepareOpenClawAgentBus(args) {
       cacheRetention: existingParams.cacheRetention || "long"
     }
   };
+  if (!Object.hasOwn(existing, "contextTokens") && contextTokens > 0) {
+    preparedAgent.contextTokens = contextTokens;
+  }
   if (!Object.hasOwn(existing, "skills")) {
     preparedAgent.skills = [];
   }
@@ -528,6 +534,7 @@ function prepareOpenClawAgentBus(args) {
   console.log(`Prepared OpenClaw agent: ${agentId}`);
   console.log(`Config: ${configPath}`);
   console.log(`Workspace: ${workspaceDir}`);
+  if (preparedAgent.contextTokens) console.log(`Context cap: ${preparedAgent.contextTokens} tokens`);
   if (archivedBootstrap) console.log(`Archived bootstrap: ${archivedBootstrap}`);
   console.log(`Run command: OPENCLAW_AGENT_ID=${agentId} ./scripts/openclaw-agent-bus.sh`);
 }

@@ -7,6 +7,9 @@ if [ -n "${AGENT_MESSAGE_FILE:-}" ] && [ -r "$AGENT_MESSAGE_FILE" ]; then
   message="$(cat "$AGENT_MESSAGE_FILE")"
 fi
 session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
+if [ -n "$session_id" ]; then
+  session_id="$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-180)"
+fi
 timestamp_prefix="${AGENT_BUS_OPENCLAW_TIMESTAMP_PREFIX:-[Agent Bus 2000-01-01 00:00 UTC; cache-stable envelope, not current time]}"
 
 prompt=$(cat <<EOF
@@ -29,6 +32,36 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+prune_oversized_session() {
+  [ -n "$session_id" ] || return 0
+  local max_bytes="${OPENCLAW_AGENT_BUS_MAX_SESSION_BYTES:-65536}"
+  case "$max_bytes" in
+    ''|*[!0-9]*) max_bytes=65536 ;;
+  esac
+  [ "$max_bytes" -gt 0 ] || return 0
+
+  local state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+  local session_dir="$state_dir/agents/$agent_id/sessions"
+  [ -d "$session_dir" ] || return 0
+
+  local stamp
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  for file in \
+    "$session_dir/$session_id.jsonl" \
+    "$session_dir/$session_id.trajectory.jsonl" \
+    "$session_dir/$session_id.trajectory-path.json"
+  do
+    [ -f "$file" ] || continue
+    local bytes
+    bytes="$(wc -c < "$file" | tr -d ' ')"
+    if [ "${bytes:-0}" -gt "$max_bytes" ]; then
+      mv "$file" "$file.bak-agent-bus-pruned-$stamp"
+    fi
+  done
+}
+
+prune_oversized_session
 
 max_arg_bytes="${OPENCLAW_AGENT_BUS_MAX_ARG_BYTES:-20000}"
 prompt_bytes="$(printf '%s' "$prompt" | wc -c | tr -d ' ')"

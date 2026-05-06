@@ -171,7 +171,7 @@ Each edge node sends:
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
 
-For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, and falls back to a prompt file when the final OpenClaw CLI argument would be too large.
+For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, falls back to a prompt file when the final OpenClaw CLI argument would be too large, and backs up oversized Agent Bus session files before a run so stale OpenClaw history does not balloon later room turns.
 
 When using OpenClaw, prepare a dedicated Agent Bus agent/workspace before connecting the edge node:
 
@@ -179,10 +179,11 @@ When using OpenClaw, prepare a dedicated Agent Bus agent/workspace before connec
 agent-bus openclaw prepare \
   --config ~/.openclaw/openclaw.json \
   --agent-id agent-bus \
-  --workspace /opt/agent-bus/openclaw-workspace
+  --workspace /opt/agent-bus/openclaw-workspace \
+  --context-tokens 48000
 ```
 
-Then use `OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh` as the OpenClaw `runCommand`. This keeps Agent Bus room traffic away from any personal/default OpenClaw workspace, archives `BOOTSTRAP.md` in the target workspace so the first room turn answers the task instead of running onboarding, and gives the dedicated agent a stable Agent Bus system prompt, empty inherited skills list, and `cacheRetention: "long"` unless those fields were already customized.
+Then use `OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh` as the OpenClaw `runCommand`. This keeps Agent Bus room traffic away from any personal/default OpenClaw workspace, archives `BOOTSTRAP.md` in the target workspace so the first room turn answers the task instead of running onboarding, and gives the dedicated agent a stable Agent Bus system prompt, empty inherited skills list, `cacheRetention: "long"`, and a conservative context cap unless those fields were already customized.
 
 The edge node streams stdout/stderr events back to the gateway, then posts a final run result.
 

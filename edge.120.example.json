@@ -14,7 +14,7 @@
       "adapter": "command",
       "capabilities": ["code", "review", "shell", "files"],
       "healthCommand": "codex --help | head -40",
-      "runCommand": "codex exec \"$AGENT_MESSAGE\""
+      "runCommand": "codex exec --color never --dangerously-bypass-approvals-and-sandbox \"$AGENT_MESSAGE\" < /dev/null"
     }
   ]
 }

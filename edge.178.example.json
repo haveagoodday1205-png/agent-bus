@@ -10,7 +10,7 @@
       "id": "model-gateway-edge",
       "kind": "gateway",
       "role": "model-gateway",
-      "enabled": true,
+      "enabled": false,
       "adapter": "command",
       "capabilities": ["sub2api", "cliproxyapi", "models"],
       "healthCommand": "fail=0; printf 'sub2api='; code=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || echo curl_failed); echo \"$code\"; [ \"$code\" = \"200\" ] || fail=1; printf 'cliproxyapi='; code=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8317/management.html || echo curl_failed); echo \"$code\"; [ \"$code\" = \"200\" ] || fail=1; exit $fail",

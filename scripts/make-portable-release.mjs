@@ -76,7 +76,7 @@ Version: ${pkg.version}
 Requirements:
 
 - Node.js 20+
-- Python 3.10+ for `agent-bus smoke --offline`, the Python gateway, or the Python edge node
+- Python 3.10+ for \`agent-bus smoke --offline\`, the Python gateway, or the Python edge node
 - Codex, OpenClaw, Hermes, Ollama, or another local/model adapter if this machine should execute AI work
 
 Quick start:

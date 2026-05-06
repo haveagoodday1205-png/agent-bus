@@ -923,6 +923,11 @@ async function discoverLocalTools() {
     path.resolve(__dirname, "scripts", "openclaw-agent-bus.sh"),
     "/root/agent-bus/scripts/openclaw-agent-bus.sh"
   ]);
+  const hermesScript = os.platform() === "win32" ? "" : findFirstExisting([
+    path.resolve(process.cwd(), "scripts", "hermes-agent-bus.sh"),
+    path.resolve(__dirname, "scripts", "hermes-agent-bus.sh"),
+    "/root/agent-bus/scripts/hermes-agent-bus.sh"
+  ]);
   const openclawPath = openclawCommand ? "" : findExecutable("openclaw");
   const openclawRunner = openclawCommand || (openclawPath && openclawScript) || openclawPath;
   const ollamaModels = ollamaPath ? await readOllamaModels() : [];
@@ -960,9 +965,12 @@ async function discoverLocalTools() {
       id: "hermes",
       name: "Hermes",
       available: Boolean(hermesPath),
-      command: hermesPath || defaultHermesCommand(),
+      command: hermesScript || hermesPath || defaultHermesCommand(),
       version: hermesPath ? commandVersion(hermesPath) : "",
-      agent: hermesPath ? hermesAgent(hermesPath, `hermes-${host}`) : null
+      note: hermesScript
+        ? "Using bundled Hermes Agent Bus bridge script for stable prompt-cache keys."
+        : "",
+      agent: hermesPath ? hermesAgent(hermesPath, `hermes-${host}`, { script: hermesScript }) : null
     },
     {
       id: "ollama",
@@ -1041,7 +1049,8 @@ function openclawAgent(commandPath, id = "openclaw-local", options = {}) {
   };
 }
 
-function hermesAgent(commandPath, id = "hermes-local") {
+function hermesAgent(commandPath, id = "hermes-local", options = {}) {
+  const script = options.script || "";
   return {
     id,
     kind: "hermes",
@@ -1050,7 +1059,9 @@ function hermesAgent(commandPath, id = "hermes-local") {
     adapter: "command",
     capabilities: ["skills", "memory", "shell", "webhook", "cron"],
     pingUrl: "https://YOUR-MODEL-GATEWAY/v1/models",
-    runCommand: `${quoteCommand(commandPath)} chat -q ${messageArgument()} -Q`
+    runCommand: script
+      ? `HERMES_COMMAND=${quoteCommand(commandPath)} ${quoteCommand(script)}`
+      : `${quoteCommand(commandPath)} chat -q ${messageArgument()} -Q`
   };
 }
 

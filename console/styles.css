@@ -256,7 +256,7 @@ tbody tr:last-child td {
 
 .form-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr 120px auto;
   gap: 12px;
   align-items: end;
   margin-top: 12px;
@@ -297,9 +297,14 @@ tbody tr:last-child td {
   color: var(--accent-2);
 }
 
+.conversation-list,
 .runs-list {
   display: grid;
   gap: 12px;
+}
+
+.conversation-list {
+  margin: 12px 0;
 }
 
 .run-item {
@@ -307,6 +312,19 @@ tbody tr:last-child td {
   border-radius: 8px;
   padding: 12px;
   background: #fbfcfe;
+}
+
+.conversation-item {
+  border-left: 3px solid var(--accent);
+}
+
+.conversation-item.user {
+  border-left-color: var(--accent-2);
+}
+
+.conversation-item .output {
+  min-height: 0;
+  max-height: 280px;
 }
 
 .run-head {

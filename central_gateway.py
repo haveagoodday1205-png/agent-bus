@@ -401,6 +401,8 @@ def create_thread(config, body):
         err.status_code = 400
         raise err
     selection = select_agents(body["message"], {"mode": body.get("mode", config["defaults"]["mode"]), "agents": body.get("agents")})
+    if body.get("mode") == "group":
+        return create_group_thread(config, body, selection)
     thread = {
         "id": "thread_" + str(uuid.uuid4()),
         "created_at": now(),
@@ -415,38 +417,130 @@ def create_thread(config, body):
         "runs": [],
     }
     for agent in selection["agents"]:
-        run = {
-            "id": "run_" + str(uuid.uuid4()),
-            "thread_id": thread["id"],
-            "agent_id": agent["id"],
-            "node_id": agent["node_id"],
-            "kind": agent["kind"],
-            "role": agent["role"],
-            "status": "queued",
-            "created_at": now(),
-            "started_at": None,
-            "completed_at": None,
-            "message": body["message"],
-            "stdout": "",
-            "stderr": "",
-            "events": [],
-        }
-        thread["runs"].append(run)
-        STATE["runs"][run["id"]] = run
-        write_snapshot(config, "runs", run["id"], run)
-        append_jsonl(config, "runs.jsonl", run)
-        enqueue(agent["node_id"], {
-            "type": "task.run",
-            "run_id": run["id"],
-            "thread_id": thread["id"],
-            "agent_id": agent["id"],
-            "message": body["message"],
-            "created_at": run["created_at"],
-        })
+        create_run(config, thread, agent, body["message"])
     STATE["threads"][thread["id"]] = thread
     write_snapshot(config, "threads", thread["id"], thread)
     append_jsonl(config, "threads.jsonl", thread)
     return thread
+
+
+def create_group_thread(config, body, selection):
+    agents = selection["agents"]
+    if len(agents) < 2:
+        err = Exception("group mode requires at least two agents")
+        err.status_code = 400
+        raise err
+    rounds = max(1, min(int(body.get("rounds") or 2), 8))
+    thread = {
+        "id": "thread_" + str(uuid.uuid4()),
+        "created_at": now(),
+        "source": body.get("source", "http"),
+        "mode": "group",
+        "message": body["message"],
+        "selection": {
+            "reason": "Group conversation across selected agents.",
+            "matched": ["group"],
+            "agents": [agent["id"] for agent in agents],
+        },
+        "group": {
+            "rounds": rounds,
+            "turn_index": 0,
+            "max_turns": rounds * len(agents),
+        },
+        "conversation": [{
+            "speaker": "user",
+            "role": "user",
+            "content": body["message"],
+            "at": now(),
+        }],
+        "runs": [],
+    }
+    STATE["threads"][thread["id"]] = thread
+    schedule_group_turn(config, thread)
+    write_snapshot(config, "threads", thread["id"], thread)
+    append_jsonl(config, "threads.jsonl", thread)
+    return thread
+
+
+def schedule_group_turn(config, thread):
+    group = thread.get("group") or {}
+    agent_ids = thread.get("selection", {}).get("agents") or []
+    if not agent_ids:
+        return False
+    turn_index = int(group.get("turn_index") or 0)
+    max_turns = int(group.get("max_turns") or len(agent_ids))
+    if turn_index >= max_turns:
+        thread["status"] = "completed"
+        return False
+    agent_id = agent_ids[turn_index % len(agent_ids)]
+    agent = next((item for item in public_agents() if item["id"] == agent_id), None)
+    if not agent:
+        err = Exception("group agent is no longer online: " + agent_id)
+        err.status_code = 409
+        raise err
+    message = group_prompt(thread, agent_id, turn_index)
+    create_run(config, thread, agent, message, turn_index=turn_index)
+    group["turn_index"] = turn_index + 1
+    thread["group"] = group
+    thread["status"] = "running"
+    thread["updated_at"] = now()
+    return True
+
+
+def group_prompt(thread, agent_id, turn_index):
+    lines = [
+        "You are participating in an Agent Bus group conversation.",
+        f"You are speaking as: {agent_id}.",
+        "Read the conversation so far, then add your next message.",
+        "Be direct, useful, and concise. Build on prior agent messages instead of repeating them.",
+        "Do not claim to be another agent. Return only your message to the group.",
+        "",
+        "Original user request:",
+        thread.get("message", ""),
+        "",
+        "Conversation so far:",
+    ]
+    for item in thread.get("conversation") or []:
+        speaker = item.get("speaker") or item.get("role") or "unknown"
+        content = str(item.get("content") or "").strip()
+        if content:
+            lines.append(f"{speaker}: {content}")
+    lines.extend(["", f"Turn {turn_index + 1}: {agent_id}, reply now."])
+    return "\n".join(lines)
+
+
+def create_run(config, thread, agent, message, turn_index=None):
+    run = {
+        "id": "run_" + str(uuid.uuid4()),
+        "thread_id": thread["id"],
+        "agent_id": agent["id"],
+        "node_id": agent["node_id"],
+        "kind": agent["kind"],
+        "role": agent["role"],
+        "status": "queued",
+        "created_at": now(),
+        "started_at": None,
+        "completed_at": None,
+        "message": message,
+        "stdout": "",
+        "stderr": "",
+        "events": [],
+    }
+    if turn_index is not None:
+        run["turn_index"] = turn_index
+    thread.setdefault("runs", []).append(run)
+    STATE["runs"][run["id"]] = run
+    write_snapshot(config, "runs", run["id"], run)
+    append_jsonl(config, "runs.jsonl", run)
+    enqueue(agent["node_id"], {
+        "type": "task.run",
+        "run_id": run["id"],
+        "thread_id": thread["id"],
+        "agent_id": agent["id"],
+        "message": message,
+        "created_at": run["created_at"],
+    })
+    return run
 
 
 def enqueue(node_id, task):
@@ -511,8 +605,29 @@ def complete_run(config, body):
     STATE["runs"][run["id"]] = run
     write_snapshot(config, "runs", run["id"], run)
     update_thread_run(config, run)
+    continue_group_thread(config, run)
     append_jsonl(config, "runs.jsonl", run)
     return run
+
+
+def continue_group_thread(config, run):
+    thread = STATE["threads"].get(run.get("thread_id")) or read_snapshot(config, "threads", run.get("thread_id"))
+    if not thread or thread.get("mode") != "group":
+        return
+    if any(item.get("run_id") == run["id"] for item in thread.get("conversation") or []):
+        return
+    content = (run.get("stdout") or run.get("summary") or run.get("stderr") or "").strip()
+    thread.setdefault("conversation", []).append({
+        "speaker": run.get("agent_id"),
+        "role": run.get("kind") or "agent",
+        "run_id": run["id"],
+        "status": run.get("status"),
+        "content": content,
+        "at": run.get("completed_at") or now(),
+    })
+    schedule_group_turn(config, thread)
+    STATE["threads"][thread["id"]] = thread
+    write_snapshot(config, "threads", thread["id"], thread)
 
 
 def update_thread_run(config, run):

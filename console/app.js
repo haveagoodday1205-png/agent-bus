@@ -24,6 +24,8 @@ const messages = {
     clear: "Clear",
     events: "Events",
     gateway: "Gateway",
+    groupChat: "group chat",
+    groupNeedsAgents: "group chat needs at least two selected agents",
     healthFailed: "health failed: {message}",
     kind: "Kind",
     language: "Language",
@@ -56,6 +58,7 @@ const messages = {
     routeFailed: "route failed: {message}",
     routeLog: "route: {reason}",
     routeSummary: "Route: {agents}",
+    rounds: "Rounds",
     runTask: "Run Task",
     save: "Save",
     seen: "Seen",
@@ -94,6 +97,8 @@ const messages = {
     clear: "清空",
     events: "事件",
     gateway: "网关",
+    groupChat: "群聊",
+    groupNeedsAgents: "群聊至少需要选择两个智能体",
     healthFailed: "健康检查失败：{message}",
     kind: "类型",
     language: "语言",
@@ -126,6 +131,7 @@ const messages = {
     routeFailed: "路由失败：{message}",
     routeLog: "路由：{reason}",
     routeSummary: "路由到：{agents}",
+    rounds: "轮数",
     runTask: "运行任务",
     save: "保存",
     seen: "最近在线",
@@ -179,6 +185,7 @@ $("refreshButton").addEventListener("click", refreshAll);
 $("loadAgentsButton").addEventListener("click", loadAgents);
 $("routeButton").addEventListener("click", routeTask);
 $("taskForm").addEventListener("submit", submitTask);
+$("taskMode").addEventListener("change", syncTaskMode);
 $("stopPollingButton").addEventListener("click", stopPolling);
 $("loadModelsButton").addEventListener("click", loadModels);
 $("chatForm").addEventListener("submit", sendChat);
@@ -186,6 +193,7 @@ $("clearModelOutputButton").addEventListener("click", () => { $("modelOutput").t
 $("clearEventsButton").addEventListener("click", () => { $("eventLog").textContent = ""; });
 
 refreshAll();
+syncTaskMode();
 setInterval(loadHealth, 8000);
 
 function activateTab(name) {
@@ -295,6 +303,9 @@ async function submitTask(event) {
   event.preventDefault();
   const message = $("taskMessage").value.trim();
   if (!message) return logEvent(t("taskMessageEmpty"));
+  if ($("taskMode").value === "group" && state.selectedAgents.size < 2) {
+    return logEvent(t("groupNeedsAgents"));
+  }
   try {
     const data = await request("threads", { method: "POST", body: taskPayload(message) });
     state.currentThreadId = data.id;
@@ -310,6 +321,10 @@ function taskPayload(message) {
   const mode = $("taskMode").value;
   const payload = { message, mode: mode === "explicit" ? "orchestrate" : mode };
   if (mode === "explicit") payload.agents = [...state.selectedAgents];
+  if (mode === "group") {
+    payload.agents = [...state.selectedAgents];
+    payload.rounds = Number($("groupRounds").value || 2);
+  }
   return payload;
 }
 
@@ -337,7 +352,10 @@ async function loadThread(threadId) {
 function renderThread(thread) {
   state.currentThread = thread;
   $("threadSummary").removeAttribute("data-i18n");
-  $("threadSummary").textContent = `${thread.id} | ${thread.mode} | ${(thread.selection?.agents || []).join(", ")}`;
+  $("threadSummary").textContent = thread.mode === "group"
+    ? `${thread.id} | group | ${(thread.selection?.agents || []).join(", ")} | ${thread.conversation?.length || 0}/${(thread.group?.max_turns || 0) + 1}`
+    : `${thread.id} | ${thread.mode} | ${(thread.selection?.agents || []).join(", ")}`;
+  renderConversation(thread);
   const list = $("runsList");
   list.textContent = "";
   for (const run of thread.runs || []) {
@@ -351,6 +369,24 @@ function renderThread(thread) {
       <pre class="output">${escapeHtml((run.stdout || run.summary || run.stderr || "").trim())}</pre>
     `;
     list.append(item);
+  }
+}
+
+function renderConversation(thread) {
+  const list = $("conversationList");
+  list.textContent = "";
+  if (thread.mode !== "group") return;
+  for (const item of thread.conversation || []) {
+    const node = document.createElement("div");
+    node.className = `run-item conversation-item ${item.speaker === "user" ? "user" : ""}`;
+    node.innerHTML = `
+      <div class="run-head">
+        <strong>${escapeHtml(item.speaker || item.role || "agent")}</strong>
+        <span class="muted">${escapeHtml(item.at || "")}</span>
+      </div>
+      <pre class="output">${escapeHtml((item.content || "").trim())}</pre>
+    `;
+    list.append(node);
   }
 }
 
@@ -466,6 +502,11 @@ function t(key, values = {}) {
 
 function statusText(status) {
   return t(status) || status;
+}
+
+function syncTaskMode() {
+  const mode = $("taskMode").value;
+  $("roundsField").hidden = mode !== "group";
 }
 
 function escapeHtml(value) {

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260506-i18n2" />
+    <link rel="stylesheet" href="./styles.css?v=20260506-group1" />
   </head>
   <body>
     <header class="topbar">
@@ -96,9 +96,14 @@
                 <span data-i18n="mode">Mode</span>
                 <select id="taskMode">
                   <option value="orchestrate" data-i18n="orchestrate">orchestrate</option>
+                  <option value="group" data-i18n="groupChat">group chat</option>
                   <option value="broadcast" data-i18n="broadcast">broadcast</option>
                   <option value="explicit" data-i18n="selectedAgents">selected agents</option>
                 </select>
+              </label>
+              <label id="roundsField">
+                <span data-i18n="rounds">Rounds</span>
+                <input id="groupRounds" type="number" min="1" max="8" value="2" />
               </label>
               <button id="submitTaskButton" type="submit" data-i18n="runTask">Run Task</button>
             </div>
@@ -110,6 +115,7 @@
               <button id="stopPollingButton" type="button" data-i18n="stopPolling">Stop Polling</button>
             </div>
             <div id="threadSummary" class="muted" data-i18n="noThread">No thread selected.</div>
+            <div id="conversationList" class="conversation-list"></div>
             <div id="runsList" class="runs-list"></div>
           </div>
         </div>
@@ -151,6 +157,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260506-i18n2"></script>
+    <script type="module" src="./app.js?v=20260506-group1"></script>
   </body>
 </html>

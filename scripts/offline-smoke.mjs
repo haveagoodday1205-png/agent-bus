@@ -124,12 +124,18 @@ async function main() {
   assert(cliExport.includes("offline smoke run completed"), "CLI room export did not include report content");
   assert(!cliExport.includes("sk-test-secret-000000000000000000"), "CLI room export did not redact token-like content");
   assert(cliExport.includes("token=[REDACTED]"), "CLI room export did not include a redaction marker");
+  const summaryExport = await runCliText(["room", "export", finalRoom.id, "--reports-only", "--gateway", base, "--token", token]);
+  assert(summaryExport.includes("## Reports"), "CLI room export --reports-only did not include reports");
+  assert(!summaryExport.includes("## Messages"), "CLI room export --reports-only included full messages");
   const exportJson = path.join(tempDir, "room-export.json");
   await runCliText(["room", "export", finalRoom.id, "--format", "json", "--out", exportJson, "--gateway", base, "--token", token]);
   const exportJsonText = fs.readFileSync(exportJson, "utf8");
   assert(!exportJsonText.includes("sk-test-secret-000000000000000000"), "CLI room export --format json did not redact token-like content");
   const exportedRoom = JSON.parse(exportJsonText);
   assert(exportedRoom.id === finalRoom.id, "CLI room export --format json wrote the wrong room");
+  const summaryJson = await runCliJson(["room", "export", finalRoom.id, "--format", "json", "--reports-only", "--gateway", base, "--token", token]);
+  assert(summaryJson.id === finalRoom.id, "CLI room export --reports-only json wrote the wrong room");
+  assert(!Object.hasOwn(summaryJson, "messages"), "CLI room export --reports-only json included full messages");
 
   const result = {
     ok: true,

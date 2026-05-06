@@ -169,6 +169,7 @@ Usage:
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room export room_xxx --format markdown --out room.md
+  agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
@@ -1102,11 +1103,12 @@ async function room(args) {
     const out = optionValue(args, "--out") || optionValue(args, "-o") || "";
     const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
     const exportData = args.includes("--no-redact") ? roomData : redactRoomExport(roomData);
+    const reportsOnly = args.includes("--reports-only") || args.includes("--summary");
     let text = "";
     if (format === "json") {
-      text = `${JSON.stringify(exportData, null, 2)}\n`;
+      text = `${JSON.stringify(reportsOnly ? roomExportSummary(exportData) : exportData, null, 2)}\n`;
     } else if (format === "markdown" || format === "md") {
-      text = formatRoomMarkdown(exportData);
+      text = formatRoomMarkdown(exportData, { reportsOnly });
     } else {
       throw new Error("room export --format must be markdown or json.");
     }
@@ -1190,10 +1192,36 @@ function redactExportText(value) {
     .replace(/:\/\/([^:/@\s]+):([^/@\s]+)@/g, "://[REDACTED]@");
 }
 
-function formatRoomMarkdown(room) {
+function roomExportSummary(room) {
+  return {
+    id: room.id,
+    title: room.title,
+    goal: room.goal,
+    status: room.status,
+    created_at: room.created_at,
+    updated_at: room.updated_at,
+    agents: room.agents || [],
+    reports: room.reports || room.blackboard?.reports || [],
+    blackboard: {
+      notes: room.blackboard?.notes || [],
+      next_actions: room.blackboard?.next_actions || [],
+      open_questions: room.blackboard?.open_questions || []
+    },
+    runs: (room.runs || []).map((run) => ({
+      id: run.id,
+      agent_id: run.agent_id,
+      status: run.status,
+      exit_code: run.exit_code ?? null,
+      created_at: run.created_at,
+      completed_at: run.completed_at
+    }))
+  };
+}
+
+function formatRoomMarkdown(room, options = {}) {
   const reports = room.reports || room.blackboard?.reports || [];
   const notes = room.blackboard?.notes || [];
-  const messages = room.messages || [];
+  const messages = options.reportsOnly ? [] : (room.messages || []);
   const runs = room.runs || [];
   const lines = [];
   lines.push(`# Agent Bus Room: ${room.title || room.id || "untitled"}`);

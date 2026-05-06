@@ -54,6 +54,8 @@ agent-bus smoke --offline
 
 Or download a portable bundle from [GitHub Releases](https://github.com/haveagoodday1205-png/agent-bus/releases). The bundle includes launchers for Windows and Unix-style shells, a manifest, and SHA-256 checksums. It still only requires Node.js 20+.
 
+Release operators should follow the [release checklist](docs/release.md) for the npm vs portable install matrix, checksum expectations, tag workflow, and post-publish smoke tests.
+
 Contributors can verify the npm artifact before publishing or tagging:
 
 ```bash

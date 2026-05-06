@@ -34,6 +34,8 @@ npm run pack:check
 npm run portable:check
 ```
 
+For release/tag work, follow `docs/release.md` so npm publishing, portable bundles, checksums, and post-publish smoke tests stay aligned.
+
 5. Document the user-facing path in `README.md`, `docs/cli.md`, or a focused doc under `docs/`. Avoid burying required setup only in PR comments.
 
 ## Product Principles

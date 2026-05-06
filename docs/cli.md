@@ -9,7 +9,7 @@ npm install -g .
 agent-bus --help
 ```
 
-Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows. Each release includes `SHA256SUMS` and a release manifest so users can verify what they downloaded.
+Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows. Each release includes `SHA256SUMS` and a release manifest so users can verify what they downloaded. See `docs/release.md` for the npm-vs-portable install matrix and release verification checklist.
 
 ## Remote Assistant Node
 

@@ -1,0 +1,12 @@
+.git
+.github
+data
+node_modules
+*.log
+*.pid
+*.tgz
+*.zip
+central.config.json
+edge.config.json
+config.json
+*.local.json

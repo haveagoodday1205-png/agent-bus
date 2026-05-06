@@ -16,6 +16,9 @@ data/
 *.tgz
 *.zip
 
+# Docker/local compose overrides
+compose.override.yaml
+
 # Dependencies and caches
 node_modules/
 .DS_Store

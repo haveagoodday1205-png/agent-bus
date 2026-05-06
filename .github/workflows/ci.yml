@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check JavaScript
+        run: |
+          node --check agent-bus.mjs
+          node --check central-gateway.mjs
+          node --check edge-node.mjs
+          node --check mock-openai-backend.mjs
+          node --check windows-openai-proxy.mjs
+      - name: Syntax check Python
+        run: python -m py_compile central_gateway.py edge_node.py
+      - name: Validate JSON examples
+        run: |
+          node -e "for (const f of ['package.json','central.config.example.json','edge.config.example.json','edge.120.example.json','edge.178.example.json','edge.hk.example.json']) JSON.parse(require('fs').readFileSync(f, 'utf8'));"
+      - name: CLI smoke
+        run: |
+          node agent-bus.mjs --help
+          node agent-bus.mjs init edge --preset echo --out /tmp/edge.config.json
+          node agent-bus.mjs doctor --config /tmp/edge.config.json || true
+          node agent-bus.mjs probe --config /tmp/edge.config.json
+      - name: Full smoke
+        run: npm run smoke

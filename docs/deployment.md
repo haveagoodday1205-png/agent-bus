@@ -8,6 +8,7 @@ Run the gateway behind HTTPS:
 AGENT_BUS_TOKEN="$(openssl rand -base64 32)" \
 AGENT_BUS_HOST=127.0.0.1 \
 AGENT_BUS_PORT=8788 \
+AGENT_BUS_DATA_DIR=./data/central \
 node central-gateway.mjs serve
 ```
 
@@ -18,6 +19,13 @@ AGENT_BUS_TOKEN="$(openssl rand -base64 32)" \
 AGENT_BUS_HOST=127.0.0.1 \
 AGENT_BUS_PORT=8788 \
 python3 central_gateway.py
+```
+
+Docker:
+
+```bash
+agent-bus init central --out central.config.json
+docker compose up --build
 ```
 
 ## Edge Node

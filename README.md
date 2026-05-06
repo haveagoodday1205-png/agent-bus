@@ -32,6 +32,7 @@ Use a machine as a remote assistant node:
 ```bash
 agent-bus init edge --preset codex --out edge.config.json
 # edit gatewayUrl, token, pingUrl, and runCommand
+agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
 ```
 
@@ -41,6 +42,13 @@ Run a central gateway:
 agent-bus init central --out central.config.json
 # edit token and modelRouter backends
 agent-bus serve --config central.config.json
+```
+
+Run with Docker:
+
+```bash
+agent-bus init central --out central.config.json
+docker compose up --build
 ```
 
 Or start the demo pieces manually:

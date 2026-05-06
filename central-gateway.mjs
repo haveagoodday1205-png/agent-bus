@@ -77,7 +77,7 @@ function loadConfig(file) {
   config.host = process.env.AGENT_BUS_HOST || config.host;
   config.port = Number(process.env.AGENT_BUS_PORT || config.port);
   config.token = process.env.AGENT_BUS_TOKEN || config.token;
-  config.dataDir = resolvePath(config.dataDir || "./data/central", path.dirname(file));
+  config.dataDir = process.env.AGENT_BUS_DATA_DIR || resolvePath(config.dataDir || "./data/central", path.dirname(file));
   config.defaults ||= {};
   config.modelRouter ||= {};
   config.modelRouter.enabled ??= true;

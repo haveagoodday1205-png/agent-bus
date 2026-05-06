@@ -27,6 +27,7 @@ Edit:
 Then connect:
 
 ```bash
+agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
 ```
 
@@ -70,6 +71,43 @@ agent-bus probe --config edge.config.json
 ```
 
 This runs the edge health checks locally. URL ping checks do not run model inference.
+
+## Doctor
+
+```bash
+agent-bus doctor --config edge.config.json
+```
+
+`doctor` checks:
+
+- Node.js runtime
+- config file readability
+- missing or placeholder gateway URL
+- missing or placeholder token
+- enabled agents
+- missing command adapters
+- ping URL placeholders
+- gateway well-known endpoint
+- gateway public health endpoint
+- authenticated manifest, when a token is configured
+- local edge health probe
+
+It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation.
+
+## Docker
+
+Run a central gateway in a container:
+
+```bash
+agent-bus init central --out central.config.json
+docker compose up --build
+```
+
+The image uses the same CLI entrypoint:
+
+```bash
+docker run --rm agent-bus:local --help
+```
 
 ## Cross-Platform Packaging
 

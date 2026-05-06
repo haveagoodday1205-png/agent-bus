@@ -54,7 +54,7 @@ def load_config():
     config["host"] = os.environ.get("AGENT_BUS_HOST", config.get("host", "127.0.0.1"))
     config["port"] = int(os.environ.get("AGENT_BUS_PORT", config.get("port", 8788)))
     config["token"] = os.environ.get("AGENT_BUS_TOKEN", config.get("token", ""))
-    config["dataDir"] = str(Path(config.get("dataDir", "./data/central")).resolve())
+    config["dataDir"] = os.environ.get("AGENT_BUS_DATA_DIR", str(Path(config.get("dataDir", "./data/central")).resolve()))
     config.setdefault("defaults", {})
     config["defaults"]["mode"] = config["defaults"].get("mode", "orchestrate")
     config["defaults"]["pollTimeoutMs"] = int(config["defaults"].get("pollTimeoutMs", 25000))

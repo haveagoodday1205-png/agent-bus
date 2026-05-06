@@ -66,7 +66,7 @@ After the workflow finishes, verify the public release page includes:
 - `agent-bus-v<version>-portable.zip`.
 - `agent-bus-v<version>-portable.manifest.json`.
 - `SHA256SUMS`.
-- generated release notes.
+- generated release notes, with `CHANGELOG.md` used as the human-edited summary source.
 - this install matrix, or a link back to this checklist.
 
 ## npm Publish

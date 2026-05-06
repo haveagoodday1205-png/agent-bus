@@ -22,6 +22,7 @@ try {
     "package.json",
     "README.md",
     "LICENSE",
+    "CHANGELOG.md",
     "agent-bus.mjs",
     "central-gateway.mjs",
     "central_gateway.py",

@@ -20,6 +20,7 @@ const files = [
   "central-gateway.mjs",
   "central_gateway.py",
   "central.config.example.json",
+  "CHANGELOG.md",
   "compose.yaml",
   "config.example.json",
   "CONTRIBUTING.md",

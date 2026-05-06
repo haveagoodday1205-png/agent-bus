@@ -1,9 +1,17 @@
 {
   "name": "agent-bus",
   "version": "0.5.0",
-  "description": "A lightweight distributed agent bus and OpenAI-compatible model router for connecting AI tools across machines.",
+  "description": "Self-hosted remote-assistant CLI for routing AI agents, model gateways, and AI-to-AI rooms across machines.",
   "private": false,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haveagoodday1205-png/agent-bus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/haveagoodday1205-png/agent-bus/issues"
+  },
+  "homepage": "https://github.com/haveagoodday1205-png/agent-bus#readme",
   "bin": {
     "agent-bus": "./agent-bus.mjs"
   },
@@ -68,6 +76,7 @@
     "console/**",
     "docs/**",
     "scripts/**",
+    "CHANGELOG.md",
     "CONTRIBUTING.md",
     "SECURITY.md"
   ]

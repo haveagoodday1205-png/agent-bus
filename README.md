@@ -25,7 +25,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
 
-Start with `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, and `CONTRIBUTING.md` for contributor workflow.
+Start with `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, and `CHANGELOG.md` for release highlights.
 
 ## Quick Start
 
@@ -54,7 +54,7 @@ agent-bus smoke --offline
 
 Or download a portable bundle from [GitHub Releases](https://github.com/haveagoodday1205-png/agent-bus/releases). The bundle includes launchers for Windows and Unix-style shells, a manifest, and SHA-256 checksums. It still only requires Node.js 20+.
 
-Release operators should follow the [release checklist](docs/release.md) for the npm vs portable install matrix, checksum expectations, tag workflow, and post-publish smoke tests.
+Release operators should follow the [release checklist](docs/release.md) for the npm vs portable install matrix, checksum expectations, tag workflow, post-publish smoke tests, and release-note wording. See `CHANGELOG.md` for the current public release highlights.
 
 Contributors can verify the npm artifact before publishing or tagging:
 

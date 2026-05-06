@@ -37,6 +37,7 @@ try {
     "INSTALL.md",
     "README.md",
     "LICENSE",
+    "CHANGELOG.md",
     "central-gateway.mjs",
     "central_gateway.py",
     "edge-node.mjs",

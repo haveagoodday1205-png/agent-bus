@@ -76,11 +76,14 @@ async function main() {
     AGENT_BUS_CONFIG: centralConfig,
     AGENT_BUS_TOKEN: token,
     AGENT_BUS_HOST: "127.0.0.1",
-    AGENT_BUS_PORT: String(gatewayPort)
+    AGENT_BUS_PORT: String(gatewayPort),
+    AGENT_BUS_DATA_DIR: path.join(tempDir, "data")
   });
   await waitForJson(`${base}/health`);
 
-  const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig, "--once"]);
+  const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig, "--once"], {
+    AGENT_BUS_CONFIG: edgeConfig
+  });
   await waitForAgent(base, token, "offline-agent");
 
   const room = await requestJson(`${base}/rooms`, {
@@ -132,7 +135,7 @@ async function main() {
 function start(command, commandArgs, env = {}) {
   const child = spawn(command, commandArgs, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: smokeChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -148,6 +151,25 @@ function start(command, commandArgs, env = {}) {
   procs.push(child);
   return child;
 }
+
+
+function smokeChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) {
+    delete env[name];
+  }
+  return { ...env, ...overrides };
+}
+
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
 
 function findPython() {
   const candidates = [

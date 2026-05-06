@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an improvement, adapter, platform package, or protocol change.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user, agent, or deployment problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the smallest useful version of the feature.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Protocol and discovery
+        - Central gateway
+        - Edge node
+        - Adapter preset
+        - Rooms and orchestration
+        - CLI and packaging
+        - Docs and examples
+        - Security
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Links, screenshots, prior art, or compatibility concerns.

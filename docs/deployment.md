@@ -30,7 +30,14 @@ docker compose up --build
 
 ## Edge Node
 
-Copy an edge config, set the gateway URL and token, then run:
+Preferred path: create a pairing code from the central/admin machine, then redeem it on the new edge node:
+
+```bash
+agent-bus pair create --gateway https://YOUR-GATEWAY-DOMAIN/agent-bus --token ... --preset codex
+agent-bus pair join --gateway https://YOUR-GATEWAY-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json
+```
+
+Manual path: copy an edge config, set the gateway URL and token, then run:
 
 ```bash
 AGENT_BUS_GATEWAY_URL="https://YOUR-GATEWAY-DOMAIN/agent-bus" \

@@ -19,7 +19,7 @@ main().catch((err) => {
 });
 
 async function main() {
-  const token = "smoke-test-token";
+  const token = "sk-smoke-test-token-000000000000";
   fs.writeFileSync(centralConfig, `${JSON.stringify({
     host: "127.0.0.1",
     port: 8788,
@@ -56,6 +56,42 @@ async function main() {
   await waitForJson("http://127.0.0.1:8788/health");
   const consoleHtml = await requestText("http://127.0.0.1:8788/console/");
   assert(consoleHtml.includes("Agent Bus"), "console HTML did not load");
+
+  const pair = await requestJson("http://127.0.0.1:8788/pair-codes", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      gatewayUrl: "http://127.0.0.1:8788",
+      agentPreset: "echo",
+      ttlSeconds: 120
+    })
+  });
+  assert(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(pair.code), "pair code was not generated");
+
+  const paired = await requestJson("http://127.0.0.1:8788/edge/pair", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      code: pair.code,
+      nodeId: "smoke-node"
+    })
+  });
+  assert(paired.token === token, "pair redemption did not return the gateway token");
+  assert(paired.agentPreset === "echo", "pair redemption did not preserve the agent preset");
+
+  const cliPairCreate = await runNode(["agent-bus.mjs", "pair", "create", "--gateway", "http://127.0.0.1:8788", "--token", token, "--preset", "echo", "--ttl", "120"]);
+  assert(!cliPairCreate.stdout.includes(token), "pair create printed the gateway token");
+  const cliPair = JSON.parse(cliPairCreate.stdout);
+  const cliOut = path.join(tempDir, "paired-edge.config.json");
+  const cliPairJoin = await runNode(["agent-bus.mjs", "pair", "join", "--gateway", "http://127.0.0.1:8788", "--code", cliPair.code, "--out", cliOut]);
+  assert(!cliPairJoin.stdout.includes(token), "pair join printed the gateway token");
+  const pairedConfig = JSON.parse(fs.readFileSync(cliOut, "utf8"));
+  assert(pairedConfig.token === token, "pair join did not write the gateway token");
+  assert(pairedConfig.gatewayUrl === "http://127.0.0.1:8788", "pair join wrote the wrong gateway URL");
+  assert(pairedConfig.agents?.[0]?.adapter === "echo", "pair join did not use the echo preset");
 
   const models = await requestJson("http://127.0.0.1:8788/v1/models", {
     headers: { authorization: `Bearer ${token}` }
@@ -113,6 +149,34 @@ function start(cmd, args, env = {}) {
   });
   procs.push(child);
   return child;
+}
+
+function runNode(args, env = {}, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(node, args, {
+      cwd: process.cwd(),
+      env: { ...process.env, ...env },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`${args.join(" ")} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve({ stdout, stderr });
+      reject(new Error(`${args.join(" ")} exited with ${code}\n${stderr || stdout}`));
+    });
+  });
 }
 
 async function waitForJson(url, timeoutMs = 10000) {

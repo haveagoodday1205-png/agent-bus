@@ -43,6 +43,10 @@ async function main() {
     await doctor(argv.slice(1));
     return;
   }
+  if (command === "pair") {
+    await pair(argv.slice(1));
+    return;
+  }
   if (command === "service") {
     service(argv.slice(1));
     return;
@@ -79,6 +83,8 @@ Usage:
   agent-bus serve --config central.config.json
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json
+  agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
+  agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json
   agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
   agent-bus edge-agents --config edge.config.json
@@ -268,6 +274,76 @@ async function doctor(args) {
   }
 }
 
+async function pair(args) {
+  const action = args[0];
+  if (action === "create") {
+    await createPairCode(args.slice(1));
+    return;
+  }
+  if (action === "join") {
+    await joinPairCode(args.slice(1));
+    return;
+  }
+  throw new Error("Usage: agent-bus pair create|join [options]");
+}
+
+async function createPairCode(args) {
+  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
+  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || "";
+  if (!token) {
+    throw new Error("pair create requires --token or AGENT_BUS_TOKEN.");
+  }
+  const preset = optionValue(args, "--preset") || "";
+  if (preset) edgeTemplate(preset);
+  const ttlSeconds = positiveIntegerOption(optionValue(args, "--ttl-seconds") || optionValue(args, "--ttl"), 600, 86400);
+  const body = {
+    ttlSeconds,
+    gatewayUrl: gateway
+  };
+  const nodeId = optionValue(args, "--node-id");
+  const label = optionValue(args, "--label");
+  if (preset) body.agentPreset = preset;
+  if (nodeId) body.nodeId = nodeId;
+  if (label) body.label = label;
+  const result = await postJson(gateway, "/pair-codes", token, body, 10000);
+  console.log(JSON.stringify({
+    ok: true,
+    code: result.code,
+    expires_at: result.expires_at,
+    gatewayUrl: result.gatewayUrl,
+    agentPreset: result.agentPreset || preset || null,
+    join_hint: result.join_hint
+  }, null, 2));
+}
+
+async function joinPairCode(args) {
+  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
+  const code = optionValue(args, "--code");
+  if (!code) {
+    throw new Error("pair join requires --code.");
+  }
+  const out = optionValue(args, "--out") || "edge.config.json";
+  const force = args.includes("--force");
+  if (fs.existsSync(out) && !force) {
+    throw new Error(`Refusing to overwrite ${out}; pass --force to replace it.`);
+  }
+  const requestedPreset = optionValue(args, "--preset") || "";
+  const nodeId = optionValue(args, "--node-id") || os.hostname();
+  const result = await postJson(gateway, "/edge/pair", "", {
+    code,
+    nodeId,
+    preset: requestedPreset || undefined
+  }, 10000);
+  const preset = requestedPreset || result.agentPreset || "codex";
+  const config = edgeTemplate(preset);
+  config.nodeId = result.nodeId || nodeId;
+  config.gatewayUrl = result.gatewayUrl || gateway;
+  config.token = result.token || "";
+  fs.writeFileSync(out, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+  console.log(`Wrote ${out}`);
+  console.log(`Next: agent-bus doctor --config ${out}`);
+}
+
 function validateEdgeConfig(checks, config, gatewayUrl, token) {
   if (config.nodeId) {
     addCheck(checks, "pass", "nodeId", String(config.nodeId));
@@ -367,6 +443,28 @@ async function fetchJson(gateway, pathname, token, timeoutMs) {
     return { ok: true, data: text.trim() ? JSON.parse(text) : {} };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postJson(gateway, pathname, token, body, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = { "content-type": "application/json" };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const res = await fetch(gatewayEndpoint(gateway, pathname), {
+      method: "POST",
+      signal: controller.signal,
+      headers,
+      body: JSON.stringify(body)
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(text || `${res.status} ${res.statusText}`);
+    }
+    return text.trim() ? JSON.parse(text) : {};
   } finally {
     clearTimeout(timer);
   }
@@ -588,6 +686,12 @@ function optionValue(args, name) {
   const index = args.indexOf(name);
   if (index === -1) return undefined;
   return args[index + 1];
+}
+
+function positiveIntegerOption(value, fallback, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
 }
 
 function readPackageVersion() {

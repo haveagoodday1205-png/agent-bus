@@ -33,6 +33,36 @@ agent-bus connect --config edge.config.json
 
 The machine now polls the central gateway and can receive tasks. It does not need an inbound public port.
 
+## Pairing
+
+Pairing is the faster onboarding path for a new remote assistant node. The central/admin side creates a short one-time code:
+
+```bash
+agent-bus pair create \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --token ... \
+  --preset codex \
+  --ttl 600
+```
+
+On the new machine, redeem the code into a local edge config:
+
+```bash
+agent-bus pair join \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --code ABCD-2345 \
+  --out edge.config.json
+```
+
+Then run:
+
+```bash
+agent-bus doctor --config edge.config.json
+agent-bus connect --config edge.config.json
+```
+
+The join command writes the gateway URL and bearer token into the local config file, but it does not print the token. Codes are single-use and expire automatically.
+
 ## Central Gateway
 
 ```bash

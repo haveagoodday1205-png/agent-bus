@@ -36,6 +36,18 @@ agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
 ```
 
+Or use a one-time pairing code so the new machine never needs the central token pasted into chat:
+
+```bash
+# On the central/admin machine
+agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
+
+# On the machine that should become a remote assistant node
+agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json
+agent-bus doctor --config edge.config.json
+agent-bus connect --config edge.config.json
+```
+
 Run a central gateway:
 
 ```bash
@@ -151,10 +163,13 @@ curl -s http://127.0.0.1:8788/v1/agent-bus/manifest \
 
 All gateway endpoints except `GET /health` require the configured bearer token. Edge nodes use the same token for:
 
+- `POST /pair-codes`
 - `POST /edge/register`
 - `POST /edge/poll`
 - `POST /edge/events`
 - `POST /edge/complete`
+
+`POST /edge/pair` uses a short, one-time code instead of the bearer token. The code expires and is consumed after one successful join.
 
 ### Agent Health
 
@@ -404,6 +419,7 @@ Health checks are stored in `runs.jsonl` too. Stored stdout/stderr and snapshots
 - [CLI](docs/cli.md)
 - [Roadmap](docs/roadmap.md)
 - [Deployment](docs/deployment.md)
+- [Community and Growth](docs/community.md)
 - [Web Console](docs/console.md)
 - [Windows Client](docs/windows-client.md)
 - [Security](SECURITY.md)

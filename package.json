@@ -10,12 +10,15 @@
   "keywords": [
     "agent",
     "ai",
+    "ai-agents",
     "openai",
     "model-router",
     "ai-to-ai",
     "cli",
     "codex",
-    "distributed"
+    "distributed",
+    "remote-assistant",
+    "self-hosted"
   ],
   "type": "module",
   "scripts": {

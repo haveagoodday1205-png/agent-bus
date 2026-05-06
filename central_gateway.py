@@ -4,6 +4,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import threading
 import time
 import uuid
@@ -22,6 +23,7 @@ STATE = {
     "rooms": {},
     "reminders": {},
     "conditions": {},
+    "pair_codes": {},
 }
 
 
@@ -117,9 +119,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            self.require_auth()
             path = urlparse(self.path).path
+            if path == "/edge/pair":
+                body = self.read_json()
+                return self.json(redeem_pair_code(self.config, body), redact_value=False)
+
+            self.require_auth()
             body = self.read_json()
+            if path in ("/pair-codes", "/v1/agent-bus/pair-codes"):
+                return self.json(create_pair_code(self.config, body, self), 201)
             if path == "/route":
                 selection = select_agents(body.get("message", ""), body)
                 return self.json(public_selection(selection))
@@ -171,8 +179,9 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length else ""
         return json.loads(raw) if raw.strip() else {}
 
-    def json(self, value, status=200):
-        data = json.dumps(redact(value), ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
+    def json(self, value, status=200, redact_value=True):
+        payload = redact(value) if redact_value else value
+        data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
         self.send_response(status)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("cache-control", "no-store")
@@ -343,6 +352,8 @@ def agent_bus_manifest(config):
             "room_wake": "POST /rooms/{room_id}/wake",
             "models": "GET /v1/models",
             "chat_completions": "POST /v1/chat/completions",
+            "pair_create": "POST /pair-codes",
+            "pair_join": "POST /edge/pair",
         },
         "agent_contract": {
             "identity": ["id", "node_id", "kind", "role"],
@@ -374,6 +385,7 @@ def agent_bus_well_known():
         "protocol": "agent-bus.v1",
         "manifest": "/v1/agent-bus/manifest",
         "health": "/health",
+        "pair": "/edge/pair",
         "auth": {
             "type": "bearer",
             "manifest_required": True,
@@ -453,6 +465,133 @@ def backend_api_key(backend):
 
 def join_url(base_url, suffix):
     return base_url.rstrip("/") + "/" + suffix.lstrip("/")
+
+
+PAIR_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
+def create_pair_code(config, body, handler):
+    purge_expired_pair_codes()
+    ttl_seconds = parse_pair_ttl(body.get("ttlSeconds") or body.get("ttl_seconds") or body.get("ttl") or 600)
+    code = None
+    normalized = None
+    for _ in range(10):
+        code = format_pair_code("".join(secrets.choice(PAIR_CODE_ALPHABET) for _ in range(8)))
+        normalized = normalize_pair_code(code)
+        if normalized not in STATE["pair_codes"]:
+            break
+    if not normalized or normalized in STATE["pair_codes"]:
+        err = Exception("could not allocate pair code")
+        err.status_code = 503
+        raise err
+
+    gateway_url = body.get("gatewayUrl") or body.get("gateway_url") or config.get("publicUrl") or infer_public_gateway(handler, config)
+    expires_at_ts = time.time() + ttl_seconds
+    record = {
+        "code": normalized,
+        "display_code": code,
+        "gateway_url": str(gateway_url).rstrip("/"),
+        "node_id": clean_pair_value(body.get("nodeId") or body.get("node_id")),
+        "agent_preset": clean_pair_value(body.get("agentPreset") or body.get("agent_preset") or body.get("preset")),
+        "label": clean_pair_value(body.get("label")),
+        "created_at": now(),
+        "expires_at_ts": expires_at_ts,
+        "expires_at": iso_from_timestamp(expires_at_ts),
+    }
+    STATE["pair_codes"][normalized] = record
+    append_jsonl(config, "pair_codes.jsonl", {
+        "event": "created",
+        "label": record.get("label"),
+        "agent_preset": record.get("agent_preset"),
+        "created_at": record["created_at"],
+        "expires_at": record["expires_at"],
+    })
+    join_hint = f"agent-bus pair join --gateway {record['gateway_url']} --code {code} --out edge.config.json"
+    if record.get("agent_preset"):
+        join_hint += f" --preset {record['agent_preset']}"
+    return {
+        "ok": True,
+        "code": code,
+        "ttl_seconds": ttl_seconds,
+        "expires_at": record["expires_at"],
+        "gatewayUrl": record["gateway_url"],
+        "agentPreset": record.get("agent_preset") or None,
+        "join_hint": join_hint,
+    }
+
+
+def redeem_pair_code(config, body):
+    purge_expired_pair_codes()
+    code = normalize_pair_code(body.get("code"))
+    if not code:
+        err = Exception("code is required")
+        err.status_code = 400
+        raise err
+    record = STATE["pair_codes"].pop(code, None)
+    if not record:
+        err = Exception("pair code not found or already used")
+        err.status_code = 404
+        raise err
+    if float(record.get("expires_at_ts") or 0) < time.time():
+        err = Exception("pair code expired")
+        err.status_code = 410
+        raise err
+    append_jsonl(config, "pair_codes.jsonl", {
+        "event": "redeemed",
+        "label": record.get("label"),
+        "agent_preset": record.get("agent_preset"),
+        "redeemed_at": now(),
+    })
+    return {
+        "ok": True,
+        "gatewayUrl": record.get("gateway_url"),
+        "token": config.get("token", ""),
+        "nodeId": clean_pair_value(body.get("nodeId") or body.get("node_id") or record.get("node_id")),
+        "agentPreset": clean_pair_value(body.get("preset") or body.get("agentPreset") or record.get("agent_preset")),
+    }
+
+
+def purge_expired_pair_codes():
+    current = time.time()
+    for code, record in list(STATE["pair_codes"].items()):
+        if float(record.get("expires_at_ts") or 0) < current:
+            STATE["pair_codes"].pop(code, None)
+
+
+def parse_pair_ttl(value):
+    try:
+        ttl = int(value)
+    except (TypeError, ValueError):
+        ttl = 600
+    return max(30, min(ttl, 86400))
+
+
+def format_pair_code(raw):
+    return raw[:4] + "-" + raw[4:]
+
+
+def normalize_pair_code(value):
+    return re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+
+
+def clean_pair_value(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"[^A-Za-z0-9._:@/-]", "-", text)[:120]
+
+
+def infer_public_gateway(handler, config):
+    host = handler.headers.get("x-forwarded-host") or handler.headers.get("host")
+    if not host:
+        host = f"127.0.0.1:{config.get('port', 8788)}"
+    proto = handler.headers.get("x-forwarded-proto") or ("https" if handler.headers.get("x-forwarded-ssl") == "on" else "http")
+    prefix = (handler.headers.get("x-forwarded-prefix") or "").rstrip("/")
+    return f"{proto}://{host}{prefix}".rstrip("/")
+
+
+def iso_from_timestamp(value):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
 
 
 def select_agents(message, body):

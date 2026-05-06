@@ -8,6 +8,7 @@ Agent Bus starts as a practical gateway for Codex, OpenClaw, Hermes, and OpenAI-
 - Keep edge nodes outbound-only so private machines do not need public inbound ports.
 - Persist runs, rooms, events, reports, and stderr for auditability.
 - Distinguish node online, URL reachable, and real task success.
+- Keep onboarding under five minutes with `agent-bus pair create/join`.
 
 ## 2. Discovery Protocol
 

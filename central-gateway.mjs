@@ -15,7 +15,8 @@ const state = {
   queues: new Map(),
   waiters: new Map(),
   runs: new Map(),
-  threads: new Map()
+  threads: new Map(),
+  pairCodes: new Map()
 };
 
 main().catch((err) => {
@@ -109,7 +110,15 @@ async function serve(config) {
       if (req.method === "GET" && (url.pathname === "/console" || url.pathname.startsWith("/console/"))) {
         return sendConsoleAsset(res, url.pathname);
       }
+      if (req.method === "POST" && url.pathname === "/edge/pair") {
+        const body = await readJson(req);
+        return sendJson(res, redeemPairCode(config, body), 200, { redact: false });
+      }
       requireAuth(req, config);
+      if (req.method === "POST" && (url.pathname === "/pair-codes" || url.pathname === "/v1/agent-bus/pair-codes")) {
+        const body = await readJson(req);
+        return sendJson(res, createPairCode(config, body, req), 201);
+      }
       if (req.method === "GET" && url.pathname === "/agents") {
         return sendJson(res, publicAgents());
       }
@@ -199,6 +208,124 @@ function requireAuth(req, config) {
   }
 }
 
+const PAIR_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+function createPairCode(config, body, req) {
+  purgeExpiredPairCodes();
+  const ttlSeconds = parsePairTtl(body.ttlSeconds || body.ttl_seconds || body.ttl || 600);
+  let displayCode = "";
+  let normalizedCode = "";
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const raw = Array.from({ length: 8 }, () => PAIR_CODE_ALPHABET[crypto.randomInt(PAIR_CODE_ALPHABET.length)]).join("");
+    displayCode = `${raw.slice(0, 4)}-${raw.slice(4)}`;
+    normalizedCode = normalizePairCode(displayCode);
+    if (!state.pairCodes.has(normalizedCode)) break;
+  }
+  if (!normalizedCode || state.pairCodes.has(normalizedCode)) {
+    const err = new Error("could not allocate pair code");
+    err.statusCode = 503;
+    throw err;
+  }
+  const gatewayUrl = String(body.gatewayUrl || body.gateway_url || config.publicUrl || inferPublicGateway(req, config)).replace(/\/$/, "");
+  const expiresAtMs = Date.now() + ttlSeconds * 1000;
+  const record = {
+    code: normalizedCode,
+    display_code: displayCode,
+    gateway_url: gatewayUrl,
+    node_id: cleanPairValue(body.nodeId || body.node_id),
+    agent_preset: cleanPairValue(body.agentPreset || body.agent_preset || body.preset),
+    label: cleanPairValue(body.label),
+    created_at: new Date().toISOString(),
+    expires_at_ms: expiresAtMs,
+    expires_at: new Date(expiresAtMs).toISOString()
+  };
+  state.pairCodes.set(normalizedCode, record);
+  appendJsonl(config, "pair_codes.jsonl", {
+    event: "created",
+    label: record.label,
+    agent_preset: record.agent_preset,
+    created_at: record.created_at,
+    expires_at: record.expires_at
+  });
+  let joinHint = `agent-bus pair join --gateway ${gatewayUrl} --code ${displayCode} --out edge.config.json`;
+  if (record.agent_preset) joinHint += ` --preset ${record.agent_preset}`;
+  return {
+    ok: true,
+    code: displayCode,
+    ttl_seconds: ttlSeconds,
+    expires_at: record.expires_at,
+    gatewayUrl,
+    agentPreset: record.agent_preset || null,
+    join_hint: joinHint
+  };
+}
+
+function redeemPairCode(config, body) {
+  purgeExpiredPairCodes();
+  const code = normalizePairCode(body.code);
+  if (!code) {
+    const err = new Error("code is required");
+    err.statusCode = 400;
+    throw err;
+  }
+  const record = state.pairCodes.get(code);
+  state.pairCodes.delete(code);
+  if (!record) {
+    const err = new Error("pair code not found or already used");
+    err.statusCode = 404;
+    throw err;
+  }
+  if (Number(record.expires_at_ms || 0) < Date.now()) {
+    const err = new Error("pair code expired");
+    err.statusCode = 410;
+    throw err;
+  }
+  appendJsonl(config, "pair_codes.jsonl", {
+    event: "redeemed",
+    label: record.label,
+    agent_preset: record.agent_preset,
+    redeemed_at: new Date().toISOString()
+  });
+  return {
+    ok: true,
+    gatewayUrl: record.gateway_url,
+    token: config.token || "",
+    nodeId: cleanPairValue(body.nodeId || body.node_id || record.node_id),
+    agentPreset: cleanPairValue(body.preset || body.agentPreset || record.agent_preset)
+  };
+}
+
+function purgeExpiredPairCodes() {
+  for (const [code, record] of state.pairCodes.entries()) {
+    if (Number(record.expires_at_ms || 0) < Date.now()) {
+      state.pairCodes.delete(code);
+    }
+  }
+}
+
+function parsePairTtl(value) {
+  const ttl = Number.parseInt(value, 10);
+  if (!Number.isFinite(ttl)) return 600;
+  return Math.max(30, Math.min(ttl, 86400));
+}
+
+function normalizePairCode(value) {
+  return String(value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+function cleanPairValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.replace(/[^A-Za-z0-9._:@/-]/g, "-").slice(0, 120);
+}
+
+function inferPublicGateway(req, config) {
+  const host = req.headers["x-forwarded-host"] || req.headers.host || `127.0.0.1:${config.port || 8788}`;
+  const proto = req.headers["x-forwarded-proto"] || (req.headers["x-forwarded-ssl"] === "on" ? "https" : "http");
+  const prefix = String(req.headers["x-forwarded-prefix"] || "").replace(/\/$/, "");
+  return `${proto}://${host}${prefix}`.replace(/\/$/, "");
+}
+
 function registerNode(config, body) {
   if (!body.node_id || typeof body.node_id !== "string") {
     const err = new Error("node_id is required");
@@ -265,7 +392,9 @@ function agentBusManifest(config) {
       route: "POST /route",
       threads: "POST /threads",
       models: "GET /v1/models",
-      chat_completions: "POST /v1/chat/completions"
+      chat_completions: "POST /v1/chat/completions",
+      pair_create: "POST /pair-codes",
+      pair_join: "POST /edge/pair"
     },
     agent_contract: {
       identity: ["id", "node_id", "kind", "role"],
@@ -290,6 +419,7 @@ function agentBusWellKnown() {
     protocol: "agent-bus.v1",
     manifest: "/v1/agent-bus/manifest",
     health: "/health",
+    pair: "/edge/pair",
     auth: {
       type: "bearer",
       manifest_required: true
@@ -661,8 +791,9 @@ function readJson(req) {
   });
 }
 
-function sendJson(res, value, status = 200) {
-  const body = `${JSON.stringify(redactObject(value), null, 2)}\n`;
+function sendJson(res, value, status = 200, options = {}) {
+  const payload = options.redact === false ? value : redactObject(value);
+  const body = `${JSON.stringify(payload, null, 2)}\n`;
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store"

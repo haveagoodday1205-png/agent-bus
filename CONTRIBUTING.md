@@ -23,6 +23,7 @@ Agent Bus is trying to make AI tools addressable to each other: a coding agent c
 
 ```bash
 npm run smoke:offline
+npm run release:check
 node --check agent-bus.mjs central-gateway.mjs edge-node.mjs
 python3 -m py_compile central_gateway.py edge_node.py
 ```

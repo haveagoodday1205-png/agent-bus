@@ -44,6 +44,7 @@ try {
     "edge_node.py",
     "docs/cli.md",
     "scripts/offline-smoke.mjs",
+    "scripts/release-check.mjs",
     "manifest.json"
   ];
   for (const relative of required) {

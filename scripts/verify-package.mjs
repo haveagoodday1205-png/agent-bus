@@ -30,6 +30,7 @@ try {
     "edge_node.py",
     "scripts/offline-smoke.mjs",
     "scripts/make-portable-release.mjs",
+    "scripts/release-check.mjs",
     "docs/cli.md",
     "docs/ai-to-ai.md",
     "central.config.example.json",

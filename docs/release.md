@@ -21,16 +21,10 @@ node -p 'require("./package.json").version'
 Run only offline/model-free checks before tagging:
 
 ```bash
-node --check agent-bus.mjs
-node --check central-gateway.mjs
-node --check edge-node.mjs
-node --check scripts/verify-package.mjs
-node --check scripts/verify-portable-release.mjs
-python3 -m py_compile central_gateway.py edge_node.py
-npm run smoke:offline -- --json
-npm run pack:check
-npm run portable:check
+npm run release:check
 ```
+
+`release:check` runs syntax checks, Python compile checks, offline room smoke, npm package verification, and portable bundle verification without calling paid model providers.
 
 `pack:check` is the npm artifact gate. It runs `npm pack`, validates required runtime/docs files, rejects private or build paths, checks the CLI entrypoint, extracts the package, and runs `agent-bus --help` from the packed artifact.
 

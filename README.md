@@ -59,6 +59,7 @@ Release operators should follow the [release checklist](docs/release.md) for the
 Contributors can verify the npm artifact before publishing or tagging:
 
 ```bash
+npm run release:check
 npm run pack:check
 npm run portable:check
 npm run bundle -- --archive

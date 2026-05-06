@@ -29,12 +29,7 @@ jobs:
       - name: Build portable bundle
         run: |
           echo "VERSION=$(node -p 'require("./package.json").version')" >> "$GITHUB_ENV"
-          node scripts/make-portable-release.mjs
-      - name: Archive
-        run: |
-          cd dist
-          tar -czf "agent-bus-v${VERSION}-portable.tar.gz" "agent-bus-v${VERSION}-portable"
-          zip -qr "agent-bus-v${VERSION}-portable.zip" "agent-bus-v${VERSION}-portable"
+          node scripts/make-portable-release.mjs --archive
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,6 +37,8 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             "dist/agent-bus-v${VERSION}-portable.tar.gz" \
             "dist/agent-bus-v${VERSION}-portable.zip" \
+            "dist/agent-bus-v${VERSION}-portable.manifest.json" \
+            "dist/SHA256SUMS" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Agent Bus $GITHUB_REF_NAME" \
             --generate-notes \

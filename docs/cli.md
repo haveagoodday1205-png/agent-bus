@@ -9,7 +9,7 @@ npm install -g .
 agent-bus --help
 ```
 
-Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows.
+Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows. Each release includes `SHA256SUMS` and a release manifest so users can verify what they downloaded.
 
 ## Remote Assistant Node
 
@@ -232,7 +232,21 @@ The current CLI runs anywhere Node.js 20+ runs:
 - macOS Intel
 - macOS Apple Silicon
 
-For a standalone binary, package `agent-bus.mjs` together with:
+Build a portable release locally:
+
+```bash
+npm run bundle -- --archive
+```
+
+That writes:
+
+- `dist/agent-bus-vX.Y.Z-portable/`
+- `dist/agent-bus-vX.Y.Z-portable.tar.gz`
+- `dist/agent-bus-vX.Y.Z-portable.zip`
+- `dist/agent-bus-vX.Y.Z-portable.manifest.json`
+- `dist/SHA256SUMS`
+
+For a future standalone binary, package `agent-bus.mjs` together with:
 
 - `central-gateway.mjs`
 - `edge-node.mjs`

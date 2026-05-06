@@ -100,6 +100,23 @@ async function main() {
   const openclawState = JSON.parse(fs.readFileSync(path.join(openclawWorkspace, ".openclaw", "workspace-state.json"), "utf8"));
   assert(openclawState.setupCompletedAt, "OpenClaw prepare did not mark workspace setup complete");
 
+  const releaseOut = path.join(tempDir, "release");
+  await runNode(["scripts/make-portable-release.mjs", "--out", releaseOut, "--archive"], {}, 60000);
+  const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+  const bundleName = `agent-bus-v${version}-portable`;
+  const bundleDir = path.join(releaseOut, bundleName);
+  assert(fs.existsSync(path.join(bundleDir, "agent-bus")), "portable bundle did not include Unix launcher");
+  assert(fs.existsSync(path.join(bundleDir, "agent-bus.cmd")), "portable bundle did not include Windows launcher");
+  assert(fs.existsSync(path.join(bundleDir, "INSTALL.md")), "portable bundle did not include install notes");
+  assert(fs.existsSync(path.join(bundleDir, "manifest.json")), "portable bundle did not include a bundle manifest");
+  assert(fs.existsSync(path.join(releaseOut, `${bundleName}.tar.gz`)), "portable bundle did not create a tar.gz archive");
+  assert(fs.existsSync(path.join(releaseOut, `${bundleName}.zip`)), "portable bundle did not create a zip archive");
+  assert(fs.existsSync(path.join(releaseOut, `${bundleName}.manifest.json`)), "portable bundle did not create a release manifest");
+  const sums = fs.readFileSync(path.join(releaseOut, "SHA256SUMS"), "utf8");
+  assert(sums.includes(`${bundleName}.tar.gz`) && sums.includes(`${bundleName}.zip`), "portable bundle checksums are incomplete");
+  const bundleManifest = JSON.parse(fs.readFileSync(path.join(bundleDir, "manifest.json"), "utf8"));
+  assert(bundleManifest.files?.some((item) => item.path === "agent-bus.mjs" && item.sha256), "bundle manifest did not include agent-bus.mjs hash");
+
   const pair = await requestJson("http://127.0.0.1:8788/pair-codes", {
     method: "POST",
     headers: {

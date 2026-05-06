@@ -36,7 +36,7 @@ npm install -g .
 agent-bus --help
 ```
 
-Or download a portable bundle from [GitHub Releases](https://github.com/haveagoodday1205-png/agent-bus/releases). The bundle includes launchers for Windows and Unix-style shells and still only requires Node.js 20+.
+Or download a portable bundle from [GitHub Releases](https://github.com/haveagoodday1205-png/agent-bus/releases). The bundle includes launchers for Windows and Unix-style shells, a manifest, and SHA-256 checksums. It still only requires Node.js 20+.
 
 Use a machine as a remote assistant node:
 
@@ -81,6 +81,12 @@ Generate a long-running service:
 
 ```bash
 agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --cwd /opt/agent-bus --agent-bus-path /usr/bin/agent-bus --out agent-bus-edge.service
+```
+
+Build release artifacts locally:
+
+```bash
+npm run bundle -- --archive
 ```
 
 Or start the demo pieces manually:
@@ -440,7 +446,7 @@ Health checks are stored in `runs.jsonl` too. Stored stdout/stderr and snapshots
 
 ## Next Hardening Steps
 
-- Add systemd unit examples.
+- Add signed native installers after the portable bundle format is stable.
 - Add approval gates for risky commands.
 - Add a real orchestrator model that chooses agents instead of broadcasting.
 - Move logs from JSONL to SQLite/PostgreSQL.

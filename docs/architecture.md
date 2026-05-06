@@ -15,7 +15,7 @@ This keeps edge machines private. They do not need public inbound ports.
 
 Agents can also publish shallow health during registration and polling. URL ping health is intentionally non-inference health: it proves an endpoint is reachable, not that a model key, quota, or completion request will succeed.
 
-Edge nodes should normally authenticate with scoped edge tokens created by pairing. The admin gateway token is reserved for control-plane operations such as creating pair codes, creating threads, waking rooms, and calling model-router endpoints.
+Edge nodes should normally authenticate with scoped edge tokens created by pairing. The admin gateway token is reserved for control-plane operations such as creating pair codes, creating threads, waking rooms, calling model-router endpoints, and revoking edge tokens.
 
 ## Room Plane
 

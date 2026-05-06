@@ -49,6 +49,12 @@ node edge-node.mjs connect --config edge.config.json
 
 For least privilege, use pairing or pre-provision a token hash in `edgeTokens` instead of sharing the admin token with every edge node.
 
+Admin token management endpoints:
+
+- `GET /edge/tokens`: list edge token metadata without raw tokens or hashes.
+- `POST /edge/tokens`: create a scoped edge token and return the raw token once.
+- `POST /edge/tokens/revoke`: revoke an edge token by id.
+
 Use `edge_node.py` on machines without Node.js.
 
 Add a shallow `pingUrl` when an agent depends on a model gateway or local service:

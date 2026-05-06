@@ -109,6 +109,37 @@ async function main() {
     },
     body: JSON.stringify({ message: "should be forbidden", agents: ["local-echo"] })
   }));
+  const manualEdge = await requestJson("http://127.0.0.1:8788/edge/tokens", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ nodeId: "manual-smoke-node", label: "manual-smoke" })
+  });
+  assert(manualEdge.token?.startsWith("abt_edge_"), "manual edge token was not returned once");
+  assert(manualEdge.edgeToken?.id, "manual edge token metadata is missing an id");
+  const edgeTokens = await requestJson("http://127.0.0.1:8788/edge/tokens", {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  assert(edgeTokens.some((item) => item.id === manualEdge.edgeToken.id && item.status === "active"), "manual edge token was not listed as active");
+  assert(!JSON.stringify(edgeTokens).includes("token_hash"), "edge token list exposed token hashes");
+  const manualManifest = await requestJson("http://127.0.0.1:8788/v1/agent-bus/manifest", {
+    headers: { authorization: `Bearer ${manualEdge.token}` }
+  });
+  assert(manualManifest.protocol === "agent-bus.v1", "manual edge token could not read the manifest");
+  const revoked = await requestJson("http://127.0.0.1:8788/edge/tokens/revoke", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ id: manualEdge.edgeToken.id })
+  });
+  assert(revoked.edgeToken?.status === "revoked", "manual edge token was not revoked");
+  await assertRequestFails("revoked edge token cannot read manifest", () => requestJson("http://127.0.0.1:8788/v1/agent-bus/manifest", {
+    headers: { authorization: `Bearer ${manualEdge.token}` }
+  }));
 
   const cliPairCreate = await runNode(["agent-bus.mjs", "pair", "create", "--gateway", "http://127.0.0.1:8788", "--token", token, "--preset", "echo", "--ttl", "120"]);
   assert(!cliPairCreate.stdout.includes(token), "pair create printed the gateway token");

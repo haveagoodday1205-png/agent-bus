@@ -183,6 +183,8 @@ All gateway endpoints except `GET /health` require a bearer token.
 
 `POST /edge/pair` uses a short, one-time code instead of a bearer token. The code expires and is consumed after one successful join, then the gateway stores only a hash of the generated edge token in `data/central/edge_tokens.json`.
 
+Admins can also manage edge tokens directly with `GET /edge/tokens`, `POST /edge/tokens`, and `POST /edge/tokens/revoke`. Token list responses never include raw tokens or token hashes; newly created raw tokens are returned once.
+
 ### Agent Health
 
 `GET /agents` separates node reachability from model readiness:

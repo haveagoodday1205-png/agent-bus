@@ -110,7 +110,7 @@ function loadEdgeTokens(config) {
     data = [];
   }
   for (const item of Array.isArray(data) ? data : []) {
-    if (item.token_hash && item.status !== "revoked") state.edgeTokens.set(item.token_hash, item);
+    if (item.token_hash) state.edgeTokens.set(item.token_hash, item);
   }
 }
 
@@ -152,12 +152,13 @@ function persistEdgeTokens(config) {
   fs.writeFileSync(edgeTokensFile(config), `${JSON.stringify(records, null, 2)}\n`);
 }
 
-function createEdgeToken(config, { nodeId = "", label = "" } = {}) {
+function createEdgeToken(config, { nodeId = "", label = "", source = "pairing" } = {}) {
   const token = `abt_edge_${crypto.randomBytes(32).toString("base64url")}`;
   const record = {
     id: `edge_${crypto.randomUUID().replace(/-/g, "")}`,
     token_hash: tokenHash(token),
     scope: "edge",
+    source: cleanPairValue(source) || "pairing",
     status: "active",
     created_at: new Date().toISOString(),
     node_id: cleanPairValue(nodeId),
@@ -169,11 +170,70 @@ function createEdgeToken(config, { nodeId = "", label = "" } = {}) {
     event: "created",
     id: record.id,
     scope: "edge",
+    source: record.source,
     node_id: record.node_id,
     label: record.label,
     created_at: record.created_at
   });
   return { token, record };
+}
+
+function publicEdgeToken(record) {
+  return {
+    id: record.id,
+    scope: record.scope || "edge",
+    source: record.source || "",
+    status: record.status || "active",
+    created_at: record.created_at,
+    revoked_at: record.revoked_at,
+    node_id: record.node_id || "",
+    label: record.label || ""
+  };
+}
+
+function listEdgeTokens() {
+  return [...state.edgeTokens.values()]
+    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
+    .map((record) => publicEdgeToken(record));
+}
+
+function createManualEdgeToken(config, body) {
+  const edge = createEdgeToken(config, {
+    nodeId: body.nodeId || body.node_id,
+    label: body.label || "manual",
+    source: "admin"
+  });
+  return {
+    ok: true,
+    token: edge.token,
+    tokenScope: "edge",
+    edgeToken: publicEdgeToken(edge.record)
+  };
+}
+
+function revokeEdgeToken(config, body) {
+  const tokenId = cleanPairValue(body.id || body.tokenId || body.token_id);
+  if (!tokenId) {
+    const err = new Error("edge token id is required");
+    err.statusCode = 400;
+    throw err;
+  }
+  for (const record of state.edgeTokens.values()) {
+    if (record.id === tokenId) {
+      record.status = "revoked";
+      record.revoked_at = new Date().toISOString();
+      persistEdgeTokens(config);
+      appendJsonl(config, "edge_tokens.jsonl", {
+        event: "revoked",
+        id: tokenId,
+        revoked_at: record.revoked_at
+      });
+      return { ok: true, edgeToken: publicEdgeToken(record) };
+    }
+  }
+  const err = new Error("edge token not found");
+  err.statusCode = 404;
+  throw err;
 }
 
 function tokenHash(token) {
@@ -214,6 +274,20 @@ async function serve(config) {
       if (req.method === "GET" && (url.pathname === "/manifest" || url.pathname === "/v1/agent-bus/manifest")) {
         requireAuth(req, config, ["admin", "edge"]);
         return sendJson(res, agentBusManifest(config));
+      }
+      if (req.method === "GET" && (url.pathname === "/edge/tokens" || url.pathname === "/v1/agent-bus/edge-tokens")) {
+        requireAuth(req, config, ["admin"]);
+        return sendJson(res, listEdgeTokens());
+      }
+      if (req.method === "POST" && (url.pathname === "/edge/tokens" || url.pathname === "/v1/agent-bus/edge-tokens")) {
+        requireAuth(req, config, ["admin"]);
+        const body = await readJson(req);
+        return sendJson(res, createManualEdgeToken(config, body), 201, { redact: false });
+      }
+      if (req.method === "POST" && (url.pathname === "/edge/tokens/revoke" || url.pathname === "/v1/agent-bus/edge-tokens/revoke")) {
+        requireAuth(req, config, ["admin"]);
+        const body = await readJson(req);
+        return sendJson(res, revokeEdgeToken(config, body));
       }
       if (req.method === "POST" && url.pathname === "/edge/register") {
         requireAuth(req, config, ["admin", "edge"]);
@@ -505,7 +579,8 @@ function agentBusManifest(config) {
       models: "GET /v1/models",
       chat_completions: "POST /v1/chat/completions",
       pair_create: "POST /pair-codes",
-      pair_join: "POST /edge/pair"
+      pair_join: "POST /edge/pair",
+      edge_tokens: "GET /edge/tokens, POST /edge/tokens, POST /edge/tokens/revoke"
     },
     agent_contract: {
       identity: ["id", "node_id", "kind", "role"],

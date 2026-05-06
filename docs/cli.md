@@ -97,6 +97,8 @@ Edit the generated config to set:
 - model router API key environment variable
 - model aliases exposed to clients
 
+The admin API can list, create, and revoke scoped edge tokens with `GET /edge/tokens`, `POST /edge/tokens`, and `POST /edge/tokens/revoke`.
+
 ## Query Commands
 
 ```bash

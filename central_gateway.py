@@ -90,7 +90,7 @@ def load_edge_tokens(config):
         except Exception:
             data = []
         for item in data if isinstance(data, list) else []:
-            if item.get("token_hash") and item.get("status", "active") != "revoked":
+            if item.get("token_hash"):
                 STATE["edge_tokens"][item["token_hash"]] = item
 
 
@@ -136,12 +136,13 @@ def persist_edge_tokens(config):
     edge_tokens_path(config).write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def create_edge_token(config, node_id="", label=""):
+def create_edge_token(config, node_id="", label="", source="pairing"):
     token = "abt_edge_" + secrets.token_urlsafe(32)
     record = {
         "id": "edge_" + uuid.uuid4().hex,
         "token_hash": token_hash(token),
         "scope": "edge",
+        "source": clean_pair_value(source) or "pairing",
         "status": "active",
         "created_at": now(),
         "node_id": clean_pair_value(node_id),
@@ -153,11 +154,67 @@ def create_edge_token(config, node_id="", label=""):
         "event": "created",
         "id": record["id"],
         "scope": "edge",
+        "source": record["source"],
         "node_id": record["node_id"],
         "label": record["label"],
         "created_at": record["created_at"],
     })
     return token, record
+
+
+def public_edge_token(record):
+    return {
+        "id": record.get("id"),
+        "scope": record.get("scope", "edge"),
+        "source": record.get("source", ""),
+        "status": record.get("status", "active"),
+        "created_at": record.get("created_at"),
+        "revoked_at": record.get("revoked_at"),
+        "node_id": record.get("node_id", ""),
+        "label": record.get("label", ""),
+    }
+
+
+def list_edge_tokens():
+    records = sorted(STATE["edge_tokens"].values(), key=lambda item: item.get("created_at", ""))
+    return [public_edge_token(record) for record in records]
+
+
+def create_manual_edge_token(config, body):
+    token, record = create_edge_token(
+        config,
+        node_id=body.get("nodeId") or body.get("node_id"),
+        label=body.get("label") or "manual",
+        source="admin",
+    )
+    return {
+        "ok": True,
+        "token": token,
+        "tokenScope": "edge",
+        "edgeToken": public_edge_token(record),
+    }
+
+
+def revoke_edge_token(config, body):
+    token_id = clean_pair_value(body.get("id") or body.get("tokenId") or body.get("token_id"))
+    if not token_id:
+        err = Exception("edge token id is required")
+        err.status_code = 400
+        raise err
+    for record in STATE["edge_tokens"].values():
+        if record.get("id") == token_id:
+            record["status"] = "revoked"
+            record["revoked_at"] = now()
+            persist_edge_tokens(config)
+            append_jsonl(config, "edge_tokens.jsonl", {
+                "event": "revoked",
+                "id": token_id,
+                "revoked_at": record["revoked_at"],
+            })
+            return {"ok": True, "edgeToken": public_edge_token(record)}
+    err = Exception("edge token not found")
+    err.status_code = 404
+    raise err
 
 
 def token_scope(config, token):
@@ -201,6 +258,9 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/manifest", "/v1/agent-bus/manifest"):
                 self.require_auth(("admin", "edge"))
                 return self.json(agent_bus_manifest(self.config))
+            if path in ("/edge/tokens", "/v1/agent-bus/edge-tokens"):
+                self.require_auth(("admin",))
+                return self.json(list_edge_tokens())
             self.require_auth(("admin",))
             if path == "/rooms":
                 return self.json([room_summary(room) for room in STATE["rooms"].values()])
@@ -231,6 +291,12 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/pair-codes", "/v1/agent-bus/pair-codes"):
                 self.require_auth(("admin",))
                 return self.json(create_pair_code(self.config, body, self), 201)
+            if path in ("/edge/tokens", "/v1/agent-bus/edge-tokens"):
+                self.require_auth(("admin",))
+                return self.json(create_manual_edge_token(self.config, body), 201, redact_value=False)
+            if path in ("/edge/tokens/revoke", "/v1/agent-bus/edge-tokens/revoke"):
+                self.require_auth(("admin",))
+                return self.json(revoke_edge_token(self.config, body))
             if path in ("/edge/register", "/edge/poll", "/edge/events", "/edge/complete"):
                 self.require_auth(("admin", "edge"))
                 if path == "/edge/register":
@@ -465,6 +531,7 @@ def agent_bus_manifest(config):
             "chat_completions": "POST /v1/chat/completions",
             "pair_create": "POST /pair-codes",
             "pair_join": "POST /edge/pair",
+            "edge_tokens": "GET /edge/tokens, POST /edge/tokens, POST /edge/tokens/revoke",
         },
         "agent_contract": {
             "identity": ["id", "node_id", "kind", "role"],

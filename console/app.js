@@ -10,14 +10,15 @@ const $ = (id) => document.getElementById(id);
 const apiBase = new URL("../", window.location.href);
 $("gatewayLabel").textContent = apiBase.href.replace(/\/$/, "");
 $("tokenInput").value = sessionStorage.getItem("agentBusToken") || "";
+$("tokenStatus").textContent = $("tokenInput").value ? "Saved for this browser tab" : "Required for control actions";
 
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
 
-$("saveTokenButton").addEventListener("click", () => {
-  sessionStorage.setItem("agentBusToken", $("tokenInput").value.trim());
-  logEvent("token saved in session storage");
+$("saveTokenButton").addEventListener("click", saveToken);
+$("tokenInput").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") saveToken();
 });
 $("refreshButton").addEventListener("click", refreshAll);
 $("loadAgentsButton").addEventListener("click", loadAgents);
@@ -41,6 +42,23 @@ function activateTab(name) {
 async function refreshAll() {
   await loadHealth();
   await loadAgents();
+}
+
+async function saveToken() {
+  const token = normalizeToken($("tokenInput").value);
+  $("tokenInput").value = token;
+  if (!token) {
+    sessionStorage.removeItem("agentBusToken");
+    setTokenStatus("Token required", "failed");
+    renderAuthError(new Error("missing token"));
+    return;
+  }
+
+  sessionStorage.setItem("agentBusToken", token);
+  setTokenStatus("Saved. Loading agents...", "running");
+  logEvent("token saved; refreshing authorized data");
+  await refreshAll();
+  setTokenStatus("Saved for this browser tab", "online");
 }
 
 async function loadHealth() {
@@ -214,7 +232,7 @@ async function request(path, options = {}) {
   const url = new URL(path, apiBase);
   const headers = { ...(options.headers || {}) };
   if (options.auth !== false) {
-    const token = $("tokenInput").value.trim() || sessionStorage.getItem("agentBusToken") || "";
+    const token = normalizeToken($("tokenInput").value || sessionStorage.getItem("agentBusToken") || "");
     if (token) headers.authorization = `Bearer ${token}`;
   }
   let body;
@@ -243,11 +261,21 @@ function renderAuthError(err) {
   tbody.textContent = "";
   tbody.append(rowMessage(`Could not load agents: ${err.message}`));
   logEvent(`agents failed: ${err.message}`);
+  if (/unauthorized|missing token/i.test(err.message)) setTokenStatus("Token rejected or missing", "failed");
 }
 
 function logEvent(message) {
   const line = `[${new Date().toLocaleTimeString()}] ${message}`;
   $("eventLog").textContent = `${line}\n${$("eventLog").textContent}`.slice(0, 20000);
+}
+
+function normalizeToken(value) {
+  return String(value || "").trim().replace(/^Bearer\s+/i, "").trim();
+}
+
+function setTokenStatus(message, className = "") {
+  $("tokenStatus").textContent = message;
+  $("tokenStatus").className = `token-status ${className}`.trim();
 }
 
 function escapeHtml(value) {

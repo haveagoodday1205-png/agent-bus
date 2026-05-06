@@ -78,6 +78,24 @@ label {
   font-weight: 650;
 }
 
+.token-status {
+  min-height: 16px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.token-status.online {
+  color: var(--ok);
+}
+
+.token-status.failed {
+  color: var(--danger);
+}
+
+.token-status.running {
+  color: var(--accent-2);
+}
+
 input,
 textarea,
 select {

@@ -57,6 +57,23 @@ Admin token management endpoints:
 
 Use `edge_node.py` on machines without Node.js.
 
+For OpenClaw edge nodes, keep Agent Bus traffic in a dedicated OpenClaw agent/workspace:
+
+```bash
+agent-bus openclaw prepare \
+  --config ~/.openclaw/openclaw.json \
+  --agent-id agent-bus \
+  --workspace /root/agent-bus/openclaw-workspace
+```
+
+Set the edge `runCommand` to:
+
+```bash
+OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh
+```
+
+This avoids default-workspace `BOOTSTRAP.md` and persona files from affecting room replies while preserving stable `AGENT_SESSION_ID` cache keys. The prepared agent also gets a stable Agent Bus system prompt, `skills: []`, and `params.cacheRetention: "long"` unless those fields already exist.
+
 Add a shallow `pingUrl` when an agent depends on a model gateway or local service:
 
 ```json

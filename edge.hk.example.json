@@ -16,7 +16,7 @@
       "capabilities": ["shell", "files", "browser", "cron", "skills"],
       "pingUrl": "https://YOUR-MODEL-GATEWAY/v1/models",
       "healthCommand": "openclaw gateway status",
-      "runCommand": "OPENCLAW_AGENT_ID=main ./scripts/openclaw-agent-bus.sh"
+      "runCommand": "OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh"
     },
     {
       "id": "hermes-edge",

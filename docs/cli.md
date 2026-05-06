@@ -33,6 +33,17 @@ If you want a specific preset instead of auto-detection:
 agent-bus init edge --preset codex --out edge.config.json
 ```
 
+For OpenClaw nodes, create an isolated Agent Bus OpenClaw agent/workspace once:
+
+```bash
+agent-bus openclaw prepare \
+  --config ~/.openclaw/openclaw.json \
+  --agent-id agent-bus \
+  --workspace /opt/agent-bus/openclaw-workspace
+```
+
+Use `OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh` for the OpenClaw `runCommand`. The prepare command writes minimal Agent Bus workspace files, marks the workspace setup complete, archives `BOOTSTRAP.md` in that target workspace if one exists, and seeds the dedicated agent with a stable Agent Bus system prompt, empty inherited skills list, and `cacheRetention: "long"` unless those fields were already customized.
+
 Edit:
 
 - `gatewayUrl`: central gateway URL

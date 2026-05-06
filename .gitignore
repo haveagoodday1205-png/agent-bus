@@ -22,6 +22,7 @@ compose.override.yaml
 
 # Dependencies and caches
 node_modules/
+__pycache__/
 .DS_Store
 Thumbs.db
 

@@ -72,6 +72,34 @@ async function main() {
   assert(autoConfig.agents?.some((agent) => agent.kind === "hermes"), "auto init did not create a Hermes agent");
   assert(autoConfig.gatewayUrl === "http://127.0.0.1:8788", "auto init did not apply gateway URL");
 
+  const openclawConfig = path.join(tempDir, "openclaw.json");
+  const openclawWorkspace = path.join(tempDir, "openclaw-workspace");
+  fs.mkdirSync(openclawWorkspace, { recursive: true });
+  fs.writeFileSync(path.join(openclawWorkspace, "BOOTSTRAP.md"), "first run ritual\n");
+  await runNode([
+    "agent-bus.mjs",
+    "openclaw",
+    "prepare",
+    "--config",
+    openclawConfig,
+    "--workspace",
+    openclawWorkspace,
+    "--agent-id",
+    "agent-bus"
+  ]);
+  const preparedOpenClaw = JSON.parse(fs.readFileSync(openclawConfig, "utf8"));
+  assert(preparedOpenClaw.agents?.list?.some((agent) => agent.id === "main" && agent.default === true), "OpenClaw prepare did not preserve the implicit main default agent");
+  assert(preparedOpenClaw.agents?.list?.some((agent) => agent.id === "agent-bus" && agent.workspace === openclawWorkspace), "OpenClaw prepare did not write agents.list");
+  const preparedAgentBus = preparedOpenClaw.agents.list.find((agent) => agent.id === "agent-bus");
+  assert(preparedAgentBus.params?.cacheRetention === "long", "OpenClaw prepare did not enable cache retention for the Agent Bus agent");
+  assert(Array.isArray(preparedAgentBus.skills) && preparedAgentBus.skills.length === 0, "OpenClaw prepare did not disable inherited skills for the Agent Bus agent");
+  assert(String(preparedAgentBus.systemPromptOverride || "").includes("Agent Bus OpenClaw executor"), "OpenClaw prepare did not write a stable Agent Bus system prompt override");
+  assert(fs.existsSync(path.join(openclawWorkspace, "AGENTS.md")), "OpenClaw prepare did not write AGENTS.md");
+  assert(!fs.existsSync(path.join(openclawWorkspace, "BOOTSTRAP.md")), "OpenClaw prepare did not archive BOOTSTRAP.md");
+  assert(fs.readdirSync(openclawWorkspace).some((name) => name.startsWith("BOOTSTRAP.md.agent-bus-archive-")), "OpenClaw prepare did not keep a BOOTSTRAP archive");
+  const openclawState = JSON.parse(fs.readFileSync(path.join(openclawWorkspace, ".openclaw", "workspace-state.json"), "utf8"));
+  assert(openclawState.setupCompletedAt, "OpenClaw prepare did not mark workspace setup complete");
+
   const pair = await requestJson("http://127.0.0.1:8788/pair-codes", {
     method: "POST",
     headers: {

@@ -54,7 +54,7 @@ fi
 openclaw "${args[@]}" < /dev/null > "$raw_file"
 
 if command -v jq >/dev/null 2>&1; then
-  text="$(jq -r '[.result.payloads[]?.text] | map(select(. != null and . != "")) | join("\n")' "$raw_file")"
+  text="$(jq -r 'reduce .result.payloads[]?.text as $item ([]; if ($item == null or $item == "" or index($item)) then . else . + [$item] end) | join("\n")' "$raw_file")"
   if [ -n "$text" ] && [ "$text" != "null" ]; then
     printf '%s\n' "$text"
     exit 0

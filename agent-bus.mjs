@@ -9,6 +9,55 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const command = argv[0] || "help";
 
+const OPENCLAW_AGENT_BUS_AGENTS_MD = `# Agent Bus Runtime
+
+You are an OpenClaw executor connected through Agent Bus.
+Answer the current request directly and stay focused on the task.
+Do not run first-run onboarding, bootstrap rituals, or persona setup in Agent Bus sessions.
+Use tools when the request needs files, shell, browser, or server inspection.
+`;
+
+const OPENCLAW_AGENT_BUS_TOOLS_MD = `# Agent Bus Tool Notes
+
+Agent Bus provides the user request through the OpenClaw bridge script.
+Large requests may originate from a temporary AGENT_MESSAGE_FILE path before reaching OpenClaw.
+Return the useful result of the task, not internal routing or bridge details.
+`;
+
+const OPENCLAW_AGENT_BUS_IDENTITY_MD = `# Identity
+
+Name: Agent Bus OpenClaw executor.
+Purpose: execute remote assistant tasks for Agent Bus rooms and threads.
+Voice: plain, direct, and task-focused.
+`;
+
+const OPENCLAW_AGENT_BUS_USER_MD = `# User Context
+
+Requests arrive from Agent Bus rooms or direct threads.
+Treat room and thread continuity as useful context when it is present, but answer the latest request first.
+`;
+
+const OPENCLAW_AGENT_BUS_SOUL_MD = `# Operating Boundaries
+
+Prefer practical help, concise status, and verifiable results.
+Do not introduce yourself unless the user asks.
+Do not expose secrets, tokens, or private configuration values in normal replies.
+`;
+
+const OPENCLAW_AGENT_BUS_HEARTBEAT_MD = `# Heartbeat
+
+No proactive heartbeat is required for Agent Bus CLI turns.
+`;
+
+const OPENCLAW_AGENT_BUS_SYSTEM_PROMPT = `You are an Agent Bus OpenClaw executor.
+
+You receive tasks from Agent Bus rooms and threads.
+Answer the latest task directly, use tools when useful, and return concise verifiable results.
+Do not run first-run onboarding, bootstrap rituals, persona setup, or casual greetings in Agent Bus sessions.
+Do not expose secrets, tokens, private configuration, bridge internals, or routing details unless explicitly required for the task.
+When a room asks you to coordinate with other agents, use Agent Bus directives exactly as requested by the room prompt.
+`;
+
 main().catch((err) => {
   console.error(err.stack || err.message || String(err));
   process.exitCode = 1;
@@ -29,6 +78,10 @@ async function main() {
   }
   if (command === "detect") {
     await detect(argv.slice(1));
+    return;
+  }
+  if (command === "openclaw") {
+    await openclaw(argv.slice(1));
     return;
   }
   if (command === "serve") {
@@ -86,6 +139,7 @@ Usage:
   agent-bus init edge [--out edge.config.json] [--preset echo|codex|openclaw|hermes|ollama] [--force]
   agent-bus init edge --auto [--gateway https://YOUR-DOMAIN/agent-bus] [--token ...] [--out edge.config.json]
   agent-bus detect [--json]
+  agent-bus openclaw prepare [--config ~/.openclaw/openclaw.json] [--workspace ./openclaw-workspace]
   agent-bus serve --config central.config.json
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json
@@ -292,6 +346,77 @@ async function detect(args) {
     return;
   }
   printToolDetection(tools);
+}
+
+async function openclaw(args) {
+  const action = args[0] || "prepare";
+  if (action === "prepare") {
+    prepareOpenClawAgentBus(args.slice(1));
+    return;
+  }
+  throw new Error("Usage: agent-bus openclaw prepare [--config file] [--workspace dir] [--agent-id agent-bus]");
+}
+
+function prepareOpenClawAgentBus(args) {
+  const agentId = sanitizeOpenClawAgentId(optionValue(args, "--agent-id") || process.env.OPENCLAW_AGENT_ID || "agent-bus");
+  const configPath = path.resolve(expandHome(optionValue(args, "--config") || process.env.OPENCLAW_CONFIG_PATH || path.join(os.homedir(), ".openclaw", "openclaw.json")));
+  const workspaceDir = path.resolve(expandHome(optionValue(args, "--workspace") || path.join(process.cwd(), "openclaw-workspace")));
+  const keepBootstrap = args.includes("--keep-bootstrap");
+
+  const config = readJsonObjectIfExists(configPath);
+  config.agents = isPlainObject(config.agents) ? config.agents : {};
+  const hadExplicitAgentList = Array.isArray(config.agents.list);
+  config.agents.list = hadExplicitAgentList ? config.agents.list : [];
+  if (!hadExplicitAgentList && agentId !== "main") {
+    config.agents.list.push({
+      id: "main",
+      default: true,
+      workspace: defaultOpenClawWorkspace(config)
+    });
+  }
+  const existingIndex = config.agents.list.findIndex((agent) => isPlainObject(agent) && agent.id === agentId);
+  const existing = existingIndex >= 0 ? config.agents.list[existingIndex] : {};
+  const existingParams = isPlainObject(existing.params) ? existing.params : {};
+  const preparedAgent = {
+    ...existing,
+    id: agentId,
+    name: existing.name || "Agent Bus",
+    workspace: workspaceDir,
+    params: {
+      ...existingParams,
+      cacheRetention: existingParams.cacheRetention || "long"
+    }
+  };
+  if (!Object.hasOwn(existing, "skills")) {
+    preparedAgent.skills = [];
+  }
+  if (!String(existing.systemPromptOverride || "").trim()) {
+    preparedAgent.systemPromptOverride = OPENCLAW_AGENT_BUS_SYSTEM_PROMPT;
+  }
+  if (existingIndex >= 0) {
+    config.agents.list[existingIndex] = preparedAgent;
+  } else {
+    config.agents.list.push(preparedAgent);
+  }
+
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  writeWorkspaceFileIfMissing(workspaceDir, "AGENTS.md", OPENCLAW_AGENT_BUS_AGENTS_MD);
+  writeWorkspaceFileIfMissing(workspaceDir, "TOOLS.md", OPENCLAW_AGENT_BUS_TOOLS_MD);
+  writeWorkspaceFileIfMissing(workspaceDir, "IDENTITY.md", OPENCLAW_AGENT_BUS_IDENTITY_MD);
+  writeWorkspaceFileIfMissing(workspaceDir, "USER.md", OPENCLAW_AGENT_BUS_USER_MD);
+  writeWorkspaceFileIfMissing(workspaceDir, "SOUL.md", OPENCLAW_AGENT_BUS_SOUL_MD);
+  writeWorkspaceFileIfMissing(workspaceDir, "HEARTBEAT.md", OPENCLAW_AGENT_BUS_HEARTBEAT_MD);
+  const archivedBootstrap = keepBootstrap ? "" : archiveBootstrapFile(workspaceDir);
+  markOpenClawWorkspaceComplete(workspaceDir);
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+
+  console.log(`Prepared OpenClaw agent: ${agentId}`);
+  console.log(`Config: ${configPath}`);
+  console.log(`Workspace: ${workspaceDir}`);
+  if (archivedBootstrap) console.log(`Archived bootstrap: ${archivedBootstrap}`);
+  console.log(`Run command: OPENCLAW_AGENT_ID=${agentId} ./scripts/openclaw-agent-bus.sh`);
 }
 
 async function pair(args) {
@@ -779,7 +904,7 @@ function openclawAgent(commandPath, id = "openclaw-local", options = {}) {
       ? command
       : options.generic
       ? `${quoteCommand(command)} ${messageArgument()}`
-      : `OPENCLAW_AGENT_ID=main ${quoteCommand(command)}`
+      : `OPENCLAW_AGENT_ID=agent-bus ${quoteCommand(command)}`
   };
 }
 
@@ -903,9 +1028,61 @@ function expandHome(value) {
   return text;
 }
 
+function readJsonObjectIfExists(file) {
+  if (!fs.existsSync(file)) return {};
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!isPlainObject(parsed)) throw new Error(`${file} must contain a JSON object`);
+  return parsed;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizeOpenClawAgentId(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/[^A-Za-z0-9._:-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!cleaned) throw new Error("--agent-id cannot be empty");
+  return cleaned.slice(0, 128);
+}
+
+function writeWorkspaceFileIfMissing(dir, name, content) {
+  const file = path.join(dir, name);
+  if (fs.existsSync(file)) return;
+  fs.writeFileSync(file, content.replace(/\n?$/, "\n"));
+}
+
+function archiveBootstrapFile(workspaceDir) {
+  const file = path.join(workspaceDir, "BOOTSTRAP.md");
+  if (!fs.existsSync(file)) return "";
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const archived = path.join(workspaceDir, `BOOTSTRAP.md.agent-bus-archive-${stamp}`);
+  fs.renameSync(file, archived);
+  return archived;
+}
+
+function markOpenClawWorkspaceComplete(workspaceDir) {
+  const stateDir = path.join(workspaceDir, ".openclaw");
+  const stateFile = path.join(stateDir, "workspace-state.json");
+  const state = readJsonObjectIfExists(stateFile);
+  state.version ||= 1;
+  state.setupCompletedAt ||= new Date().toISOString();
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n");
+}
+
+function defaultOpenClawWorkspace(config) {
+  const configured = isPlainObject(config.agents?.defaults) ? config.agents.defaults.workspace : "";
+  return configured || path.join(os.homedir(), ".openclaw", "workspace");
+}
+
 function safeId(value) {
   return String(value || "local").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "local";
 }
+
 
 function parseListOption(value) {
   return String(value || "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);

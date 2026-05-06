@@ -263,7 +263,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(list_edge_tokens())
             self.require_auth(("admin",))
             if path == "/rooms":
-                return self.json([room_summary(room) for room in STATE["rooms"].values()])
+                return self.json(list_rooms(self.config))
             if path.startswith("/rooms/"):
                 room_id = path.rsplit("/", 1)[-1]
                 item = STATE["rooms"].get(room_id) or read_snapshot(self.config, "rooms", room_id)
@@ -865,6 +865,21 @@ def room_summary(room):
         "report_count": len(room.get("reports") or []),
         "updated_at": room.get("updated_at"),
     }
+
+
+def list_rooms(config):
+    by_id = {}
+    for room in read_snapshots(config, "rooms"):
+        if isinstance(room, dict) and room.get("id"):
+            by_id[room["id"]] = room
+    for room in STATE["rooms"].values():
+        if room.get("id"):
+            by_id[room["id"]] = room
+    return sorted(
+        [room_summary(room) for room in by_id.values()],
+        key=lambda item: item.get("updated_at") or "",
+        reverse=True,
+    )
 
 
 def create_room(config, body):
@@ -1568,6 +1583,19 @@ def read_snapshot(config, folder, item_id):
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_snapshots(config, folder):
+    root = Path(config["dataDir"]) / folder
+    if not root.exists():
+        return []
+    out = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    return out
 
 
 def redact(value):

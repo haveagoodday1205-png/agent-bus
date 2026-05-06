@@ -111,6 +111,11 @@ async function main() {
   assert(finalRoom.blackboard?.notes?.some((item) => /cache key agent-bus-offline-agent/.test(item.content || "")), "BLACKBOARD directive was not captured");
   assert((run.stdout || "").includes("DONE"), "agent stdout did not include DONE");
 
+  const cliRoom = await runCliJson(["room", "show", finalRoom.id, "--gateway", base, "--token", token]);
+  assert(cliRoom.id === finalRoom.id, "CLI room show did not return the expected room");
+  const cliRooms = await runCliJson(["room", "list", "--gateway", base, "--token", token]);
+  assert(Array.isArray(cliRooms) && cliRooms.some((item) => item.id === finalRoom.id), "CLI room list did not include the smoke room");
+
   const result = {
     ok: true,
     mode: "offline",
@@ -165,6 +170,41 @@ function smokeChildEnv(overrides = {}) {
     delete env[name];
   }
   return { ...env, ...overrides };
+}
+
+function runCliJson(commandArgs, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(root, "agent-bus.mjs"), ...commandArgs], {
+      cwd: root,
+      env: smokeChildEnv(),
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`CLI timed out: agent-bus ${commandArgs.join(" ")}`));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`CLI exited with ${code}: ${stderr || stdout}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (err) {
+        reject(new Error(`CLI did not return JSON: ${stdout || stderr || err.message}`));
+      }
+    });
+  });
 }
 
 const HERMETIC_AGENT_BUS_ENV = [

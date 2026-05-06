@@ -132,6 +132,10 @@ async function main() {
     await getJson("/agents", { auth: true });
     return;
   }
+  if (command === "room" || command === "rooms") {
+    await room(argv.slice(1));
+    return;
+  }
   if (command === "health") {
     await getJson("/health", { auth: false });
     return;
@@ -158,6 +162,10 @@ Usage:
   agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
   agent-bus edge-agents --config edge.config.json
+  agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
+  agent-bus room message room_xxx --message "New context" --agents openclaw-hk
 
 Gateway queries:
   agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
@@ -1072,6 +1080,61 @@ function hermesAgent(commandPath, id = "hermes-local", options = {}) {
   };
 }
 
+async function room(args) {
+  const action = args[0] || "list";
+  if (action === "list" || action === "ls") {
+    return printJson(await gatewayJson("/rooms", { auth: true, args }));
+  }
+  if (action === "show" || action === "get") {
+    const roomId = requiredPositional(args, 1, "room id");
+    return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args }));
+  }
+  if (action === "create") {
+    const goal = optionValue(args, "--goal") || optionValue(args, "--message") || "";
+    const agents = csvOption(args, "--agents");
+    if (!goal) throw new Error("room create requires --goal.");
+    if (!agents.length) throw new Error("room create requires --agents a,b.");
+    const wakeAgents = csvOption(args, "--wake-agents");
+    const maxSteps = positiveIntegerOption(optionValue(args, "--max-steps") || optionValue(args, "--maxSteps"), 0, 1000);
+    const autoRotate = booleanOption(args, "--auto-rotate", "--no-auto-rotate");
+    const body = {
+      title: optionValue(args, "--title") || undefined,
+      goal,
+      agents,
+      wakeAgents: wakeAgents.length ? wakeAgents : undefined,
+      ...(maxSteps > 0 ? { maxSteps } : {}),
+      ...(autoRotate === undefined ? {} : { autoRotate })
+    };
+    return printJson(await gatewayJson("/rooms", { auth: true, args, method: "POST", body }));
+  }
+  if (action === "wake") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const agents = csvOption(args, "--agents");
+    const singleAgent = optionValue(args, "--agent");
+    const body = {
+      reason: optionValue(args, "--reason") || optionValue(args, "--message") || "Manual wake.",
+      ...(agents.length ? { agents } : {}),
+      ...(singleAgent ? { agent: singleAgent } : {})
+    };
+    return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/wake`, { auth: true, args, method: "POST", body }));
+  }
+  if (action === "message" || action === "say") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const message = optionValue(args, "--message") || optionValue(args, "-m") || "";
+    if (!message) throw new Error("room message requires --message.");
+    const wake = booleanOption(args, "--wake", "--no-wake");
+    const agents = csvOption(args, "--agents");
+    const body = {
+      message,
+      speaker: optionValue(args, "--speaker") || "user",
+      ...(wake === undefined ? {} : { wake }),
+      ...(agents.length ? { agents } : {})
+    };
+    return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
+  }
+  throw new Error("Usage: agent-bus room list|show|create|wake|message [options]");
+}
+
 function ollamaAgent(commandPath, model, id = "ollama-local") {
   return {
     id,
@@ -1240,24 +1303,46 @@ function parseListOption(value) {
 }
 
 async function getJson(pathname, options) {
-  const gateway = optionValue(argv, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
-  const token = optionValue(argv, "--token") || process.env.AGENT_BUS_TOKEN || "";
+  printJson(await gatewayJson(pathname, { ...options, args: argv }));
+}
+
+async function gatewayJson(pathname, options = {}) {
+  const args = options.args || argv;
+  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
+  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || "";
   if (options.auth && !token) {
     throw new Error("This endpoint requires --token or AGENT_BUS_TOKEN.");
   }
   const url = gatewayEndpoint(gateway, pathname);
   const res = await fetch(url, {
-    headers: token ? { authorization: `Bearer ${token}` } : {}
+    method: options.method || "GET",
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(options.body === undefined ? {} : { "content-type": "application/json" })
+    },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body)
   });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(text || `${res.status} ${res.statusText}`);
   }
+  return parseJsonText(text);
+}
+
+function parseJsonText(text) {
   try {
-    console.log(JSON.stringify(JSON.parse(text), null, 2));
+    return text.trim() ? JSON.parse(text) : {};
   } catch {
-    console.log(text);
+    return text;
   }
+}
+
+function printJson(value) {
+  if (typeof value === "string") {
+    console.log(value);
+    return;
+  }
+  console.log(JSON.stringify(value, null, 2));
 }
 
 function runScript(name, args) {
@@ -1294,6 +1379,10 @@ function gatewayEndpoint(gatewayUrl, pathname) {
   return url;
 }
 
+function pathPart(value) {
+  return encodeURIComponent(String(value || ""));
+}
+
 function stripCliOnlyArgs(args) {
   return args;
 }
@@ -1302,6 +1391,25 @@ function optionValue(args, name) {
   const index = args.indexOf(name);
   if (index === -1) return undefined;
   return args[index + 1];
+}
+
+function requiredPositional(args, index, label) {
+  const value = args[index];
+  if (!value || value.startsWith("--")) throw new Error(`Missing ${label}.`);
+  return value;
+}
+
+function csvOption(args, name) {
+  return String(optionValue(args, name) || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function booleanOption(args, positive, negative) {
+  if (args.includes(negative)) return false;
+  if (args.includes(positive)) return true;
+  return undefined;
 }
 
 function positiveIntegerOption(value, fallback, max) {

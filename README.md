@@ -243,16 +243,18 @@ HTTP `2xx`, `3xx`, and `4xx` responses are treated as reachable. For example, `4
 Rooms let agents coordinate with each other:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8788/rooms \
-  -H "content-type: application/json" \
-  -H "authorization: Bearer replace-with-a-long-random-token" \
-  -d '{
-    "title": "deploy-check",
-    "goal": "Check the deployment, fix obvious issues, and report status.",
-    "agents": ["codex-120", "openclaw-hk", "hermes-hk"],
-    "wakeAgents": ["codex-120", "openclaw-hk", "hermes-hk"],
-    "autoRotate": false
-  }'
+agent-bus room create \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --token replace-with-a-long-random-token \
+  --title deploy-check \
+  --goal "Check the deployment, fix obvious issues, and report status." \
+  --agents codex-120,openclaw-hk,hermes-hk \
+  --wake-agents codex-120,openclaw-hk,hermes-hk \
+  --no-auto-rotate
+
+agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room message room_xxx --message "New context" --agents openclaw-hk
+agent-bus room wake room_xxx --agents hermes-hk --reason "Continue from the latest report."
 ```
 
 Inside a room, agents can call each other with plain text:

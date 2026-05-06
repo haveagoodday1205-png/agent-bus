@@ -88,6 +88,14 @@ Build release artifacts locally:
 npm run bundle -- --archive
 ```
 
+Run a zero-quota offline smoke test:
+
+```bash
+agent-bus smoke --offline
+```
+
+This uses the local Python gateway for room support and makes no model-provider calls.
+
 Or start the demo pieces manually:
 
 ```bash

@@ -73,6 +73,14 @@ agent-bus setup edge \
 
 Without `--code`, pass `--token` or `AGENT_BUS_TOKEN` for a trusted manual config. `--service auto` chooses systemd on Linux, launchd on macOS, and Windows Service Control commands on Windows. It writes a template only; review and install it using your normal OS service workflow.
 
+Run a zero-quota offline smoke test:
+
+```bash
+agent-bus smoke --offline
+```
+
+This starts a temporary local Python gateway and edge node, creates a room, runs a fake command agent, and verifies `REPORT`, `BLACKBOARD`, and `DONE` directive handling without calling any model provider. Python 3.10+ is required for this command while room support lives in the Python gateway.
+
 Edge commands receive task metadata in environment variables:
 
 - `AGENT_MESSAGE`

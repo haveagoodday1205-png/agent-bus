@@ -100,6 +100,10 @@ async function main() {
     await doctor(argv.slice(1));
     return;
   }
+  if (command === "smoke") {
+    await runScript("scripts/offline-smoke.mjs", stripCliOnlyArgs(argv.slice(1)));
+    return;
+  }
   if (command === "pair") {
     await pair(argv.slice(1));
     return;
@@ -147,6 +151,7 @@ Usage:
   agent-bus serve --config central.config.json
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json
+  agent-bus smoke --offline
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
   agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --auto --service auto

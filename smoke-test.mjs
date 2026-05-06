@@ -228,6 +228,13 @@ async function main() {
   assert(setupConfig.agents?.[0]?.adapter === "echo", "setup did not use the requested preset");
   assert(fs.readFileSync(setupService, "utf8").includes("ExecStart=/usr/bin/agent-bus connect --config"), "setup did not write a usable systemd service");
 
+  const offlineSmoke = JSON.parse((await runNode(["agent-bus.mjs", "smoke", "--offline", "--json"], {}, 30000)).stdout);
+  assert(offlineSmoke.ok === true, "offline smoke did not report ok");
+  assert(offlineSmoke.quota === "no_model_calls", "offline smoke should not call models");
+  assert(offlineSmoke.room_status === "completed", "offline smoke room did not complete");
+  assert(offlineSmoke.reports >= 1, "offline smoke did not capture REPORT");
+  assert(offlineSmoke.blackboard_notes >= 1, "offline smoke did not capture BLACKBOARD");
+
   const models = await requestJson("http://127.0.0.1:8788/v1/models", {
     headers: { authorization: `Bearer ${token}` }
   });

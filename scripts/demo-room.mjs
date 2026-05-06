@@ -43,7 +43,14 @@ async function main() {
     modelRouter: {
       enabled: false,
       backends: []
-    }
+    },
+    edgeTokens: [
+      {
+        token,
+        nodeId: "room-demo-edge",
+        label: "local room demo"
+      }
+    ]
   }, null, 2)}\n`);
 
   fs.writeFileSync(agentScript, `const id = process.env.AGENT_ID || "demo-agent";\nif (id === "demo-planner") {\n  console.log("REPORT: Planner split the demo goal and delegated verification to demo-worker.");\n  console.log("BLACKBOARD: demo-worker should verify room directives and reports-only export.");\n  console.log("@demo-worker: Verify the room directive flow, write a concise public report, and mark DONE if complete.");\n} else {\n  console.log("REPORT: Worker verified AI-to-AI room delegation, REPORT capture, BLACKBOARD notes, and safe reports-only export without model calls.");\n  console.log("BLACKBOARD: Local demo completed with no external model quota; share the generated Markdown report.");\n  console.log("DONE");\n}\n`);
@@ -90,7 +97,9 @@ async function main() {
 
   console.log("2. Starting a local edge node with two demo agents");
   start(node, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
-    AGENT_BUS_CONFIG: edgeConfig
+    AGENT_BUS_CONFIG: edgeConfig,
+    AGENT_BUS_GATEWAY_URL: gateway,
+    AGENT_BUS_TOKEN: token
   });
   await waitForAgents(gateway, token, ["demo-planner", "demo-worker"]);
 

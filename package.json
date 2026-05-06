@@ -38,9 +38,36 @@
     "run": "node server.mjs run",
     "route": "node server.mjs route",
     "health": "node server.mjs health",
-    "agents": "node server.mjs agents"
+    "agents": "node server.mjs agents",
+    "pack:check": "node scripts/verify-package.mjs"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "files": [
+    "agent-bus.mjs",
+    "central-gateway.mjs",
+    "central_gateway.py",
+    "edge-node.mjs",
+    "edge_node.py",
+    "server.mjs",
+    "smoke-test.mjs",
+    "mock-openai-backend.mjs",
+    "windows-openai-proxy.mjs",
+    "start-windows-openai-proxy.ps1",
+    "central.config.example.json",
+    "edge.config.example.json",
+    "edge.120.example.json",
+    "edge.178.example.json",
+    "edge.hk.example.json",
+    "config.example.json",
+    ".env.example",
+    "Dockerfile",
+    "compose.yaml",
+    "console/**",
+    "docs/**",
+    "scripts/**",
+    "CONTRIBUTING.md",
+    "SECURITY.md"
+  ]
 }

@@ -24,7 +24,9 @@ jobs:
           node --check agent-bus.mjs
           node --check central-gateway.mjs
           node --check edge-node.mjs
+          node --check scripts/verify-package.mjs
           python -m py_compile central_gateway.py edge_node.py
+          npm run pack:check
           node smoke-test.mjs
       - name: Build portable bundle
         run: |

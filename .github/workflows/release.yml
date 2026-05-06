@@ -28,6 +28,14 @@ jobs:
         run: |
           echo "VERSION=$(node -p 'require("./package.json").version')" >> "$GITHUB_ENV"
           node scripts/make-portable-release.mjs --archive
+      - name: Smoke built portable bundle
+        run: |
+          ./dist/agent-bus-v${VERSION}-portable/agent-bus --help
+          ./dist/agent-bus-v${VERSION}-portable/agent-bus smoke --offline --json
+          test -s "dist/agent-bus-v${VERSION}-portable.tar.gz"
+          test -s "dist/agent-bus-v${VERSION}-portable.zip"
+          test -s "dist/agent-bus-v${VERSION}-portable.manifest.json"
+          test -s dist/SHA256SUMS
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}

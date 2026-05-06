@@ -27,6 +27,8 @@ npm install -g .
 agent-bus --help
 ```
 
+Or download a portable bundle from [GitHub Releases](https://github.com/haveagoodday1205-png/agent-bus/releases). The bundle includes launchers for Windows and Unix-style shells and still only requires Node.js 20+.
+
 Use a machine as a remote assistant node:
 
 ```bash

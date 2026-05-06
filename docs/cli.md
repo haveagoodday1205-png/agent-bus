@@ -9,6 +9,8 @@ npm install -g .
 agent-bus --help
 ```
 
+Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows.
+
 ## Remote Assistant Node
 
 On any machine that should receive work:

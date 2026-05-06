@@ -16,7 +16,8 @@ const state = {
   waiters: new Map(),
   runs: new Map(),
   threads: new Map(),
-  pairCodes: new Map()
+  pairCodes: new Map(),
+  edgeTokens: new Map()
 };
 
 main().catch((err) => {
@@ -35,6 +36,7 @@ async function main() {
   }
   const config = loadConfig(configPath);
   ensureDataDirs(config);
+  loadEdgeTokens(config);
 
   if (command === "serve") {
     await serve(config);
@@ -83,6 +85,7 @@ function loadConfig(file) {
   config.modelRouter ||= {};
   config.modelRouter.enabled ??= true;
   config.modelRouter.backends ||= [];
+  config.edgeTokens ||= [];
   return config;
 }
 
@@ -90,6 +93,91 @@ function ensureDataDirs(config) {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(path.join(config.dataDir, "threads"), { recursive: true });
   fs.mkdirSync(path.join(config.dataDir, "runs"), { recursive: true });
+}
+
+function loadEdgeTokens(config) {
+  state.edgeTokens.clear();
+  for (const item of config.edgeTokens || []) {
+    const record = edgeTokenRecordFromConfig(item);
+    if (record) state.edgeTokens.set(record.token_hash, record);
+  }
+  const file = edgeTokensFile(config);
+  if (!fs.existsSync(file)) return;
+  let data = [];
+  try {
+    data = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    data = [];
+  }
+  for (const item of Array.isArray(data) ? data : []) {
+    if (item.token_hash && item.status !== "revoked") state.edgeTokens.set(item.token_hash, item);
+  }
+}
+
+function edgeTokenRecordFromConfig(item) {
+  if (typeof item === "string") {
+    const token = item.trim();
+    if (!token) return null;
+    return {
+      id: `edge_config_${tokenHash(token).slice(0, 12)}`,
+      token_hash: tokenHash(token),
+      scope: "edge",
+      source: "config",
+      status: "active",
+      created_at: new Date().toISOString()
+    };
+  }
+  if (!item || typeof item !== "object") return null;
+  const token = String(item.token || "").trim();
+  const hash = String(item.tokenHash || item.token_hash || (token ? tokenHash(token) : "")).trim();
+  if (!hash) return null;
+  return {
+    id: item.id || `edge_config_${hash.slice(0, 12)}`,
+    token_hash: hash,
+    scope: "edge",
+    source: "config",
+    status: item.status || "active",
+    created_at: item.created_at || item.createdAt || new Date().toISOString(),
+    node_id: item.node_id || item.nodeId || "",
+    label: item.label || ""
+  };
+}
+
+function edgeTokensFile(config) {
+  return path.join(config.dataDir, "edge_tokens.json");
+}
+
+function persistEdgeTokens(config) {
+  const records = [...state.edgeTokens.values()].sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  fs.writeFileSync(edgeTokensFile(config), `${JSON.stringify(records, null, 2)}\n`);
+}
+
+function createEdgeToken(config, { nodeId = "", label = "" } = {}) {
+  const token = `abt_edge_${crypto.randomBytes(32).toString("base64url")}`;
+  const record = {
+    id: `edge_${crypto.randomUUID().replace(/-/g, "")}`,
+    token_hash: tokenHash(token),
+    scope: "edge",
+    status: "active",
+    created_at: new Date().toISOString(),
+    node_id: cleanPairValue(nodeId),
+    label: cleanPairValue(label)
+  };
+  state.edgeTokens.set(record.token_hash, record);
+  persistEdgeTokens(config);
+  appendJsonl(config, "edge_tokens.jsonl", {
+    event: "created",
+    id: record.id,
+    scope: "edge",
+    node_id: record.node_id,
+    label: record.label,
+    created_at: record.created_at
+  });
+  return { token, record };
+}
+
+function tokenHash(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
 }
 
 async function serve(config) {
@@ -114,17 +202,44 @@ async function serve(config) {
         const body = await readJson(req);
         return sendJson(res, redeemPairCode(config, body), 200, { redact: false });
       }
-      requireAuth(req, config);
       if (req.method === "POST" && (url.pathname === "/pair-codes" || url.pathname === "/v1/agent-bus/pair-codes")) {
+        requireAuth(req, config, ["admin"]);
         const body = await readJson(req);
         return sendJson(res, createPairCode(config, body, req), 201);
       }
       if (req.method === "GET" && url.pathname === "/agents") {
+        requireAuth(req, config, ["admin", "edge"]);
         return sendJson(res, publicAgents());
       }
       if (req.method === "GET" && (url.pathname === "/manifest" || url.pathname === "/v1/agent-bus/manifest")) {
+        requireAuth(req, config, ["admin", "edge"]);
         return sendJson(res, agentBusManifest(config));
       }
+      if (req.method === "POST" && url.pathname === "/edge/register") {
+        requireAuth(req, config, ["admin", "edge"]);
+        const body = await readJson(req);
+        const node = registerNode(config, body);
+        return sendJson(res, node);
+      }
+      if (req.method === "POST" && url.pathname === "/edge/poll") {
+        requireAuth(req, config, ["admin", "edge"]);
+        const body = await readJson(req);
+        const payload = await pollNode(body.node_id, Number(body.timeout_ms || config.defaults.pollTimeoutMs || 25000));
+        return sendJson(res, payload);
+      }
+      if (req.method === "POST" && url.pathname === "/edge/events") {
+        requireAuth(req, config, ["admin", "edge"]);
+        const body = await readJson(req);
+        recordRunEvent(config, body);
+        return sendJson(res, { ok: true });
+      }
+      if (req.method === "POST" && url.pathname === "/edge/complete") {
+        requireAuth(req, config, ["admin", "edge"]);
+        const body = await readJson(req);
+        const run = completeRun(config, body);
+        return sendJson(res, run);
+      }
+      requireAuth(req, config, ["admin"]);
       if (req.method === "GET" && url.pathname === "/v1/models") {
         return sendJson(res, openAiModels(config));
       }
@@ -164,27 +279,6 @@ async function serve(config) {
         return sendJson(res, run);
       }
 
-      if (req.method === "POST" && url.pathname === "/edge/register") {
-        const body = await readJson(req);
-        const node = registerNode(config, body);
-        return sendJson(res, node);
-      }
-      if (req.method === "POST" && url.pathname === "/edge/poll") {
-        const body = await readJson(req);
-        const payload = await pollNode(body.node_id, Number(body.timeout_ms || config.defaults.pollTimeoutMs || 25000));
-        return sendJson(res, payload);
-      }
-      if (req.method === "POST" && url.pathname === "/edge/events") {
-        const body = await readJson(req);
-        recordRunEvent(config, body);
-        return sendJson(res, { ok: true });
-      }
-      if (req.method === "POST" && url.pathname === "/edge/complete") {
-        const body = await readJson(req);
-        const run = completeRun(config, body);
-        return sendJson(res, run);
-      }
-
       return sendJson(res, { error: "not_found" }, 404);
     } catch (err) {
       return sendJson(res, { error: err.message || "internal_error" }, err.statusCode || 500);
@@ -196,16 +290,25 @@ async function serve(config) {
   });
 }
 
-function requireAuth(req, config) {
-  if (!config.token) return;
+function requireAuth(req, config, allowedScopes = ["admin"]) {
+  if (!config.token && state.edgeTokens.size === 0) return "admin";
   const auth = req.headers.authorization || "";
   const headerToken = req.headers["x-agent-bus-token"];
   const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : headerToken;
-  if (token !== config.token) {
+  const scope = tokenScope(config, token);
+  if (!allowedScopes.includes(scope)) {
     const err = new Error("unauthorized");
     err.statusCode = 401;
     throw err;
   }
+  return scope;
+}
+
+function tokenScope(config, token) {
+  if (config.token && token === config.token) return "admin";
+  const record = state.edgeTokens.get(tokenHash(token));
+  if (record && record.status !== "revoked") return "edge";
+  return "";
 }
 
 const PAIR_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -280,17 +383,21 @@ function redeemPairCode(config, body) {
     err.statusCode = 410;
     throw err;
   }
+  const nodeId = cleanPairValue(body.nodeId || body.node_id || record.node_id);
+  const edge = createEdgeToken(config, { nodeId, label: record.label || "pair-code" });
   appendJsonl(config, "pair_codes.jsonl", {
     event: "redeemed",
     label: record.label,
     agent_preset: record.agent_preset,
+    edge_token_id: edge.record.id,
     redeemed_at: new Date().toISOString()
   });
   return {
     ok: true,
     gatewayUrl: record.gateway_url,
-    token: config.token || "",
-    nodeId: cleanPairValue(body.nodeId || body.node_id || record.node_id),
+    token: edge.token,
+    tokenScope: "edge",
+    nodeId,
     agentPreset: cleanPairValue(body.preset || body.agentPreset || record.agent_preset)
   };
 }
@@ -383,7 +490,11 @@ function agentBusManifest(config) {
     description: "A lightweight AI-to-AI bus for discovering agents, routing tasks, and coordinating shared work.",
     auth: {
       type: "bearer",
-      health_public: true
+      health_public: true,
+      scopes: {
+        admin: "Full gateway, model router, room, thread, and pairing access.",
+        edge: "Edge registration, polling, run reporting, and read-only discovery."
+      }
     },
     endpoints: {
       health: "GET /health",

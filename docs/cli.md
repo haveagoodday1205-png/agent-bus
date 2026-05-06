@@ -36,7 +36,7 @@ agent-bus init edge --preset codex --out edge.config.json
 Edit:
 
 - `gatewayUrl`: central gateway URL
-- `token`: central gateway bearer token
+- `token`: scoped edge token from pairing, or an admin token for trusted manual deployments
 - `pingUrl`: shallow model/service reachability URL
 - `runCommand`: command that runs the local AI tool
 
@@ -78,7 +78,9 @@ agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
 ```
 
-The join command writes the gateway URL and bearer token into the local config file, but it does not print the token. Codes are single-use and expire automatically. With `--auto`, it also detects local AI tools and registers each one as an agent.
+The join command writes the gateway URL and a scoped edge token into the local config file, but it does not print the token. Codes are single-use and expire automatically. With `--auto`, it also detects local AI tools and registers each one as an agent.
+
+The scoped edge token can register, poll, report run events, and read discovery metadata. It cannot create pair codes, create threads, wake rooms, or call the OpenAI-compatible model router.
 
 ## Central Gateway
 
@@ -90,6 +92,7 @@ agent-bus serve --config central.config.json
 Edit the generated config to set:
 
 - a long random `token`
+- optional `edgeTokens` for pre-provisioned edge nodes; pairing usually creates these automatically and stores token hashes under the gateway data directory
 - model router `baseUrl`
 - model router API key environment variable
 - model aliases exposed to clients

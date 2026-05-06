@@ -94,8 +94,21 @@ async function main() {
       nodeId: "smoke-node"
     })
   });
-  assert(paired.token === token, "pair redemption did not return the gateway token");
+  assert(paired.token && paired.token !== token, "pair redemption did not return a scoped edge token");
+  assert(paired.tokenScope === "edge", "pair redemption did not mark the token as edge-scoped");
   assert(paired.agentPreset === "echo", "pair redemption did not preserve the agent preset");
+  const edgeManifest = await requestJson("http://127.0.0.1:8788/v1/agent-bus/manifest", {
+    headers: { authorization: `Bearer ${paired.token}` }
+  });
+  assert(edgeManifest.protocol === "agent-bus.v1", "edge token could not read the manifest");
+  await assertRequestFails("edge token cannot create threads", () => requestJson("http://127.0.0.1:8788/threads", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${paired.token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ message: "should be forbidden", agents: ["local-echo"] })
+  }));
 
   const cliPairCreate = await runNode(["agent-bus.mjs", "pair", "create", "--gateway", "http://127.0.0.1:8788", "--token", token, "--preset", "echo", "--ttl", "120"]);
   assert(!cliPairCreate.stdout.includes(token), "pair create printed the gateway token");
@@ -104,7 +117,8 @@ async function main() {
   const cliPairJoin = await runNode(["agent-bus.mjs", "pair", "join", "--gateway", "http://127.0.0.1:8788", "--code", cliPair.code, "--out", cliOut]);
   assert(!cliPairJoin.stdout.includes(token), "pair join printed the gateway token");
   const pairedConfig = JSON.parse(fs.readFileSync(cliOut, "utf8"));
-  assert(pairedConfig.token === token, "pair join did not write the gateway token");
+  assert(pairedConfig.token && pairedConfig.token !== token, "pair join did not write a scoped edge token");
+  assert(pairedConfig.tokenScope === "edge", "pair join did not write tokenScope=edge");
   assert(pairedConfig.gatewayUrl === "http://127.0.0.1:8788", "pair join wrote the wrong gateway URL");
   assert(pairedConfig.agents?.[0]?.adapter === "echo", "pair join did not use the echo preset");
 
@@ -230,6 +244,15 @@ async function requestText(url, options = {}) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function assertRequestFails(name, fn) {
+  try {
+    await fn();
+  } catch {
+    return;
+  }
+  throw new Error(`${name} unexpectedly succeeded`);
 }
 
 function delay(ms) {

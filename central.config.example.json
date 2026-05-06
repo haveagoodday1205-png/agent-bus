@@ -7,6 +7,7 @@
     "mode": "orchestrate",
     "pollTimeoutMs": 25000
   },
+  "edgeTokens": [],
   "modelRouter": {
     "enabled": true,
     "defaultBackend": "sub2api-178",

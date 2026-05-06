@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import calendar
+import hashlib
 import json
 import mimetypes
 import os
@@ -24,6 +25,7 @@ STATE = {
     "reminders": {},
     "conditions": {},
     "pair_codes": {},
+    "edge_tokens": {},
 }
 
 
@@ -40,6 +42,7 @@ NODE_STALE_SECONDS = max(1, int_env("AGENT_BUS_NODE_STALE_SECONDS", 180))
 def main():
     config = load_config()
     ensure_dirs(config)
+    load_edge_tokens(config)
     threading.Thread(target=reminder_loop, args=(config,), daemon=True).start()
     server = ThreadingHTTPServer((config["host"], int(config["port"])), Handler)
     server.config = config
@@ -63,6 +66,7 @@ def load_config():
     config.setdefault("modelRouter", {})
     config["modelRouter"].setdefault("enabled", True)
     config["modelRouter"].setdefault("backends", [])
+    config.setdefault("edgeTokens", [])
     return config
 
 
@@ -71,6 +75,103 @@ def ensure_dirs(config):
     (root / "threads").mkdir(parents=True, exist_ok=True)
     (root / "runs").mkdir(parents=True, exist_ok=True)
     (root / "rooms").mkdir(parents=True, exist_ok=True)
+
+
+def load_edge_tokens(config):
+    STATE["edge_tokens"] = {}
+    for item in config.get("edgeTokens") or []:
+        record = edge_token_record_from_config(item)
+        if record:
+            STATE["edge_tokens"][record["token_hash"]] = record
+    path = edge_tokens_path(config)
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = []
+        for item in data if isinstance(data, list) else []:
+            if item.get("token_hash") and item.get("status", "active") != "revoked":
+                STATE["edge_tokens"][item["token_hash"]] = item
+
+
+def edge_token_record_from_config(item):
+    if isinstance(item, str):
+        token = item.strip()
+        if not token:
+            return None
+        return {
+            "id": "edge_config_" + token_hash(token)[:12],
+            "token_hash": token_hash(token),
+            "scope": "edge",
+            "source": "config",
+            "status": "active",
+            "created_at": now(),
+        }
+    if not isinstance(item, dict):
+        return None
+    token = str(item.get("token") or "").strip()
+    token_hash_value = str(item.get("tokenHash") or item.get("token_hash") or "").strip()
+    if not token_hash_value and token:
+        token_hash_value = token_hash(token)
+    if not token_hash_value:
+        return None
+    return {
+        "id": item.get("id") or "edge_config_" + token_hash_value[:12],
+        "token_hash": token_hash_value,
+        "scope": "edge",
+        "source": "config",
+        "status": item.get("status", "active"),
+        "created_at": item.get("created_at") or item.get("createdAt") or now(),
+        "node_id": item.get("node_id") or item.get("nodeId") or "",
+        "label": item.get("label") or "",
+    }
+
+
+def edge_tokens_path(config):
+    return Path(config["dataDir"]) / "edge_tokens.json"
+
+
+def persist_edge_tokens(config):
+    records = sorted(STATE["edge_tokens"].values(), key=lambda item: item.get("created_at", ""))
+    edge_tokens_path(config).write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def create_edge_token(config, node_id="", label=""):
+    token = "abt_edge_" + secrets.token_urlsafe(32)
+    record = {
+        "id": "edge_" + uuid.uuid4().hex,
+        "token_hash": token_hash(token),
+        "scope": "edge",
+        "status": "active",
+        "created_at": now(),
+        "node_id": clean_pair_value(node_id),
+        "label": clean_pair_value(label),
+    }
+    STATE["edge_tokens"][record["token_hash"]] = record
+    persist_edge_tokens(config)
+    append_jsonl(config, "edge_tokens.jsonl", {
+        "event": "created",
+        "id": record["id"],
+        "scope": "edge",
+        "node_id": record["node_id"],
+        "label": record["label"],
+        "created_at": record["created_at"],
+    })
+    return token, record
+
+
+def token_scope(config, token):
+    token = str(token or "")
+    if config.get("token") and token == config.get("token"):
+        return "admin"
+    record = STATE["edge_tokens"].get(token_hash(token))
+    if record and record.get("status", "active") != "revoked":
+        return "edge"
+    return ""
+
+
+def token_hash(token):
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,11 +195,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(agent_bus_well_known())
             if path == "/console" or path.startswith("/console/"):
                 return self.console_asset(path)
-            self.require_auth()
             if path == "/agents":
+                self.require_auth(("admin", "edge"))
                 return self.json(public_agents())
             if path in ("/manifest", "/v1/agent-bus/manifest"):
+                self.require_auth(("admin", "edge"))
                 return self.json(agent_bus_manifest(self.config))
+            self.require_auth(("admin",))
             if path == "/rooms":
                 return self.json([room_summary(room) for room in STATE["rooms"].values()])
             if path.startswith("/rooms/"):
@@ -124,10 +227,22 @@ class Handler(BaseHTTPRequestHandler):
                 body = self.read_json()
                 return self.json(redeem_pair_code(self.config, body), redact_value=False)
 
-            self.require_auth()
             body = self.read_json()
             if path in ("/pair-codes", "/v1/agent-bus/pair-codes"):
+                self.require_auth(("admin",))
                 return self.json(create_pair_code(self.config, body, self), 201)
+            if path in ("/edge/register", "/edge/poll", "/edge/events", "/edge/complete"):
+                self.require_auth(("admin", "edge"))
+                if path == "/edge/register":
+                    return self.json(register_node(self.config, body))
+                if path == "/edge/poll":
+                    return self.json(poll_node(self.config, body, int(body.get("timeout_ms") or self.config["defaults"]["pollTimeoutMs"])))
+                if path == "/edge/events":
+                    record_event(self.config, body)
+                    return self.json({"ok": True})
+                if path == "/edge/complete":
+                    return self.json(complete_run(self.config, body))
+            self.require_auth(("admin",))
             if path == "/route":
                 selection = select_agents(body.get("message", ""), body)
                 return self.json(public_selection(selection))
@@ -145,15 +260,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(wake_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "reminders":
                     return self.json(add_room_reminder(self.config, parts[1], body), 201)
-            if path == "/edge/register":
-                return self.json(register_node(self.config, body))
-            if path == "/edge/poll":
-                return self.json(poll_node(self.config, body, int(body.get("timeout_ms") or self.config["defaults"]["pollTimeoutMs"])))
-            if path == "/edge/events":
-                record_event(self.config, body)
-                return self.json({"ok": True})
-            if path == "/edge/complete":
-                return self.json(complete_run(self.config, body))
             return self.json({"error": "not_found"}, 404)
         except Exception as exc:
             return self.json({"error": str(exc)}, getattr(exc, "status_code", 500))
@@ -162,17 +268,18 @@ class Handler(BaseHTTPRequestHandler):
     def config(self):
         return self.server.config
 
-    def require_auth(self):
-        token = self.config.get("token")
-        if not token:
-            return
+    def require_auth(self, allowed_scopes=("admin",)):
+        if not self.config.get("token") and not STATE["edge_tokens"]:
+            return "admin"
         auth = self.headers.get("authorization", "")
         header_token = self.headers.get("x-agent-bus-token", "")
         got = auth[7:] if auth.lower().startswith("bearer ") else header_token
-        if got != token:
+        scope = token_scope(self.config, got)
+        if scope not in allowed_scopes:
             err = Exception("unauthorized")
             err.status_code = 401
             raise err
+        return scope
 
     def read_json(self):
         length = int(self.headers.get("content-length") or 0)
@@ -339,6 +446,10 @@ def agent_bus_manifest(config):
         "auth": {
             "type": "bearer",
             "health_public": True,
+            "scopes": {
+                "admin": "Full gateway, model router, room, thread, and pairing access.",
+                "edge": "Edge registration, polling, run reporting, and read-only discovery.",
+            },
         },
         "endpoints": {
             "health": "GET /health",
@@ -536,17 +647,21 @@ def redeem_pair_code(config, body):
         err = Exception("pair code expired")
         err.status_code = 410
         raise err
+    node_id = clean_pair_value(body.get("nodeId") or body.get("node_id") or record.get("node_id"))
+    edge_token, edge_record = create_edge_token(config, node_id=node_id, label=record.get("label") or "pair-code")
     append_jsonl(config, "pair_codes.jsonl", {
         "event": "redeemed",
         "label": record.get("label"),
         "agent_preset": record.get("agent_preset"),
+        "edge_token_id": edge_record["id"],
         "redeemed_at": now(),
     })
     return {
         "ok": True,
         "gatewayUrl": record.get("gateway_url"),
-        "token": config.get("token", ""),
-        "nodeId": clean_pair_value(body.get("nodeId") or body.get("node_id") or record.get("node_id")),
+        "token": edge_token,
+        "tokenScope": "edge",
+        "nodeId": node_id,
         "agentPreset": clean_pair_value(body.get("preset") or body.get("agentPreset") or record.get("agent_preset")),
     }
 

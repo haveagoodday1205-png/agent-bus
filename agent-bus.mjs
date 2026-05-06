@@ -362,6 +362,7 @@ async function joinPairCode(args) {
   config.nodeId = result.nodeId || nodeId;
   config.gatewayUrl = result.gatewayUrl || gateway;
   config.token = result.token || "";
+  config.tokenScope = result.tokenScope || "edge";
   fs.writeFileSync(out, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
   console.log(`Wrote ${out}`);
   console.log(`Next: agent-bus doctor --config ${out}`);
@@ -578,6 +579,7 @@ function centralTemplate() {
       mode: "orchestrate",
       pollTimeoutMs: 25000
     },
+    edgeTokens: [],
     modelRouter: {
       enabled: true,
       defaultBackend: "openai-compatible",
@@ -641,7 +643,8 @@ function edgeConfigWithAgents(agents) {
   return {
     nodeId: safeId(os.hostname()),
     gatewayUrl: "https://YOUR-GATEWAY-DOMAIN/agent-bus",
-    token: "change-me-to-the-central-token",
+    token: "change-me-to-a-scoped-edge-token",
+    tokenScope: "edge",
     pollTimeoutMs: 25000,
     idleDelayMs: 1000,
     defaultTimeoutMs: 600000,

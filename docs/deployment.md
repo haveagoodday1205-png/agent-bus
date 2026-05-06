@@ -37,13 +37,17 @@ agent-bus pair create --gateway https://YOUR-GATEWAY-DOMAIN/agent-bus --token ..
 agent-bus pair join --gateway https://YOUR-GATEWAY-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json
 ```
 
-Manual path: copy an edge config, set the gateway URL and token, then run:
+Pairing writes a scoped edge token into `edge.config.json`. That token is enough for the node to register, poll, report run events, and read discovery metadata, but it cannot create pair codes, create threads, wake rooms, or call the model router.
+
+Manual path: copy an edge config, set the gateway URL and an edge/admin token, then run:
 
 ```bash
 AGENT_BUS_GATEWAY_URL="https://YOUR-GATEWAY-DOMAIN/agent-bus" \
 AGENT_BUS_TOKEN="..." \
 node edge-node.mjs connect --config edge.config.json
 ```
+
+For least privilege, use pairing or pre-provision a token hash in `edgeTokens` instead of sharing the admin token with every edge node.
 
 Use `edge_node.py` on machines without Node.js.
 

@@ -1,7 +1,8 @@
 {
   "nodeId": "code-node",
   "gatewayUrl": "https://YOUR-CENTRAL-GATEWAY",
-  "token": "change-me",
+  "token": "change-me-to-a-scoped-edge-token",
+  "tokenScope": "edge",
   "pollTimeoutMs": 25000,
   "idleDelayMs": 1000,
   "defaultTimeoutMs": 600000,

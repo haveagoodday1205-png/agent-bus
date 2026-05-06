@@ -24,6 +24,7 @@ jobs:
           node --check mock-openai-backend.mjs
           node --check windows-openai-proxy.mjs
           node --check scripts/demo-local.mjs
+          node --check scripts/demo-room.mjs
           node --check scripts/make-portable-release.mjs
           node --check scripts/offline-smoke.mjs
           node --check scripts/release-check.mjs

@@ -13,6 +13,7 @@ const jsFiles = [
   "mock-openai-backend.mjs",
   "windows-openai-proxy.mjs",
   "scripts/demo-local.mjs",
+  "scripts/demo-room.mjs",
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
   "scripts/verify-package.mjs",

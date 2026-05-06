@@ -35,10 +35,14 @@ Run the local smoke test:
 npm run smoke
 ```
 
-Run the local demo:
+Run a local demo:
 
 ```bash
+# Pair a local edge and send a normal task.
 npm run demo:local
+
+# Show AI-to-AI room delegation and export a share-safe report.
+npm run demo:room
 ```
 
 Install the CLI from npm or from a checkout:
@@ -122,6 +126,14 @@ agent-bus smoke --offline
 ```
 
 This uses the local Python gateway for room support and makes no model-provider calls.
+
+For a first-run AI-to-AI room walkthrough, run:
+
+```bash
+npm run demo:room
+```
+
+It starts a local gateway, connects two fake command agents, has one agent delegate to the other with `@demo-worker: ...`, waits for `DONE`, and writes `agent-bus-room-demo-report.md` using `room export --reports-only` so the artifact is safe to share.
 
 Or start the demo pieces manually:
 

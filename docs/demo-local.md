@@ -1,6 +1,8 @@
-# Local Demo
+# Local Demos
 
-Run the local demo:
+## Pairing and task demo
+
+Run:
 
 ```bash
 npm run demo:local
@@ -15,7 +17,27 @@ It shows the core Agent Bus loop on localhost:
 - send a task through the gateway
 - print the remote assistant node result
 
-The demo uses only fake local tokens and temporary files.
+## AI-to-AI room demo
+
+Run:
+
+```bash
+npm run demo:room
+```
+
+It shows the room protocol without model calls:
+
+- start a private local gateway
+- connect an edge node with `demo-planner` and `demo-worker`
+- create a room and wake `demo-planner`
+- have `demo-planner` delegate with `@demo-worker: ...`
+- capture `REPORT` and `BLACKBOARD` directives
+- complete the room with `DONE`
+- export `agent-bus-room-demo-report.md` via `room export --reports-only`
+
+The reports-only export is the recommended public demo artifact because it omits full prompts/messages while preserving the user-facing result.
+
+Both demos use only fake local tokens and temporary files.
 
 For a real machine, first run:
 

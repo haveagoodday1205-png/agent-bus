@@ -13,59 +13,66 @@
         <p id="gatewayLabel">Console</p>
       </div>
       <div class="topbar-actions">
+        <label class="language-field">
+          <span data-i18n="language">Language</span>
+          <select id="languageSelect" autocomplete="off">
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+        </label>
         <label class="token-field">
-          <span>Token</span>
-          <input id="tokenInput" type="password" autocomplete="off" placeholder="Paste token or Bearer token" />
+          <span data-i18n="token">Token</span>
+          <input id="tokenInput" type="password" autocomplete="off" placeholder="Paste token or Bearer token" data-i18n-placeholder="tokenPlaceholder" />
           <span id="tokenStatus" class="token-status" aria-live="polite"></span>
         </label>
-        <button id="saveTokenButton" type="button">Save</button>
-        <button id="refreshButton" type="button">Refresh</button>
+        <button id="saveTokenButton" type="button" data-i18n="save">Save</button>
+        <button id="refreshButton" type="button" data-i18n="refresh">Refresh</button>
       </div>
     </header>
 
     <main class="layout">
       <section class="status-band" aria-label="Gateway status">
         <div>
-          <span class="metric-label">Gateway</span>
-          <strong id="gatewayStatus">checking</strong>
+          <span class="metric-label" data-i18n="gateway">Gateway</span>
+          <strong id="gatewayStatus" data-status-key="checking">checking</strong>
         </div>
         <div>
-          <span class="metric-label">Nodes</span>
+          <span class="metric-label" data-i18n="nodes">Nodes</span>
           <strong id="nodeCount">-</strong>
         </div>
         <div>
-          <span class="metric-label">Agents</span>
+          <span class="metric-label" data-i18n="agents">Agents</span>
           <strong id="agentCount">-</strong>
         </div>
         <div>
-          <span class="metric-label">Queued</span>
+          <span class="metric-label" data-i18n="queued">Queued</span>
           <strong id="queuedCount">-</strong>
         </div>
       </section>
 
       <nav class="tabs" aria-label="Console sections">
-        <button class="tab active" type="button" data-tab="agents">Agents</button>
-        <button class="tab" type="button" data-tab="tasks">Tasks</button>
-        <button class="tab" type="button" data-tab="models">Models</button>
-        <button class="tab" type="button" data-tab="events">Events</button>
+        <button class="tab active" type="button" data-tab="agents" data-i18n="agents">Agents</button>
+        <button class="tab" type="button" data-tab="tasks" data-i18n="tasks">Tasks</button>
+        <button class="tab" type="button" data-tab="models" data-i18n="models">Models</button>
+        <button class="tab" type="button" data-tab="events" data-i18n="events">Events</button>
       </nav>
 
       <section id="agentsPanel" class="panel active">
         <div class="section-head">
-          <h2>Agents</h2>
-          <button id="loadAgentsButton" type="button">Reload</button>
+          <h2 data-i18n="agents">Agents</h2>
+          <button id="loadAgentsButton" type="button" data-i18n="reload">Reload</button>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th></th>
-                <th>Agent</th>
-                <th>Node</th>
-                <th>Kind</th>
-                <th>Role</th>
-                <th>Capabilities</th>
-                <th>Seen</th>
+                <th data-i18n="agent">Agent</th>
+                <th data-i18n="node">Node</th>
+                <th data-i18n="kind">Kind</th>
+                <th data-i18n="role">Role</th>
+                <th data-i18n="capabilities">Capabilities</th>
+                <th data-i18n="seen">Seen</th>
               </tr>
             </thead>
             <tbody id="agentsTable"></tbody>
@@ -77,32 +84,32 @@
         <div class="split">
           <form id="taskForm" class="tool-surface">
             <div class="section-head">
-              <h2>Task</h2>
-              <button id="routeButton" type="button">Route</button>
+              <h2 data-i18n="task">Task</h2>
+              <button id="routeButton" type="button" data-i18n="route">Route</button>
             </div>
             <label>
-              <span>Message</span>
-              <textarea id="taskMessage" rows="7" placeholder="Ask connected agents to do something"></textarea>
+              <span data-i18n="message">Message</span>
+              <textarea id="taskMessage" rows="7" placeholder="Ask connected agents to do something" data-i18n-placeholder="taskPlaceholder"></textarea>
             </label>
             <div class="form-row">
               <label>
-                <span>Mode</span>
+                <span data-i18n="mode">Mode</span>
                 <select id="taskMode">
-                  <option value="orchestrate">orchestrate</option>
-                  <option value="broadcast">broadcast</option>
-                  <option value="explicit">selected agents</option>
+                  <option value="orchestrate" data-i18n="orchestrate">orchestrate</option>
+                  <option value="broadcast" data-i18n="broadcast">broadcast</option>
+                  <option value="explicit" data-i18n="selectedAgents">selected agents</option>
                 </select>
               </label>
-              <button id="submitTaskButton" type="submit">Run Task</button>
+              <button id="submitTaskButton" type="submit" data-i18n="runTask">Run Task</button>
             </div>
           </form>
 
           <div class="tool-surface">
             <div class="section-head">
-              <h2>Thread</h2>
-              <button id="stopPollingButton" type="button">Stop Polling</button>
+              <h2 data-i18n="thread">Thread</h2>
+              <button id="stopPollingButton" type="button" data-i18n="stopPolling">Stop Polling</button>
             </div>
-            <div id="threadSummary" class="muted">No thread selected.</div>
+            <div id="threadSummary" class="muted" data-i18n="noThread">No thread selected.</div>
             <div id="runsList" class="runs-list"></div>
           </div>
         </div>
@@ -112,23 +119,23 @@
         <div class="split">
           <form id="chatForm" class="tool-surface">
             <div class="section-head">
-              <h2>Model Router</h2>
-              <button id="loadModelsButton" type="button">Models</button>
+              <h2 data-i18n="modelRouter">Model Router</h2>
+              <button id="loadModelsButton" type="button" data-i18n="models">Models</button>
             </div>
             <label>
-              <span>Model</span>
+              <span data-i18n="model">Model</span>
               <input id="modelInput" value="agent-bus-default" />
             </label>
             <label>
-              <span>Prompt</span>
-              <textarea id="chatPrompt" rows="7" placeholder="Send a message through /v1/chat/completions"></textarea>
+              <span data-i18n="prompt">Prompt</span>
+              <textarea id="chatPrompt" rows="7" placeholder="Send a message through /v1/chat/completions" data-i18n-placeholder="chatPlaceholder"></textarea>
             </label>
-            <button type="submit">Send</button>
+            <button type="submit" data-i18n="send">Send</button>
           </form>
           <div class="tool-surface">
             <div class="section-head">
-              <h2>Response</h2>
-              <button id="clearModelOutputButton" type="button">Clear</button>
+              <h2 data-i18n="response">Response</h2>
+              <button id="clearModelOutputButton" type="button" data-i18n="clear">Clear</button>
             </div>
             <pre id="modelOutput" class="output"></pre>
           </div>
@@ -137,8 +144,8 @@
 
       <section id="eventsPanel" class="panel">
         <div class="section-head">
-          <h2>Events</h2>
-          <button id="clearEventsButton" type="button">Clear</button>
+          <h2 data-i18n="events">Events</h2>
+          <button id="clearEventsButton" type="button" data-i18n="clear">Clear</button>
         </div>
         <pre id="eventLog" class="event-log"></pre>
       </section>

@@ -2,20 +2,175 @@ const state = {
   agents: [],
   selectedAgents: new Set(),
   currentThreadId: null,
-  polling: null
+  currentThread: null,
+  polling: null,
+  lang: localStorage.getItem("agentBusLanguage") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"),
+  tokenStatusKey: null,
+  tokenStatusClass: ""
 };
 
 const $ = (id) => document.getElementById(id);
+const messages = {
+  en: {
+    agent: "Agent",
+    agents: "Agents",
+    agentsLoaded: "loaded {count} agents",
+    agentsLoadFailed: "Could not load agents: {message}",
+    agentsLogFailed: "agents failed: {message}",
+    broadcast: "broadcast",
+    capabilities: "Capabilities",
+    chatPlaceholder: "Send a message through /v1/chat/completions",
+    checking: "checking",
+    clear: "Clear",
+    events: "Events",
+    gateway: "Gateway",
+    healthFailed: "health failed: {message}",
+    kind: "Kind",
+    language: "Language",
+    message: "Message",
+    missingToken: "missing token",
+    mode: "Mode",
+    model: "Model",
+    modelOutputEmpty: "",
+    modelPromptEmpty: "model prompt is empty",
+    modelRouter: "Model Router",
+    models: "Models",
+    modelsLoaded: "loaded {count} models",
+    noAgents: "No registered agents.",
+    noThread: "No thread selected.",
+    node: "Node",
+    nodes: "Nodes",
+    offline: "offline",
+    online: "online",
+    orchestrate: "orchestrate",
+    completed: "completed",
+    failed: "failed",
+    running: "running",
+    prompt: "Prompt",
+    queued: "Queued",
+    refresh: "Refresh",
+    reload: "Reload",
+    response: "Response",
+    role: "Role",
+    route: "Route",
+    routeFailed: "route failed: {message}",
+    routeLog: "route: {reason}",
+    routeSummary: "Route: {agents}",
+    runTask: "Run Task",
+    save: "Save",
+    seen: "Seen",
+    selectedAgents: "selected agents",
+    send: "Send",
+    stopPolling: "Stop Polling",
+    task: "Task",
+    taskFailed: "task failed: {message}",
+    taskMessageEmpty: "task message is empty",
+    taskPlaceholder: "Ask connected agents to do something",
+    tasks: "Tasks",
+    thread: "Thread",
+    threadCreated: "thread created: {id}",
+    threadLoadFailed: "thread load failed: {message}",
+    token: "Token",
+    tokenPlaceholder: "Paste token or Bearer token",
+    tokenRejected: "Token rejected or missing",
+    tokenRequired: "Required for control actions",
+    tokenRequiredShort: "Token required",
+    tokenSaved: "Saved for this browser tab",
+    tokenSavedLog: "token saved; refreshing authorized data",
+    tokenSaving: "Saved. Loading agents...",
+    unknown: "unknown",
+    waiting: "waiting..."
+  },
+  zh: {
+    agent: "Agent",
+    agents: "智能体",
+    agentsLoaded: "已加载 {count} 个智能体",
+    agentsLoadFailed: "无法加载智能体：{message}",
+    agentsLogFailed: "智能体加载失败：{message}",
+    broadcast: "广播给全部",
+    capabilities: "能力",
+    chatPlaceholder: "通过 /v1/chat/completions 发送消息",
+    checking: "检查中",
+    clear: "清空",
+    events: "事件",
+    gateway: "网关",
+    healthFailed: "健康检查失败：{message}",
+    kind: "类型",
+    language: "语言",
+    message: "消息",
+    missingToken: "缺少 token",
+    mode: "模式",
+    model: "模型",
+    modelOutputEmpty: "",
+    modelPromptEmpty: "模型提示词不能为空",
+    modelRouter: "模型路由",
+    models: "模型",
+    modelsLoaded: "已加载 {count} 个模型",
+    noAgents: "没有已注册的智能体。",
+    noThread: "尚未选择线程。",
+    node: "节点",
+    nodes: "节点",
+    offline: "离线",
+    online: "在线",
+    orchestrate: "自动编排",
+    completed: "已完成",
+    failed: "失败",
+    running: "运行中",
+    prompt: "提示词",
+    queued: "队列",
+    refresh: "刷新",
+    reload: "重新加载",
+    response: "响应",
+    role: "角色",
+    route: "路由",
+    routeFailed: "路由失败：{message}",
+    routeLog: "路由：{reason}",
+    routeSummary: "路由到：{agents}",
+    runTask: "运行任务",
+    save: "保存",
+    seen: "最近在线",
+    selectedAgents: "选中的智能体",
+    send: "发送",
+    stopPolling: "停止轮询",
+    task: "任务",
+    taskFailed: "任务失败：{message}",
+    taskMessageEmpty: "任务消息不能为空",
+    taskPlaceholder: "让已连接的智能体执行任务",
+    tasks: "任务",
+    thread: "线程",
+    threadCreated: "线程已创建：{id}",
+    threadLoadFailed: "线程加载失败：{message}",
+    token: "Token",
+    tokenPlaceholder: "粘贴 token 或 Bearer token",
+    tokenRejected: "Token 错误或缺失",
+    tokenRequired: "控制操作需要 token",
+    tokenRequiredShort: "需要 token",
+    tokenSaved: "已保存到当前浏览器标签页",
+    tokenSavedLog: "token 已保存，正在刷新授权数据",
+    tokenSaving: "已保存，正在加载智能体...",
+    unknown: "未知",
+    waiting: "等待中..."
+  }
+};
 
 const apiBase = new URL("../", window.location.href);
 $("gatewayLabel").textContent = apiBase.href.replace(/\/$/, "");
 $("tokenInput").value = sessionStorage.getItem("agentBusToken") || "";
-$("tokenStatus").textContent = $("tokenInput").value ? "Saved for this browser tab" : "Required for control actions";
+$("languageSelect").value = state.lang;
+applyLanguage();
+setTokenStatus($("tokenInput").value ? "tokenSaved" : "tokenRequired", $("tokenInput").value ? "" : "");
 
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
 
+$("languageSelect").addEventListener("change", () => {
+  state.lang = $("languageSelect").value;
+  localStorage.setItem("agentBusLanguage", state.lang);
+  applyLanguage();
+  renderAgents();
+  if (state.currentThread) renderThread(state.currentThread);
+});
 $("saveTokenButton").addEventListener("click", saveToken);
 $("tokenInput").addEventListener("keydown", (event) => {
   if (event.key === "Enter") saveToken();
@@ -49,30 +204,28 @@ async function saveToken() {
   $("tokenInput").value = token;
   if (!token) {
     sessionStorage.removeItem("agentBusToken");
-    setTokenStatus("Token required", "failed");
-    renderAuthError(new Error("missing token"));
+    setTokenStatus("tokenRequiredShort", "failed");
+    renderAuthError(new Error(t("missingToken")));
     return;
   }
 
   sessionStorage.setItem("agentBusToken", token);
-  setTokenStatus("Saved. Loading agents...", "running");
-  logEvent("token saved; refreshing authorized data");
+  setTokenStatus("tokenSaving", "running");
+  logEvent(t("tokenSavedLog"));
   await refreshAll();
-  setTokenStatus("Saved for this browser tab", "online");
+  setTokenStatus("tokenSaved", "online");
 }
 
 async function loadHealth() {
   try {
     const data = await request("health", { auth: false });
-    $("gatewayStatus").textContent = data.ok ? "online" : "unknown";
-    $("gatewayStatus").className = data.ok ? "status online" : "status";
+    setGatewayStatus(data.ok ? "online" : "unknown", data.ok ? "status online" : "status");
     $("nodeCount").textContent = data.nodes ?? "-";
     $("agentCount").textContent = data.agents ?? "-";
     $("queuedCount").textContent = data.queued ?? "-";
   } catch (err) {
-    $("gatewayStatus").textContent = "offline";
-    $("gatewayStatus").className = "status failed";
-    logEvent(`health failed: ${err.message}`);
+    setGatewayStatus("offline", "status failed");
+    logEvent(t("healthFailed", { message: err.message }));
   }
 }
 
@@ -81,7 +234,7 @@ async function loadAgents() {
     state.agents = await request("agents");
     for (const agent of state.agents) state.selectedAgents.add(agent.id);
     renderAgents();
-    logEvent(`loaded ${state.agents.length} agents`);
+    logEvent(t("agentsLoaded", { count: state.agents.length }));
   } catch (err) {
     renderAuthError(err);
   }
@@ -91,14 +244,14 @@ function renderAgents() {
   const tbody = $("agentsTable");
   tbody.textContent = "";
   if (!state.agents.length) {
-    tbody.append(rowMessage("No registered agents."));
+    tbody.append(rowMessage(t("noAgents")));
     return;
   }
   for (const agent of state.agents) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input type="checkbox" data-agent="${escapeHtml(agent.id)}" ${state.selectedAgents.has(agent.id) ? "checked" : ""}></td>
-      <td><div class="agent-name">${escapeHtml(agent.id)}</div><span class="status ${escapeHtml(agent.node_status || "")}">${escapeHtml(agent.node_status || "unknown")}</span></td>
+      <td><div class="agent-name">${escapeHtml(agent.id)}</div><span class="status ${escapeHtml(agent.node_status || "")}">${escapeHtml(statusText(agent.node_status || "unknown"))}</span></td>
       <td>${escapeHtml(agent.node_id || "-")}</td>
       <td>${escapeHtml(agent.kind || "-")}</td>
       <td>${escapeHtml(agent.role || "-")}</td>
@@ -125,30 +278,31 @@ function rowMessage(message) {
 
 async function routeTask() {
   const message = $("taskMessage").value.trim();
-  if (!message) return logEvent("task message is empty");
+  if (!message) return logEvent(t("taskMessageEmpty"));
   try {
     const body = taskPayload(message);
     const data = await request("route", { method: "POST", body });
-    logEvent(`route: ${data.reason}`);
-    $("threadSummary").textContent = `Route: ${data.agents.map((agent) => agent.id).join(", ")}`;
+    logEvent(t("routeLog", { reason: data.reason }));
+    $("threadSummary").removeAttribute("data-i18n");
+    $("threadSummary").textContent = t("routeSummary", { agents: data.agents.map((agent) => agent.id).join(", ") });
     activateTab("tasks");
   } catch (err) {
-    logEvent(`route failed: ${err.message}`);
+    logEvent(t("routeFailed", { message: err.message }));
   }
 }
 
 async function submitTask(event) {
   event.preventDefault();
   const message = $("taskMessage").value.trim();
-  if (!message) return logEvent("task message is empty");
+  if (!message) return logEvent(t("taskMessageEmpty"));
   try {
     const data = await request("threads", { method: "POST", body: taskPayload(message) });
     state.currentThreadId = data.id;
     renderThread(data);
     startPolling(data.id);
-    logEvent(`thread created: ${data.id}`);
+    logEvent(t("threadCreated", { id: data.id }));
   } catch (err) {
-    logEvent(`task failed: ${err.message}`);
+    logEvent(t("taskFailed", { message: err.message }));
   }
 }
 
@@ -176,11 +330,13 @@ async function loadThread(threadId) {
     const active = (data.runs || []).some((run) => ["queued", "running"].includes(run.status));
     if (!active) stopPolling();
   } catch (err) {
-    logEvent(`thread load failed: ${err.message}`);
+    logEvent(t("threadLoadFailed", { message: err.message }));
   }
 }
 
 function renderThread(thread) {
+  state.currentThread = thread;
+  $("threadSummary").removeAttribute("data-i18n");
   $("threadSummary").textContent = `${thread.id} | ${thread.mode} | ${(thread.selection?.agents || []).join(", ")}`;
   const list = $("runsList");
   list.textContent = "";
@@ -190,7 +346,7 @@ function renderThread(thread) {
     item.innerHTML = `
       <div class="run-head">
         <div><strong>${escapeHtml(run.agent_id)}</strong> <span class="muted">${escapeHtml(run.node_id || "")}</span></div>
-        <span class="status ${escapeHtml(run.status || "")}">${escapeHtml(run.status || "unknown")}</span>
+        <span class="status ${escapeHtml(run.status || "")}">${escapeHtml(statusText(run.status || "unknown"))}</span>
       </div>
       <pre class="output">${escapeHtml((run.stdout || run.summary || run.stderr || "").trim())}</pre>
     `;
@@ -202,7 +358,7 @@ async function loadModels() {
   try {
     const data = await request("v1/models");
     $("modelOutput").textContent = JSON.stringify(data, null, 2);
-    logEvent(`loaded ${data.data?.length || 0} models`);
+    logEvent(t("modelsLoaded", { count: data.data?.length || 0 }));
   } catch (err) {
     $("modelOutput").textContent = err.message;
   }
@@ -212,8 +368,8 @@ async function sendChat(event) {
   event.preventDefault();
   const model = $("modelInput").value.trim() || "agent-bus-default";
   const prompt = $("chatPrompt").value.trim();
-  if (!prompt) return logEvent("model prompt is empty");
-  $("modelOutput").textContent = "waiting...";
+  if (!prompt) return logEvent(t("modelPromptEmpty"));
+  $("modelOutput").textContent = t("waiting");
   try {
     const data = await request("v1/chat/completions", {
       method: "POST",
@@ -259,9 +415,9 @@ async function request(path, options = {}) {
 function renderAuthError(err) {
   const tbody = $("agentsTable");
   tbody.textContent = "";
-  tbody.append(rowMessage(`Could not load agents: ${err.message}`));
-  logEvent(`agents failed: ${err.message}`);
-  if (/unauthorized|missing token/i.test(err.message)) setTokenStatus("Token rejected or missing", "failed");
+  tbody.append(rowMessage(t("agentsLoadFailed", { message: err.message })));
+  logEvent(t("agentsLogFailed", { message: err.message }));
+  if (/unauthorized|missing token|缺少 token/i.test(err.message)) setTokenStatus("tokenRejected", "failed");
 }
 
 function logEvent(message) {
@@ -273,9 +429,43 @@ function normalizeToken(value) {
   return String(value || "").trim().replace(/^Bearer\s+/i, "").trim();
 }
 
-function setTokenStatus(message, className = "") {
-  $("tokenStatus").textContent = message;
+function setTokenStatus(key, className = "") {
+  state.tokenStatusKey = key;
+  state.tokenStatusClass = className;
+  $("tokenStatus").textContent = t(key);
   $("tokenStatus").className = `token-status ${className}`.trim();
+}
+
+function setGatewayStatus(key, className = "") {
+  $("gatewayStatus").dataset.statusKey = key;
+  $("gatewayStatus").textContent = t(key);
+  $("gatewayStatus").className = className;
+}
+
+function applyLanguage() {
+  document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
+  $("languageSelect").value = state.lang;
+  document.querySelectorAll("[data-i18n]").forEach((item) => {
+    item.textContent = t(item.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((item) => {
+    item.placeholder = t(item.dataset.i18nPlaceholder);
+  });
+  if (state.tokenStatusKey) setTokenStatus(state.tokenStatusKey, state.tokenStatusClass);
+  const gatewayKey = $("gatewayStatus").dataset.statusKey;
+  if (gatewayKey) $("gatewayStatus").textContent = t(gatewayKey);
+}
+
+function t(key, values = {}) {
+  let message = (messages[state.lang] && messages[state.lang][key]) || messages.en[key] || key;
+  for (const [name, value] of Object.entries(values)) {
+    message = message.replaceAll(`{${name}}`, String(value));
+  }
+  return message;
+}
+
+function statusText(status) {
+  return t(status) || status;
 }
 
 function escapeHtml(value) {

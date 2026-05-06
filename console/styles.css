@@ -70,6 +70,10 @@ h2 {
   min-width: 280px;
 }
 
+.language-field {
+  min-width: 136px;
+}
+
 label {
   display: grid;
   gap: 6px;

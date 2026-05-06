@@ -52,7 +52,7 @@ async function main() {
     }
   }, null, 2)}\n`);
 
-  fs.writeFileSync(agentScript, `const room = process.env.AGENT_ROOM_ID || "";\nconst cache = process.env.AGENT_CACHE_KEY || "";\nconsole.log("REPORT: offline smoke run completed for " + room);\nconsole.log("BLACKBOARD: cache key " + cache);\nconsole.log("DONE");\n`);
+  fs.writeFileSync(agentScript, `const room = process.env.AGENT_ROOM_ID || "";\nconst cache = process.env.AGENT_CACHE_KEY || "";\nconsole.log("REPORT: offline smoke run completed for " + room);\nconsole.log("BLACKBOARD: cache key " + cache);\nconsole.log("BLACKBOARD: fake token=sk-test-secret-000000000000000000");\nconsole.log("DONE");\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "offline-smoke-node",
@@ -122,9 +122,13 @@ async function main() {
   const cliExport = await runCliText(["room", "export", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliExport.includes(`# Agent Bus Room: ${finalRoom.title}`), "CLI room export did not render markdown title");
   assert(cliExport.includes("offline smoke run completed"), "CLI room export did not include report content");
+  assert(!cliExport.includes("sk-test-secret-000000000000000000"), "CLI room export did not redact token-like content");
+  assert(cliExport.includes("token=[REDACTED]"), "CLI room export did not include a redaction marker");
   const exportJson = path.join(tempDir, "room-export.json");
   await runCliText(["room", "export", finalRoom.id, "--format", "json", "--out", exportJson, "--gateway", base, "--token", token]);
-  const exportedRoom = JSON.parse(fs.readFileSync(exportJson, "utf8"));
+  const exportJsonText = fs.readFileSync(exportJson, "utf8");
+  assert(!exportJsonText.includes("sk-test-secret-000000000000000000"), "CLI room export --format json did not redact token-like content");
+  const exportedRoom = JSON.parse(exportJsonText);
   assert(exportedRoom.id === finalRoom.id, "CLI room export --format json wrote the wrong room");
 
   const result = {

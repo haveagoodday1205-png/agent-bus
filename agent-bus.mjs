@@ -169,6 +169,7 @@ Usage:
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room export room_xxx --format markdown --out room.md
+  agent-bus room export room_xxx --format json --out room.json --no-redact
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -1100,11 +1101,12 @@ async function room(args) {
     const format = optionValue(args, "--format") || (args.includes("--json") ? "json" : "markdown");
     const out = optionValue(args, "--out") || optionValue(args, "-o") || "";
     const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const exportData = args.includes("--no-redact") ? roomData : redactRoomExport(roomData);
     let text = "";
     if (format === "json") {
-      text = `${JSON.stringify(roomData, null, 2)}\n`;
+      text = `${JSON.stringify(exportData, null, 2)}\n`;
     } else if (format === "markdown" || format === "md") {
-      text = formatRoomMarkdown(roomData);
+      text = formatRoomMarkdown(exportData);
     } else {
       throw new Error("room export --format must be markdown or json.");
     }
@@ -1159,6 +1161,24 @@ async function room(args) {
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
   throw new Error("Usage: agent-bus room list|show|export|create|wake|message [options]");
+}
+
+function redactRoomExport(value) {
+  if (typeof value === "string") return redactExportText(value);
+  if (Array.isArray(value)) return value.map((item) => redactRoomExport(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactRoomExport(item)]));
+  }
+  return value;
+}
+
+function redactExportText(value) {
+  return String(value)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer [REDACTED]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_API_KEY]")
+    .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,})\b/g, "[REDACTED_TOKEN]")
+    .replace(/\b((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)(["']?)[^\s"',}]+/gi, "$1$2[REDACTED]")
+    .replace(/:\/\/([^:/@\s]+):([^/@\s]+)@/g, "://[REDACTED]@");
 }
 
 function formatRoomMarkdown(room) {

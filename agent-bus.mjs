@@ -1164,12 +1164,21 @@ async function room(args) {
 }
 
 function redactRoomExport(value) {
+  return redactRoomExportValue(value);
+}
+
+function redactRoomExportValue(value, key = "") {
+  if (isSensitiveExportKey(key)) return "[REDACTED]";
   if (typeof value === "string") return redactExportText(value);
   if (Array.isArray(value)) return value.map((item) => redactRoomExport(item));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactRoomExport(item)]));
+    return Object.fromEntries(Object.entries(value).map(([itemKey, item]) => [itemKey, redactRoomExportValue(item, itemKey)]));
   }
   return value;
+}
+
+function isSensitiveExportKey(key) {
+  return /^(?:api[_-]?key|token|secret|password|authorization|access[_-]?token|refresh[_-]?token)$/i.test(String(key || ""));
 }
 
 function redactExportText(value) {

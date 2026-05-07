@@ -24,7 +24,7 @@ Run only offline/model-free checks before tagging:
 npm run release:check
 ```
 
-`release:check` runs syntax checks, Python compile checks, offline room smoke, npm package verification, and portable bundle verification without calling paid model providers.
+`release:check` runs syntax checks, Python compile checks, offline room smoke, stale-room autonomy smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
 
 `pack:check` is the npm artifact gate. It runs `npm pack`, validates required runtime/docs files, rejects private or build paths, checks the CLI entrypoint, extracts the package, and runs `agent-bus --help` from the packed artifact.
 
@@ -56,13 +56,19 @@ git tag v<version>
 git push origin v<version>
 ```
 
+Generate the draft release notes from `CHANGELOG.md` before or after tagging:
+
+```bash
+npm run release:notes -- --out dist/release-notes.md
+```
+
 After the workflow finishes, verify the public release page includes:
 
 - `agent-bus-v<version>-portable.tar.gz`.
 - `agent-bus-v<version>-portable.zip`.
 - `agent-bus-v<version>-portable.manifest.json`.
 - `SHA256SUMS`.
-- generated release notes, with `CHANGELOG.md` used as the human-edited summary source.
+- generated release notes from `npm run release:notes`, with `CHANGELOG.md` used as the human-edited summary source.
 - this install matrix, or a link back to this checklist.
 
 ## npm Publish

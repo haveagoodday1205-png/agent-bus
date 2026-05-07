@@ -19,7 +19,8 @@ const jsFiles = [
   "scripts/offline-smoke.mjs",
   "scripts/verify-package.mjs",
   "scripts/verify-portable-release.mjs",
-  "scripts/release-check.mjs"
+  "scripts/release-check.mjs",
+  "scripts/release-notes.mjs"
 ];
 
 try {
@@ -33,6 +34,7 @@ try {
   step("stale room autonomy smoke", process.execPath, ["scripts/room-autonomy-stale-smoke.mjs", "--json"]);
   step("npm package verification", process.execPath, ["scripts/verify-package.mjs"]);
   step("portable bundle verification", process.execPath, ["scripts/verify-portable-release.mjs"]);
+  step("release notes generation", process.execPath, ["scripts/release-notes.mjs"]);
 
   printResult({ ok: true, steps });
 } catch (error) {

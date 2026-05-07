@@ -21,3 +21,9 @@ The script reads `AGENT_MESSAGE_FILE` first, falls back to `AGENT_MESSAGE`, and 
 - `DONE`
 
 It makes no model-provider calls.
+
+Verify the example end to end with:
+
+```bash
+npm run smoke:python-room-agent
+```

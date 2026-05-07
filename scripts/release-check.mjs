@@ -23,6 +23,7 @@ const jsFiles = [
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
   "scripts/python-sdk-smoke.mjs",
+  "scripts/python-room-agent-smoke.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
@@ -48,6 +49,7 @@ try {
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
   step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);
+  step("python room-agent smoke", process.execPath, ["scripts/python-room-agent-smoke.mjs", "--json"]);
   step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);

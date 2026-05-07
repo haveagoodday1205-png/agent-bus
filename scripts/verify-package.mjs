@@ -38,6 +38,7 @@ try {
     "scripts/demo-issue-pr.mjs",
     "scripts/compatibility-smoke.mjs",
     "scripts/python-sdk-smoke.mjs",
+    "scripts/python-room-agent-smoke.mjs",
     "scripts/offline-smoke.mjs",
     "scripts/npm-install-smoke.mjs",
     "scripts/verify-protocol-v1.mjs",

@@ -279,6 +279,7 @@ A v1-compatible agent adapter should pass these checks without paid model calls:
 - registers with stable `id`, `kind`, `role`, and `capabilities`
 - receives a queued run via outbound polling
 - reads task text from `AGENT_MESSAGE_FILE`
+- can prove file-based task delivery in compatibility tests
 - emits stdout/stderr events or final result
 - completes with a terminal run status
 - can participate in a room by emitting `REPORT` and `BLACKBOARD`

@@ -111,6 +111,7 @@ async function main() {
   assert(chat.model === "agent:hello-agent", "agent-backed chat completion returned the wrong model");
   assert(chat.agent_bus?.agent_id === "hello-agent", "agent-backed chat completion omitted agent_bus metadata");
   assert(/REPORT: hello-agent received/.test(chatContent), "agent-backed chat completion did not route through hello-agent");
+  assert(/BLACKBOARD: hello-agent message_source=file/.test(chatContent), "agent-backed chat completion did not pass task through AGENT_MESSAGE_FILE");
 
   const response = await requestJson(`${base}/v1/responses`, {
     method: "POST",
@@ -123,6 +124,7 @@ async function main() {
   assert(response.status === "completed", "agent-backed response did not complete");
   assert(response.agent_bus?.agent_id === "hello-agent", "agent-backed response omitted agent_bus metadata");
   assert(/REPORT: hello-agent received/.test(response.output_text || ""), "agent-backed response did not route through hello-agent");
+  assert(/BLACKBOARD: hello-agent message_source=file/.test(response.output_text || ""), "agent-backed response did not pass task through AGENT_MESSAGE_FILE");
 
   const room = await requestJson(`${base}/rooms`, {
     method: "POST",
@@ -142,9 +144,11 @@ async function main() {
   assert(run?.status === "completed", "hello-agent run did not complete");
   assert(finalRoom.status === "completed", "hello-agent room did not complete");
   assert(/REPORT: hello-agent received/.test(run.stdout || ""), "hello-agent stdout did not include REPORT");
+  assert(/BLACKBOARD: hello-agent message_source=file/.test(run.stdout || ""), "hello-agent stdout did not prove AGENT_MESSAGE_FILE usage");
   assert(/BLACKBOARD: hello-agent last_message_preview=/.test(run.stdout || ""), "hello-agent stdout did not include BLACKBOARD");
   assert(/\bDONE\b/.test(run.stdout || ""), "hello-agent stdout did not include DONE");
   assert(finalRoom.reports?.some((item) => /hello-agent received/.test(item.content || "")), "gateway did not capture hello-agent REPORT");
+  assert(finalRoom.blackboard?.notes?.some((item) => /hello-agent message_source=file/.test(item.content || "")), "gateway did not capture hello-agent message_source BLACKBOARD");
   assert(finalRoom.blackboard?.notes?.some((item) => /hello-agent last_message_preview=/.test(item.content || "")), "gateway did not capture hello-agent BLACKBOARD");
 
   if (!edge.killed) edge.kill("SIGTERM");

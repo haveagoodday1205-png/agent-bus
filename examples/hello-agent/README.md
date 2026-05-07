@@ -22,6 +22,7 @@ Expected output:
 
 ```text
 REPORT: hello-agent received 20 bytes for run local-demo.
+BLACKBOARD: hello-agent message_source=env
 BLACKBOARD: hello-agent last_message_preview=Hello from Agent Bus
 DONE
 ```

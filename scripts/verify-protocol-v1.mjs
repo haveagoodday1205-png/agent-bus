@@ -48,6 +48,7 @@ function verifyHelloAgent() {
   if (result.error) throw result.error;
   assert(result.status === 0, `hello-agent exited with ${result.status}: ${result.stderr || result.stdout}`);
   assert(result.stdout.includes("REPORT: hello-agent received"), "hello-agent did not emit REPORT");
+  assert(result.stdout.includes("BLACKBOARD: hello-agent message_source=file"), "hello-agent did not read AGENT_MESSAGE_FILE");
   assert(result.stdout.includes("BLACKBOARD: hello-agent last_message_preview=Hello from protocol verification second line"), "hello-agent did not emit expected BLACKBOARD");
   assert(result.stdout.includes("DONE"), "hello-agent did not emit DONE");
 }

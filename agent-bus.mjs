@@ -1835,12 +1835,34 @@ function runScript(name, args) {
       stdio: "inherit",
       env: process.env
     });
-    child.on("error", reject);
+    let settled = false;
+    const cleanupHandlers = [];
+    const killChild = (signal = "SIGTERM") => {
+      if (!child.killed) child.kill(signal);
+    };
+    const onSignal = (signal) => {
+      killChild(signal);
+    };
+    for (const signal of ["SIGINT", "SIGTERM"]) {
+      const handler = () => onSignal(signal);
+      process.once(signal, handler);
+      cleanupHandlers.push(() => process.off(signal, handler));
+    }
+    const onExit = () => killChild("SIGTERM");
+    process.once("exit", onExit);
+    cleanupHandlers.push(() => process.off("exit", onExit));
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      for (const cleanup of cleanupHandlers) cleanup();
+      fn();
+    };
+    child.on("error", (err) => finish(() => reject(err)));
     child.on("close", (code, signal) => {
-      if (code === 0) return resolve();
+      if (code === 0) return finish(resolve);
       const err = new Error(`${name} exited with ${signal || code}`);
       err.exitCode = code || 1;
-      reject(err);
+      finish(() => reject(err));
     });
   });
 }

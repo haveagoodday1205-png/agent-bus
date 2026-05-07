@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4 - Cleaner CLI shutdown
+
+Agent Bus 0.5.4 tightens the installed CLI wrapper so temporary sandboxes and service managers stop child gateway/edge processes cleanly.
+
+### Runtime cleanup
+
+- Forwards `SIGINT` and `SIGTERM` from `agent-bus serve`, `agent-bus connect`, demos, and smoke wrappers to their child Node.js scripts.
+- Kills child scripts on wrapper process exit to avoid orphaned temporary edge nodes.
+
 ## 0.5.3 - Quickstart demos and room recovery
 
 Agent Bus 0.5.3 brings the published npm CLI back in line with the latest GitHub quickstart and room reliability work.

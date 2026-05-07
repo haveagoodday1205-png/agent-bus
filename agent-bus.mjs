@@ -10,7 +10,7 @@ const argv = process.argv.slice(2);
 const command = argv[0] || "help";
 
 main().catch((err) => {
-  console.error(err.stack || err.message || String(err));
+  console.error(err.message || String(err));
   process.exitCode = 1;
 });
 
@@ -71,7 +71,114 @@ async function main() {
     await getJson("/health", { auth: false });
     return;
   }
+  if (command === "room") {
+    await roomCommand(argv.slice(1));
+    return;
+  }
   throw new Error(`Unknown command: ${command}`);
+}
+async function roomCommand(args) {
+  const subcommand = args[0];
+
+  if (subcommand === "export") {
+    await roomExport(args.slice(1));
+    return;
+  }
+
+  throw new Error("Usage: agent-bus room export --gateway ... --token ... --room ROOM_ID --out room.json");
+}
+
+async function roomExport(args) {
+  const gateway =
+    optionValue(args, "--gateway") ||
+    process.env.AGENT_BUS_GATEWAY_URL ||
+    "http://127.0.0.1:8788";
+
+  const token =
+    optionValue(args, "--token") ||
+    process.env.AGENT_BUS_TOKEN;
+
+  const roomId = optionValue(args, "--room");
+
+  const outFile =
+    optionValue(args, "--out") ||
+    "room.json";
+
+  if (!token) {
+    throw new Error("Missing token. Use --token or AGENT_BUS_TOKEN.");
+  }
+
+  if (!roomId) {
+    throw new Error("Missing room id. Use --room ROOM_ID.");
+  }
+
+  const threadResult = await fetchJson(
+    gateway,
+    `/threads/${roomId}`,
+    token,
+    10000
+  );
+
+  if (!threadResult.ok) {
+    throw new Error(`Failed to fetch room: ${threadResult.error}`);
+  }
+
+  const thread = threadResult.data;
+
+  const runs = [];
+
+  if (Array.isArray(thread.runs)) {
+    for (const runId of thread.runs) {
+      const runResult = await fetchJson(
+        gateway,
+        `/runs/${runId}`,
+        token,
+        10000
+      );
+
+      if (runResult.ok) {
+        runs.push(runResult.data);
+      }
+    }
+  }
+
+  const artifact = redactSensitive({
+    exported_at: new Date().toISOString(),
+    thread,
+    runs
+  });
+
+  fs.writeFileSync(outFile, JSON.stringify(artifact, null, 2));
+
+  console.log(`Exported room to ${outFile}`);
+}
+
+function redactSensitive(value) {
+  if (typeof value === "string") {
+    if (
+      /token|password|secret|api[-_]?key/i.test(value) ||
+      value.startsWith("sk-")
+    ) {
+      return "[REDACTED]";
+    }
+
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(redactSensitive);
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => [
+        key,
+        redactSensitive(val)
+      ])
+    );
+  }
+
+  return value;
 }
 
 function printHelp() {
@@ -94,6 +201,7 @@ Gateway queries:
   agent-bus manifest --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus agents --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus health --gateway https://YOUR-DOMAIN/agent-bus
+  agent-bus room export --gateway https://YOUR-DOMAIN/agent-bus --token ... --room ROOM_ID --out room.json
 
 Environment:
   AGENT_BUS_GATEWAY_URL  default gateway URL for query/connect commands

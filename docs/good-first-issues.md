@@ -9,6 +9,14 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 - Extend the remote-assistant quickstart with screenshots, copy/paste two-machine transcripts, or a short demo video script for the npm install -> `agent-bus demo room` -> pair/setup edge -> status -> reports-only export path.
 - Extend the trust-boundary docs with screenshots, deployment examples, or one small adapter-sandboxing recipe for central/admin token, pair code, scoped edge token, command adapters, model-router access, `/agents` vs `/nodes`, and share-safe room exports.
 
+## Protocol v1 tasks
+
+- Turn `docs/protocol-v1.md` event types into a JSON Schema file for room, run, agent, and event objects.
+- Add a compatibility smoke that starts a fake v1 adapter and verifies registration, run execution, `REPORT`, `BLACKBOARD`, and agent-backed `/v1/responses`.
+- Add a tiny "hello agent" adapter in Python or TypeScript that reads `AGENT_MESSAGE_FILE`, emits one `REPORT`, and exits successfully.
+- Add a protocol-version field to the manifest and document how clients should handle unknown minor versions.
+- Add policy profile examples for read-only, coder, browser, deploy, and admin agents.
+
 ## Adapter presets
 
 - Add an `agent-bus init edge --preset <tool>` preset for a local agent runtime you already use.

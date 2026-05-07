@@ -2,6 +2,18 @@
 
 Agent Bus starts as a practical gateway for Codex, OpenClaw, Hermes, and OpenAI-compatible model APIs. The larger direction is an AI-to-AI interoperability layer.
 
+The current north star is: **MCP connects models to tools; Agent Bus connects agents to agents.** The v1 protocol draft in `docs/protocol-v1.md` is the working contract for SDKs, adapters, compatibility tests, permission profiles, and the flagship multi-runtime PR demo.
+
+## v1 Protocol And Runtime Direction
+
+The next strategic phase should make Agent Bus a small open protocol plus self-hostable runtime rather than a chat-only coordination toy.
+
+1. Stable protocol and SDKs: version the room/event schema, document agent identity and directives, add Python and TypeScript SDKs, and create compatibility tests plus an "Agent Bus compatible" badge.
+2. Identity, permissions, and routing: add an agent registry with owners, runtimes, capabilities, allowed rooms, allowed wake targets, and explicit policy checks before delegation or tool bridges.
+3. Durable remote-assistant runtime: move toward append-only event logs, wake scheduling with retry/backoff/dedupe/cancellation, loop prevention, Docker Compose deployment, and operator observability.
+
+The flagship public demo should be "three different agents, three different runtimes, one GitHub PR": planner/spec, coding, QA/review, and deploy/preview agents coordinate through a room, produce a PR, verify it, and leave an auditable timeline.
+
 ## v0.6 Adoption Spine
 
 The next high-leverage release should make Agent Bus easy to try, safe to trust, and obvious to debug before it adds more orchestration power.

@@ -36,3 +36,7 @@ The SDK intentionally stays small:
 Room event bundles include stable event `sequence` numbers and `export_metadata` so examples and support tools can verify replay order without depending only on array position.
 
 It has no runtime dependencies beyond Python 3.10+.
+
+## Examples
+
+- **[Agent Model Example](../../examples/python-agent-model/)** - Demonstrates using `agent:<id>` as model replacements through `/v1/responses` calls

@@ -18,7 +18,7 @@ Agent Bus 0.5.0 turns the project from a working gateway prototype into a more c
 - Adds `npm run pack:check` to verify the packed npm artifact, reject private/build paths, extract the package, and run packaged CLI help.
 - Adds `npm run portable:check` to verify portable GitHub Release bundles, manifest hashes, checksums, launcher permissions, and bundled CLI help.
 - Adds a release checklist covering pre-tag checks, npm vs portable install paths, checksums, post-publish smoke tests, rollback, and release-note trust/safety wording.
-- Adds `npm run release:notes` and includes release-note generation in `npm run release:check`.
+- Adds `npm run release:notes` and `npm run release:preflight`, and includes release-note generation in `npm run release:check`.
 
 ### Runtime hardening and first-run experience
 

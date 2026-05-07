@@ -16,13 +16,17 @@ git checkout main
 git pull --ff-only
 git status --short
 node -p 'require("./package.json").version'
+npm run release:preflight -- --network
 ```
 
-Run only offline/model-free checks before tagging:
+Run the preflight summary and only offline/model-free checks before tagging:
 
 ```bash
+npm run release:preflight
 npm run release:check
 ```
+
+`release:preflight` checks the package version, changelog section, release-note rendering, git branch, clean working tree, and local tag state, then prints the exact publication steps. It is offline by default; pass `-- --network` when you also want to check the remote tag and npm publish state.
 
 `release:check` runs syntax checks, Python compile checks, offline room smoke, stale-room autonomy smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
 

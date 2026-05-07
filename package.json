@@ -53,7 +53,8 @@
     "portable:check:zip": "node scripts/verify-portable-release.mjs --zip",
     "release:check": "node scripts/release-check.mjs",
     "demo:room": "node scripts/demo-room.mjs",
-    "release:notes": "node scripts/release-notes.mjs"
+    "release:notes": "node scripts/release-notes.mjs",
+    "release:preflight": "node scripts/release-preflight.mjs"
   },
   "engines": {
     "node": ">=20"

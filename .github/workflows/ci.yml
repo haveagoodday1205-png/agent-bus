@@ -29,6 +29,7 @@ jobs:
           node --check scripts/offline-smoke.mjs
           node --check scripts/release-check.mjs
           node --check scripts/release-notes.mjs
+          node --check scripts/release-preflight.mjs
       - name: Syntax check Python
         run: python -m py_compile central_gateway.py edge_node.py
       - name: Validate JSON examples

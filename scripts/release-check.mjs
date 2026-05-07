@@ -20,7 +20,8 @@ const jsFiles = [
   "scripts/verify-package.mjs",
   "scripts/verify-portable-release.mjs",
   "scripts/release-check.mjs",
-  "scripts/release-notes.mjs"
+  "scripts/release-notes.mjs",
+  "scripts/release-preflight.mjs"
 ];
 
 try {

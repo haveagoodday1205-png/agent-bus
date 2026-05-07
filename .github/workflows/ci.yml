@@ -28,6 +28,7 @@ jobs:
           node --check windows-openai-proxy.mjs
           node --check scripts/demo-local.mjs
           node --check scripts/demo-room.mjs
+          node --check scripts/demo-issue-pr.mjs
           node --check scripts/compatibility-smoke.mjs
           node --check scripts/make-portable-release.mjs
           node --check scripts/npm-install-smoke.mjs

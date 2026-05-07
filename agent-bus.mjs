@@ -169,6 +169,7 @@ Usage:
   agent-bus doctor --config edge.config.json [--json]
   agent-bus smoke --offline
   agent-bus demo room
+  agent-bus demo issue
   agent-bus demo local
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
@@ -207,10 +208,13 @@ function demo(args) {
   if (target === "room" || target === "ai-to-ai") {
     return runScript("scripts/demo-room.mjs", extra);
   }
+  if (target === "issue" || target === "issue-pr" || target === "flagship") {
+    return runScript("scripts/demo-issue-pr.mjs", extra);
+  }
   if (target === "local" || target === "pairing" || target === "remote-assistant") {
     return runScript("scripts/demo-local.mjs", extra);
   }
-  throw new Error("Usage: agent-bus demo room|local");
+  throw new Error("Usage: agent-bus demo room|issue|local");
 }
 
 function service(args) {

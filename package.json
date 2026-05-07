@@ -45,6 +45,7 @@
     "smoke:room-stale": "node scripts/room-autonomy-stale-smoke.mjs",
     "demo:local": "node scripts/demo-local.mjs",
     "demo:remote-assistant": "node scripts/demo-local.mjs",
+    "demo:issue": "node scripts/demo-issue-pr.mjs",
     "bundle": "node scripts/make-portable-release.mjs",
     "run": "node server.mjs run",
     "route": "node server.mjs route",

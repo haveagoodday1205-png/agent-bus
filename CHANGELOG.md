@@ -12,6 +12,7 @@
 - Tightens `examples/hello-agent` so compatibility tests prove command adapters receive tasks through `AGENT_MESSAGE_FILE`.
 - Adds `agent-bus room export --format events` and `agent-bus room replay --in` for redacted room event bundles and deterministic offline replay summaries.
 - Adds a zero-dependency JS/TS SDK under `sdk/js/` and uses it inside compatibility smoke coverage.
+- Adds `agent-bus demo issue` / `npm run demo:issue`, a no-quota issue-to-PR flagship skeleton that writes report, event, replay, patch, and PR draft artifacts.
 - Updates the roadmap and starter issues around the "MCP connects models to tools; Agent Bus connects agents to agents" direction.
 
 ### Edge-to-edge model replacement

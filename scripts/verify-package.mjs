@@ -31,6 +31,7 @@ try {
     "sdk/js/agent-bus-sdk.mjs",
     "sdk/js/agent-bus-sdk.d.ts",
     "sdk/js/README.md",
+    "scripts/demo-issue-pr.mjs",
     "scripts/compatibility-smoke.mjs",
     "scripts/offline-smoke.mjs",
     "scripts/npm-install-smoke.mjs",

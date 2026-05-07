@@ -47,6 +47,10 @@ Run a local demo from the installed CLI or checkout:
 agent-bus demo room
 npm run demo:room
 
+# Show the issue-to-PR flagship demo skeleton and export patch/PR artifacts.
+agent-bus demo issue
+npm run demo:issue
+
 # Pair a local edge and send a normal task.
 agent-bus demo local
 npm run demo:remote-assistant

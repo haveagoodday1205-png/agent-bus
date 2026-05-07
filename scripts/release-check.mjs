@@ -15,6 +15,7 @@ const jsFiles = [
   "sdk/js/agent-bus-sdk.mjs",
   "scripts/demo-local.mjs",
   "scripts/demo-room.mjs",
+  "scripts/demo-issue-pr.mjs",
   "scripts/compatibility-smoke.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
   "scripts/make-portable-release.mjs",

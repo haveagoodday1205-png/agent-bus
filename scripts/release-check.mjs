@@ -14,6 +14,7 @@ const jsFiles = [
   "windows-openai-proxy.mjs",
   "sdk/js/agent-bus-sdk.mjs",
   "scripts/demo-local.mjs",
+  "scripts/demo-starter.mjs",
   "scripts/demo-agent-model.mjs",
   "scripts/demo-room.mjs",
   "scripts/demo-issue-pr.mjs",
@@ -35,9 +36,10 @@ try {
     step(`node --check ${file}`, process.execPath, ["--check", file]);
   }
 
-  const python = process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
+  const python = process.env.AGENT_BUS_PYTHON || process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
+  step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);

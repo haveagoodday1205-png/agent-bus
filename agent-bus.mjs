@@ -168,7 +168,9 @@ Usage:
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json [--json]
   agent-bus smoke --offline
+  agent-bus demo
   agent-bus demo room
+  agent-bus demo starter
   agent-bus demo agent-model
   agent-bus demo issue
   agent-bus demo local
@@ -204,8 +206,11 @@ Environment:
 }
 
 function demo(args) {
-  const target = args[0] || "room";
+  const target = args[0] || "starter";
   const extra = stripCliOnlyArgs(args.slice(1));
+  if (target === "starter" || target === "quickstart" || target === "golden") {
+    return runScript("scripts/demo-starter.mjs", extra);
+  }
   if (target === "room" || target === "ai-to-ai") {
     return runScript("scripts/demo-room.mjs", extra);
   }
@@ -218,7 +223,7 @@ function demo(args) {
   if (target === "local" || target === "pairing" || target === "remote-assistant") {
     return runScript("scripts/demo-local.mjs", extra);
   }
-  throw new Error("Usage: agent-bus demo room|agent-model|issue|local");
+  throw new Error("Usage: agent-bus demo starter|room|agent-model|issue|local");
 }
 
 function service(args) {

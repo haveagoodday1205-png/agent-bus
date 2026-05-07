@@ -43,6 +43,12 @@ npm run smoke
 Run a local demo from the installed CLI or checkout:
 
 ```bash
+# Run the starter kit: central + edge + two toy agents, room delegation,
+# agent:<id> Chat Completions/Responses, and a reports-only export.
+agent-bus demo
+agent-bus demo starter
+npm run demo:starter
+
 # Show AI-to-AI room delegation and export a share-safe report.
 agent-bus demo room
 npm run demo:room

@@ -1,6 +1,6 @@
 {
   "name": "agent-bus-cli",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Self-hosted remote-assistant CLI for routing AI agents, model gateways, and AI-to-AI rooms across machines.",
   "private": false,
   "license": "MIT",

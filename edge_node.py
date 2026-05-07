@@ -312,8 +312,26 @@ def write_task_message_file(message):
 
 def agent_cache_key(agent, task, scope_id):
     agent_part = sanitize_cache_key_part(agent.get("id") or task.get("agent_id") or "agent")
-    scope_part = sanitize_cache_key_part(scope_id or task.get("run_id") or "local")
+    scope_part = compact_cache_scope(scope_id or task.get("run_id") or "local")
     return bounded_cache_key(f"agent-bus-{agent_part}-{scope_part}")
+
+
+def compact_cache_scope(value):
+    raw = str(value or "")
+    cleaned = sanitize_cache_key_part(raw)
+    lowered = cleaned.lower()
+    if len(cleaned) <= 32 and not lowered.startswith(("room_", "room-", "room.", "thread_", "thread-", "thread.", "run_", "run-", "run.")):
+        return cleaned
+    if lowered.startswith(("room_", "room-", "room.")):
+        prefix = "room"
+    elif lowered.startswith(("thread_", "thread-", "thread.")):
+        prefix = "thread"
+    elif lowered.startswith(("run_", "run-", "run.")):
+        prefix = "run"
+    else:
+        prefix = "scope"
+    digest = hashlib.sha256((raw or cleaned).encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
 
 
 def sanitize_cache_key_part(value):

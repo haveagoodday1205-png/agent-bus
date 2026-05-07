@@ -382,8 +382,23 @@ function writeTaskMessageFile(message) {
 
 function agentCacheKey(agent, task, scopeId) {
   const agentPart = sanitizeCacheKeyPart(agent.id || task.agent_id || "agent");
-  const scopePart = sanitizeCacheKeyPart(scopeId || task.run_id || "local");
+  const scopePart = compactCacheScope(scopeId || task.run_id || "local");
   return boundedCacheKey(`agent-bus-${agentPart}-${scopePart}`);
+}
+
+function compactCacheScope(value) {
+  const raw = String(value || "");
+  const cleaned = sanitizeCacheKeyPart(raw);
+  if (cleaned.length <= 32 && !/^(?:room|thread|run)[_.-]/i.test(cleaned)) return cleaned;
+  const prefix = /^room[_.-]/i.test(cleaned)
+    ? "room"
+    : /^thread[_.-]/i.test(cleaned)
+      ? "thread"
+      : /^run[_.-]/i.test(cleaned)
+        ? "run"
+        : "scope";
+  const hash = crypto.createHash("sha256").update(raw || cleaned).digest("hex").slice(0, 16);
+  return `${prefix}-${hash}`;
 }
 
 function sanitizeCacheKeyPart(value) {

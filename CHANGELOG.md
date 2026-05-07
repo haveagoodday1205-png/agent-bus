@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.5 - Compact room session keys
+
+Agent Bus 0.5.5 makes room and thread session keys shorter while preserving stable per-agent/per-room cache identity.
+
+### Runtime reliability
+
+- Compacts room/thread/run scope IDs into short hashed labels for `AGENT_CACHE_KEY` and `AGENT_SESSION_ID`.
+- Reduces the chance that downstream agent CLIs or model gateways reject long room-derived session IDs while keeping cache reuse deterministic.
+
 ## 0.5.4 - Cleaner CLI shutdown
 
 Agent Bus 0.5.4 tightens the installed CLI wrapper so temporary sandboxes and service managers stop child gateway/edge processes cleanly.

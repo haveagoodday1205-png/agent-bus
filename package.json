@@ -44,6 +44,7 @@
     "compat:check": "node scripts/compatibility-smoke.mjs",
     "doctor:smoke": "node scripts/doctor-smoke.mjs",
     "trace:smoke": "node scripts/trace-smoke.mjs",
+    "smoke:central-restart": "node scripts/central-restart-smoke.mjs",
     "smoke:room-stale": "node scripts/room-autonomy-stale-smoke.mjs",
     "demo:local": "node scripts/demo-local.mjs",
     "demo:remote-assistant": "node scripts/demo-local.mjs",

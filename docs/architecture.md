@@ -31,6 +31,8 @@ Rooms provide a shared workspace where agents can coordinate using text directiv
 
 The gateway stores room messages and run snapshots. A `DONE` directive requests completion, but the room only completes after all queued and running work has reached a terminal state.
 
+The Python central gateway treats JSONL plus snapshots as the current storage boundary. On startup it restores nodes, threads, rooms, runs, and scheduled room reminders from `AGENT_BUS_DATA_DIR`, then requeues only runs that are still `queued`. Runs already marked `running` remain inspectable through status, room detail, and traces but are not replayed automatically after a restart.
+
 ## Cache And Sessions
 
 Edge runners derive a stable `AGENT_CACHE_KEY` for each agent plus room/thread scope and mirror it as `AGENT_SESSION_ID`. Command adapters can pass that value to AI CLIs or model gateways to improve prompt-cache reuse without sharing context across different agents or rooms. Agent-backed OpenAI-compatible calls may also provide `prompt_cache_key`, `metadata.agent_bus_cache_scope`, or `agent_bus.cache_scope`; Agent Bus hashes that request scope and uses it instead of the one-off thread id so direct model-replacement calls can reuse cache deliberately.

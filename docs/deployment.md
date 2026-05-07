@@ -24,6 +24,15 @@ Recommended path:
 2. Next: optional SQLite index for traces, rooms, and runs while keeping JSONL as the audit log.
 3. Later: Postgres for multi-instance or hosted deployments.
 
+On startup, the Python central gateway rebuilds its in-memory view from the persistent data directory:
+
+- latest node inventory from `nodes.jsonl`
+- `threads/`, `rooms/`, and `runs/` snapshots
+- scheduled room reminders stored inside room snapshots
+- queued runs that had not yet been delivered to an edge node
+
+Only runs still marked `queued` are placed back onto node queues. Runs already marked `running` are kept visible for status, room detail, and trace inspection but are not replayed automatically, which avoids duplicate command execution after a central restart. Operators should inspect or pause old rooms whose running tasks no longer have a live edge process.
+
 ### Container Deployment
 
 For a public central station, prefer Docker Compose plus a reverse proxy. The bundled container now runs the full Python central gateway by default, because that runtime includes rooms, reminders, traces, pairing, and agent-backed models.

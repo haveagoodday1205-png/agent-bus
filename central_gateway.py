@@ -55,6 +55,7 @@ def main():
     config = load_config()
     ensure_dirs(config)
     load_edge_tokens(config)
+    load_persistent_state(config)
     threading.Thread(target=reminder_loop, args=(config,), daemon=True).start()
     server = AgentBusHTTPServer((config["host"], int(config["port"])), Handler)
     server.config = config
@@ -107,6 +108,121 @@ def load_edge_tokens(config):
         for item in data if isinstance(data, list) else []:
             if item.get("token_hash"):
                 STATE["edge_tokens"][item["token_hash"]] = item
+
+
+def load_persistent_state(config):
+    STATE["nodes"] = load_nodes(config)
+    STATE["runs"] = load_snapshots_by_id(config, "runs")
+    STATE["threads"] = load_snapshots_by_id(config, "threads")
+    STATE["rooms"] = load_snapshots_by_id(config, "rooms")
+    STATE["queues"] = {}
+    STATE["conditions"] = {}
+    STATE["reminders"] = {}
+
+    for node_id in STATE["nodes"]:
+        STATE["queues"].setdefault(node_id, [])
+        STATE["conditions"].setdefault(node_id, threading.Condition())
+
+    recover_embedded_runs()
+    recover_agent_run_health()
+    sync_recovered_containers(config)
+    load_room_reminders()
+    recover_queued_runs()
+
+
+def load_nodes(config):
+    nodes = {}
+    for record in read_jsonl(config, "nodes.jsonl"):
+        node_id = record.get("node_id")
+        if not node_id:
+            continue
+        node = dict(record)
+        node.setdefault("status", "online")
+        node.setdefault("agents", [])
+        nodes[node_id] = node
+    return nodes
+
+
+def load_snapshots_by_id(config, folder):
+    out = {}
+    for item in read_snapshots(config, folder):
+        if isinstance(item, dict) and item.get("id"):
+            out[item["id"]] = item
+    return out
+
+
+def recover_embedded_runs():
+    for container in [*STATE["threads"].values(), *STATE["rooms"].values()]:
+        for run in container.get("runs") or []:
+            if isinstance(run, dict) and run.get("id"):
+                STATE["runs"].setdefault(run["id"], run)
+
+
+def recover_agent_run_health():
+    runs = sorted(STATE["runs"].values(), key=lambda item: item.get("completed_at") or item.get("created_at") or "")
+    for run in runs:
+        if str(run.get("status") or "").lower() in TERMINAL_RUN_STATUSES:
+            update_agent_run_health(run)
+
+
+def sync_recovered_containers(config):
+    for thread_id, thread in list(STATE["threads"].items()):
+        if sync_container_runs(thread):
+            write_snapshot(config, "threads", thread_id, thread)
+    for room_id, room in list(STATE["rooms"].items()):
+        if sync_container_runs(room):
+            write_snapshot(config, "rooms", room_id, room)
+
+
+def sync_container_runs(container):
+    changed = False
+    synced = []
+    for run in container.get("runs") or []:
+        latest = STATE["runs"].get(run.get("id"))
+        if latest:
+            synced.append(latest)
+            changed = changed or latest is not run
+        else:
+            synced.append(run)
+    if changed:
+        container["runs"] = synced
+        container["updated_at"] = container.get("updated_at") or now()
+    return changed
+
+
+def load_room_reminders():
+    for room in STATE["rooms"].values():
+        for reminder in room.get("reminders") or []:
+            if isinstance(reminder, dict) and reminder.get("id") and reminder.get("status") == "scheduled":
+                STATE["reminders"][reminder["id"]] = reminder
+
+
+def recover_queued_runs():
+    for run in STATE["runs"].values():
+        if str(run.get("status") or "queued").lower() != "queued":
+            continue
+        node_id = run.get("node_id")
+        if not node_id:
+            continue
+        STATE["queues"].setdefault(node_id, [])
+        STATE["conditions"].setdefault(node_id, threading.Condition())
+        if any(task.get("run_id") == run.get("id") for task in STATE["queues"][node_id]):
+            continue
+        task = {
+            "type": "task.run",
+            "run_id": run["id"],
+            "thread_id": run.get("thread_id"),
+            "trace_id": run.get("trace_id"),
+            "agent_id": run.get("agent_id"),
+            "message": run.get("message", ""),
+            "created_at": run.get("created_at") or now(),
+            "recovered_at": now(),
+        }
+        if run.get("room_id"):
+            task["room_id"] = run.get("room_id")
+        if run.get("cache_scope"):
+            task["cache_scope"] = run.get("cache_scope")
+        STATE["queues"][node_id].append(task)
 
 
 def edge_token_record_from_config(item):

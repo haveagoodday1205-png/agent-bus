@@ -56,7 +56,7 @@ async function main() {
     ]
   }, null, 2)}\n`);
 
-  fs.writeFileSync(agentScript, `const id = process.env.AGENT_ID || "";\nif (id === "slow-planner") {\n  await new Promise((resolve) => setTimeout(resolve, 2600));\n  console.log("REPORT: Planner stayed busy past the node stale threshold.");\n  console.log("@slow-worker: Continue after the planner completed a long task.");\n} else {\n  console.log("REPORT: Worker received the delegated room task after the long planner run.");\n  console.log("DONE");\n}\n`);
+  fs.writeFileSync(agentScript, `const id = process.env.AGENT_ID || "";\nif (id === "slow-planner") {\n  await new Promise((resolve) => setTimeout(resolve, 3600));\n  console.log("REPORT: Planner stayed busy past the node stale threshold.");\n  console.log("@slow-worker: Continue after the planner completed a long task.");\n} else {\n  console.log("REPORT: Worker received the delegated room task after the long planner run.");\n  console.log("DONE");\n}\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "stale-room-edge",
@@ -94,7 +94,7 @@ async function main() {
     AGENT_BUS_HOST: "127.0.0.1",
     AGENT_BUS_PORT: String(port),
     AGENT_BUS_DATA_DIR: path.join(tempDir, "data"),
-    AGENT_BUS_NODE_STALE_SECONDS: "1"
+    AGENT_BUS_NODE_STALE_SECONDS: "2"
   });
   await waitForJson(`${gateway}/health`);
 
@@ -119,7 +119,7 @@ async function main() {
   });
 
   await waitForRunStatus(gateway, token, room.id, "slow-planner", "running");
-  await delay(1200);
+  await delay(2200);
   const busyAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });
   assert(busyAgents.some((agent) => agent.id === "slow-planner" && agent.status === "online"), "busy planner went stale while running");
   assert(busyAgents.some((agent) => agent.id === "slow-worker" && agent.status === "online"), "busy edge node hid peer agents while running");

@@ -208,6 +208,7 @@ agent-bus room create \
   --wake-agents codex-120,hermes-hk,openclaw-hk
 
 agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room pause room_xxx --reason "old orphan queued run recovery" --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room export room_xxx --format markdown --out room.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room export room_xxx --reports-only --out room-summary.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room export room_xxx --format json --out room.json --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -215,6 +216,8 @@ agent-bus room export room_xxx --format json --no-redact --out room-private.json
 ```
 
 Room exports include the room goal, reports, blackboard notes, runs, and messages. Add `--reports-only` to omit full messages for public demos or issue summaries. Gateway responses are already redacted, and the CLI adds another pass over common token-like strings by default. Use `--no-redact` only to disable that extra client-side pass for private archives, and review any export before sharing it for private prompts, logs, domains, and internal machine names.
+
+Use `agent-bus room pause ROOM_ID --reason "..."` as the safe recovery action for old rooms that should no longer wake agents. Pausing preserves the transcript, reports, blackboard, and run history; stops future manual wakes and auto-rotation; cancels queued runs in that room; and removes those queued tasks from the gateway queue. Pause does not kill already-running OS processes or delete any snapshots, so let running work finish or handle it outside Agent Bus before sharing an export.
 
 ## Local Probe
 

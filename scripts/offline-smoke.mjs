@@ -152,6 +152,36 @@ async function main() {
   assert(summaryJson.id === finalRoom.id, "CLI room export --reports-only json wrote the wrong room");
   assert(!Object.hasOwn(summaryJson, "messages"), "CLI room export --reports-only json included full messages");
 
+  if (!edge.killed) edge.kill("SIGTERM");
+  const pauseRoom = await requestJson(`${base}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Offline pause recovery room",
+      goal: "Verify room pause cancels queued work without deleting history.",
+      agents: ["offline-agent"],
+      wakeAgents: ["offline-agent"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const queuedBeforePause = await requestJson(`${base}/health`);
+  assert(queuedBeforePause.queued >= 1, "pause recovery room did not leave queued work in the gateway");
+  assert(pauseRoom.status === "active", "pause recovery room was not active before pause");
+  assert(pauseRoom.runs?.length === 1 && pauseRoom.runs[0].status === "queued", "pause recovery room did not have one queued run before pause");
+  const pausedRoom = await runCliJson(["room", "pause", pauseRoom.id, "--reason", "offline smoke recovery", "--gateway", base, "--token", token]);
+  assert(pausedRoom.status === "paused", "CLI room pause did not return a paused room");
+  assert(pausedRoom.runs?.length === 1 && pausedRoom.runs[0].status === "cancelled", "CLI room pause did not cancel the queued room run");
+  const queuedAfterPause = await requestJson(`${base}/health`);
+  assert(queuedAfterPause.queued <= queuedBeforePause.queued - 1, "CLI room pause did not remove the queued room task");
+  assert(pausedRoom.reports?.some((item) => /Paused by operator: offline smoke recovery/.test(item.content || "")), "CLI room pause did not add an operator report");
+  const pausedStatus = await runCliJson(["status", "--json", "--gateway", base, "--token", token]);
+  assert(!pausedStatus.rooms?.some((item) => item.id === pauseRoom.id && ["active", "running", "finishing"].includes(item.status)), "CLI status should not report the paused room as active");
+  assert(pausedStatus.summary?.active_rooms === 0, "CLI status should not count the paused room as active");
+  const pausedAfterWake = await runCliJson(["room", "wake", pauseRoom.id, "--agent", "offline-agent", "--gateway", base, "--token", token]);
+  assert(pausedAfterWake.status === "paused", "CLI room wake should leave a paused room paused");
+  assert((pausedAfterWake.runs || []).length === 1, "CLI room wake should not create a new run for a paused room");
+
   const result = {
     ok: true,
     mode: "offline",
@@ -161,6 +191,8 @@ async function main() {
     ping_status: agent.ping_status,
     room_id: finalRoom.id,
     room_status: finalRoom.status,
+    paused_room_id: pausedRoom.id,
+    paused_cancelled_runs: pausedRoom.pause?.cancelled_queued_runs?.length || 0,
     run_id: run.id,
     reports: finalRoom.reports?.length || 0,
     blackboard_notes: finalRoom.blackboard?.notes?.length || 0,

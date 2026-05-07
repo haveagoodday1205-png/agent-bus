@@ -327,6 +327,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(add_room_message(self.config, parts[1], body), 201)
                 if len(parts) == 3 and parts[2] == "wake":
                     return self.json(wake_room(self.config, parts[1], body))
+                if len(parts) == 3 and parts[2] == "pause":
+                    return self.json(pause_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "reminders":
                     return self.json(add_room_reminder(self.config, parts[1], body), 201)
             return self.json({"error": "not_found"}, 404)
@@ -1004,6 +1006,59 @@ def wake_room(config, room_id, body):
     write_room(config, room)
     return room
 
+
+
+def pause_room(config, room_id, body):
+    room = get_room(config, room_id)
+    if room.get("status") == "paused":
+        return room
+    if room.get("status") == "completed":
+        return room
+    reason = (body.get("reason") or "Operator paused room.").strip() or "Operator paused room."
+    paused_at = now()
+    cancelled_run_ids = []
+    for run in room.get("runs", []):
+        if (run.get("status") or "queued").lower() != "queued":
+            continue
+        run["status"] = "cancelled"
+        run["completed_at"] = paused_at
+        run["summary"] = "Cancelled by room pause."
+        cancelled_run_ids.append(run.get("id"))
+        if run.get("id"):
+            STATE["runs"][run["id"]] = run
+            write_snapshot(config, "runs", run["id"], run)
+    remove_queued_tasks(cancelled_run_ids)
+    room["status"] = "paused"
+    room["updated_at"] = paused_at
+    room["pause"] = {
+        "paused_at": paused_at,
+        "reason": reason,
+        "cancelled_queued_runs": [run_id for run_id in cancelled_run_ids if run_id],
+    }
+    room.setdefault("reports", []).append({
+        "at": paused_at,
+        "speaker": "system",
+        "content": "Paused by operator: " + reason,
+    })
+    write_room(config, room)
+    return room
+
+
+def remove_queued_tasks(run_ids):
+    run_ids = {run_id for run_id in run_ids if run_id}
+    if not run_ids:
+        return 0
+    removed = 0
+    for node_id, queue in STATE["queues"].items():
+        kept = []
+        for task in queue:
+            if task.get("run_id") in run_ids:
+                removed += 1
+            else:
+                kept.append(task)
+        if len(kept) != len(queue):
+            STATE["queues"][node_id] = kept
+    return removed
 
 def wake_room_agents(config, room, agent_ids, reason):
     if isinstance(agent_ids, str):

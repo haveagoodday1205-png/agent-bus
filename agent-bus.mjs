@@ -182,6 +182,7 @@ Usage:
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
+  agent-bus room pause room_xxx --reason "old orphan queued run recovery"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
 
@@ -1171,6 +1172,13 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/wake`, { auth: true, args, method: "POST", body }));
   }
+  if (action === "pause") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const body = {
+      reason: optionValue(args, "--reason") || optionValue(args, "--message") || "Operator paused room."
+    };
+    return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/pause`, { auth: true, args, method: "POST", body }));
+  }
   if (action === "message" || action === "say") {
     const roomId = requiredPositional(args, 1, "room id");
     const message = optionValue(args, "--message") || optionValue(args, "-m") || "";
@@ -1185,7 +1193,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|export|create|wake|message [options]");
+  throw new Error("Usage: agent-bus room list|show|export|create|wake|pause|message [options]");
 }
 
 function redactRoomExport(value) {

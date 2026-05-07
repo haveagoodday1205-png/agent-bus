@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.2 - npm package name accepted by registry
+
+Agent Bus 0.5.2 publishes the CLI as `agent-bus-cli` after npm rejected both the unscoped `agent-bus` name and the user-scoped package attempt. The installed executable remains `agent-bus`.
+
+### Packaging
+
+- Renames the npm package to `agent-bus-cli` while keeping the command name `agent-bus`.
+- Updates README, release checklist, release notes, and npm verification commands to use `agent-bus-cli`.
+- Keeps the GitHub portable release assets and all v0.5 room/release gates unchanged.
+
 ## 0.5.1 - Scoped npm package publication
 
 Agent Bus 0.5.1 publishes the CLI under the npm scope `@haveagoodday1205/agent-bus` after the public registry rejected the unscoped `agent-bus` name as too similar to an existing package.

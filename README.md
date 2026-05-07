@@ -48,7 +48,7 @@ npm run demo:room
 Install the CLI from npm or from a checkout:
 
 ```bash
-npm install -g @haveagoodday1205/agent-bus
+npm install -g agent-bus-cli
 agent-bus --help
 
 # contributor checkout install

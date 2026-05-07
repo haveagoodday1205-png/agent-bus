@@ -10,6 +10,9 @@
   "edgeTokens": [],
   "modelRouter": {
     "enabled": true,
+    "agentModels": true,
+    "allowEdgeAgentModels": false,
+    "agentModelTimeoutSeconds": 600,
     "defaultBackend": "sub2api-178",
     "defaultModel": "gpt-4o-mini",
     "backends": [

@@ -157,7 +157,7 @@ agent-bus connect --config edge.config.json
 
 The join command writes the gateway URL and a scoped edge token into the local config file, but it does not print the token. Codes are single-use and expire automatically. With `--auto`, it also detects local AI tools and registers each one as an agent.
 
-The scoped edge token can register, poll, report run events, and read discovery metadata. It cannot create pair codes, create threads, wake rooms, or call the OpenAI-compatible model router.
+The scoped edge token can register, poll, report run events, and read discovery metadata. It cannot create pair codes, create threads, wake rooms, or call real OpenAI-compatible model backends. If Central has `modelRouter.allowEdgeAgentModels` enabled, an edge token can call only `agent:<agent-id>` virtual models so one edge can dispatch work to another edge through Central.
 
 ## Central Gateway
 
@@ -173,8 +173,21 @@ Edit the generated config to set:
 - model router `baseUrl`
 - model router API key environment variable
 - model aliases exposed to clients
+- whether online agents should appear as virtual `agent:<agent-id>` models
+- whether scoped edge tokens may call those agent-backed models
 
 The admin API can list, create, and revoke scoped edge tokens with `GET /edge/tokens`, `POST /edge/tokens`, and `POST /edge/tokens/revoke`.
+
+Agent-backed model replacement uses the same OpenAI-compatible endpoint:
+
+```bash
+curl -s https://YOUR-DOMAIN/agent-bus/v1/chat/completions \
+  -H "authorization: Bearer $AGENT_BUS_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"model":"agent:openclaw-hk","messages":[{"role":"user","content":"Run a quick status check and report back."}]}'
+```
+
+Central creates a normal Agent Bus run for the target edge agent and returns the completed stdout as an OpenAI-style assistant message.
 
 ## Query Commands
 

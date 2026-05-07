@@ -65,6 +65,9 @@ def load_config():
     config["defaults"]["pollTimeoutMs"] = int(config["defaults"].get("pollTimeoutMs", 25000))
     config.setdefault("modelRouter", {})
     config["modelRouter"].setdefault("enabled", True)
+    config["modelRouter"].setdefault("agentModels", True)
+    config["modelRouter"].setdefault("allowEdgeAgentModels", False)
+    config["modelRouter"].setdefault("agentModelTimeoutSeconds", 600)
     config["modelRouter"].setdefault("backends", [])
     config.setdefault("edgeTokens", [])
     return config
@@ -270,6 +273,9 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/edge/tokens", "/v1/agent-bus/edge-tokens"):
                 self.require_auth(("admin",))
                 return self.json(list_edge_tokens())
+            if path == "/v1/models":
+                scope = self.require_auth(("admin", "edge") if allow_edge_agent_models(self.config) else ("admin",))
+                return self.json(openai_models(self.config, agent_only=scope == "edge"))
             self.require_auth(("admin",))
             if path == "/rooms":
                 return self.json(list_rooms(self.config))
@@ -277,8 +283,6 @@ class Handler(BaseHTTPRequestHandler):
                 room_id = path.rsplit("/", 1)[-1]
                 item = STATE["rooms"].get(room_id) or read_snapshot(self.config, "rooms", room_id)
                 return self.json(item or {"error": "not_found"}, 200 if item else 404)
-            if path == "/v1/models":
-                return self.json(openai_models(self.config))
             if path.startswith("/threads/"):
                 item = read_snapshot(self.config, "threads", path.rsplit("/", 1)[-1])
                 return self.json(item or {"error": "not_found"}, 200 if item else 404)
@@ -317,12 +321,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"ok": True})
                 if path == "/edge/complete":
                     return self.json(complete_run(self.config, body))
+            if path == "/v1/chat/completions":
+                self.require_auth(chat_completion_scopes(self.config, body))
+                return self.proxy_chat_completions(body)
             self.require_auth(("admin",))
             if path == "/route":
                 selection = select_agents(body.get("message", ""), body)
                 return self.json(public_selection(selection))
-            if path == "/v1/chat/completions":
-                return self.proxy_chat_completions(body)
             if path == "/threads":
                 return self.json(create_thread(self.config, body), 201)
             if path == "/rooms":
@@ -391,6 +396,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def proxy_chat_completions(self, body):
+        agent_id = agent_model_id(body.get("model"))
+        if agent_id:
+            payload, status = create_agent_chat_completion(self.config, body, agent_id)
+            return self.json(payload, status)
         backend, routed_model = select_model_backend(self.config, body.get("model"))
         proxied = dict(body)
         proxied["model"] = routed_model
@@ -618,27 +627,217 @@ def agent_bus_well_known():
     }
 
 
-def openai_models(config):
+def openai_models(config, agent_only=False):
     models = []
-    for backend in model_backends(config):
-        for model in backend.get("models") or []:
+    if not agent_only:
+        for backend in model_backends(config):
+            for model in backend.get("models") or []:
+                models.append({
+                    "id": model,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": backend.get("id", "agent-bus"),
+                })
+            for alias in (backend.get("modelAliases") or {}).keys():
+                models.append({
+                    "id": alias,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": backend.get("id", "agent-bus"),
+                })
+    if agent_models_enabled(config):
+        for agent in public_agents():
             models.append({
-                "id": model,
+                "id": "agent:" + agent["id"],
                 "object": "model",
                 "created": 0,
-                "owned_by": backend.get("id", "agent-bus"),
-            })
-        for alias in (backend.get("modelAliases") or {}).keys():
-            models.append({
-                "id": alias,
-                "object": "model",
-                "created": 0,
-                "owned_by": backend.get("id", "agent-bus"),
+                "owned_by": "agent-bus-edge",
             })
     seen = {}
     for model in models:
         seen[model["id"]] = model
     return {"object": "list", "data": sorted(seen.values(), key=lambda item: item["id"])}
+
+
+def chat_completion_scopes(config, body):
+    if agent_model_id(body.get("model")) and allow_edge_agent_models(config):
+        return ("admin", "edge")
+    return ("admin",)
+
+
+def agent_models_enabled(config):
+    router = config.get("modelRouter", {})
+    return router.get("enabled", True) is not False and router.get("agentModels", True) is not False
+
+
+def allow_edge_agent_models(config):
+    return agent_models_enabled(config) and config.get("modelRouter", {}).get("allowEdgeAgentModels", False) is True
+
+
+def agent_model_id(model):
+    text = str(model or "").strip()
+    if text.startswith("agent:"):
+        return text[6:].strip()
+    if text.startswith("agent/"):
+        return text[6:].strip()
+    return ""
+
+
+def create_agent_chat_completion(config, body, agent_id):
+    if not agent_models_enabled(config):
+        return openai_error("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), 503
+    if body.get("stream"):
+        return openai_error("agent-backed models do not support stream=true yet", "unsupported_feature", "stream"), 400
+    agent = next((item for item in public_agents() if item["id"] == agent_id), None)
+    if not agent:
+        return openai_error("agent model is not online: agent:" + agent_id, "agent_bus_agent_not_online", "model"), 404
+
+    messages = body.get("messages")
+    if not chat_messages_have_content(messages):
+        return openai_error("messages are required for agent-backed chat completions", "invalid_request_error", "messages"), 400
+    prompt = chat_messages_to_agent_prompt(messages)
+
+    thread = {
+        "id": "thread_" + str(uuid.uuid4()),
+        "created_at": now(),
+        "source": "chat.completions.agent",
+        "mode": "agent-model",
+        "message": prompt,
+        "model": "agent:" + agent_id,
+        "selection": {
+            "reason": "OpenAI-compatible chat completion routed to an Agent Bus edge agent.",
+            "matched": ["agent-model"],
+            "agents": [agent["id"]],
+        },
+        "runs": [],
+    }
+    STATE["threads"][thread["id"]] = thread
+    write_snapshot(config, "threads", thread["id"], thread)
+    run = create_run(config, thread, agent, prompt)
+    write_snapshot(config, "threads", thread["id"], thread)
+    append_jsonl(config, "threads.jsonl", thread)
+
+    timeout_seconds = agent_model_timeout_seconds(config, body)
+    final_run = wait_for_run_terminal(config, run["id"], timeout_seconds)
+    if (final_run.get("status") or "").lower() != "completed":
+        message = final_run.get("stderr") or final_run.get("summary") or final_run.get("stdout") or "agent model run did not complete"
+        status = 504 if (final_run.get("status") or "").lower() not in TERMINAL_RUN_STATUSES else 502
+        error = openai_error(trim(message), "agent_bus_agent_run_failed", "model")
+        error["error"]["run_id"] = run["id"]
+        error["error"]["thread_id"] = thread["id"]
+        error["error"]["agent_id"] = agent_id
+        error["error"]["status"] = final_run.get("status", "timeout")
+        return error, status
+
+    content = (final_run.get("stdout") or final_run.get("summary") or "").strip()
+    return {
+        "id": "chatcmpl-agentbus-" + run["id"].replace("run_", ""),
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "agent:" + agent_id,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content,
+            },
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
+        "agent_bus": {
+            "thread_id": thread["id"],
+            "run_id": run["id"],
+            "agent_id": agent_id,
+            "node_id": agent.get("node_id"),
+        },
+    }, 200
+
+
+def chat_messages_to_agent_prompt(messages):
+    lines = [
+        "You are being invoked through Agent Bus as an OpenAI-compatible chat completion model.",
+        "Return the assistant response for the latest user request. Be direct and useful.",
+        "",
+        "Conversation:",
+    ]
+    for message in messages if isinstance(messages, list) else []:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "user")
+        name = str(message.get("name") or "").strip()
+        label = role + (f" ({name})" if name else "")
+        content = chat_message_content_to_text(message.get("content"))
+        if content:
+            lines.append(f"[{label}]")
+            lines.append(content)
+            lines.append("")
+    lines.append("Assistant:")
+    return "\n".join(lines).strip()
+
+
+def chat_messages_have_content(messages):
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if isinstance(message, dict) and chat_message_content_to_text(message.get("content")).strip():
+            return True
+    return False
+
+
+def chat_message_content_to_text(content):
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                part_type = str(part.get("type") or "")
+                if part_type in ("text", "input_text", "output_text"):
+                    parts.append(str(part.get("text") or ""))
+                elif "text" in part:
+                    parts.append(str(part.get("text") or ""))
+                elif part_type:
+                    parts.append(f"[{part_type} omitted]")
+            elif part is not None:
+                parts.append(str(part))
+        return "\n".join(item for item in parts if item)
+    return str(content or "")
+
+
+def agent_model_timeout_seconds(config, body):
+    router = config.get("modelRouter", {})
+    raw = body.get("timeout_seconds", body.get("timeoutSeconds", router.get("agentModelTimeoutSeconds", 600)))
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        value = 600
+    return max(1, min(value, 3600))
+
+
+def wait_for_run_terminal(config, run_id, timeout_seconds):
+    deadline = time.time() + timeout_seconds
+    last_run = STATE["runs"].get(run_id) or {}
+    while time.time() < deadline:
+        last_run = STATE["runs"].get(run_id) or read_snapshot(config, "runs", run_id) or last_run
+        if (last_run.get("status") or "").lower() in TERMINAL_RUN_STATUSES:
+            return last_run
+        time.sleep(0.25)
+    return {**last_run, "status": "timeout"}
+
+
+def openai_error(message, error_type, param=None):
+    payload = {
+        "error": {
+            "message": str(message or ""),
+            "type": error_type,
+            "code": error_type,
+        }
+    }
+    if param:
+        payload["error"]["param"] = param
+    return payload
 
 
 def select_model_backend(config, requested_model):
@@ -1504,7 +1703,7 @@ def process_room_directives(config, room, run, content):
     return actions
 
 
-TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "canceled", "skipped"}
+TERMINAL_RUN_STATUSES = {"completed", "failed", "error", "cancelled", "canceled", "skipped"}
 
 
 def sync_room_run(room, run):

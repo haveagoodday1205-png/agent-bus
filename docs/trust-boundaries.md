@@ -34,7 +34,8 @@ Agent Bus is intentionally small, but it crosses several trust zones: an admin c
 |                                                                      |
 |   edge token can: register, poll, send events, complete runs, read    |
 |   discovery metadata. It cannot create pair codes, create rooms,      |
-|   wake agents, revoke tokens, or call the model router.               |
+|   wake agents, revoke tokens, or call real model backends. With an    |
+|   explicit Central policy, it can call agent:<id> virtual models.     |
 +------------------+--------------------------+------------------------+
                    |                          |
                    v                          v
@@ -63,7 +64,7 @@ REPORT / BLACKBOARD summaries only      -> use room export --reports-only
 | --- | --- | --- | --- |
 | Central/admin token (`AGENT_BUS_TOKEN` or config `token`) | Admin/operator machine, gateway secret store, CI secrets for private deploys | Create pair codes, create threads/rooms, wake rooms, query status/nodes/agents, revoke edge tokens, call configured model-router endpoints | Do not paste into chats, room goals, edge setup messages, public issues, demo transcripts, or logs |
 | Pair code | Short-lived message from admin operator to edge operator | Redeem once with `agent-bus setup edge --code ...` or `pair join` to obtain a scoped edge token | Do not treat it as a standing credential; keep TTL short and create a new code if it leaks |
-| Scoped edge token | Edge config or local secret store on one edge machine | Register/poll outbound, receive tasks, send events/completions, read discovery metadata | Cannot administer the gateway, create/wake rooms, create pair codes, revoke tokens, or use `/v1/chat/completions` |
+| Scoped edge token | Edge config or local secret store on one edge machine | Register/poll outbound, receive tasks, send events/completions, read discovery metadata; optionally call `agent:<id>` virtual models when `modelRouter.allowEdgeAgentModels` is enabled | Cannot administer the gateway, create/wake rooms, create pair codes, revoke tokens, or call real model-router backends |
 | Command adapter permissions | The OS user and workspace that run `runCommand` on the edge machine | Access local tools/files/network/API keys available to that account | Do not run broad shell adapters as privileged users; do not install configs from untrusted sources |
 | Model-router backend keys | Gateway environment or backend-specific secret store | Let the central gateway call configured OpenAI-compatible backends | Do not put provider keys in room prompts, edge pair instructions, reports, or public demo artifacts |
 | Reports-only export | Public-friendly artifact after review | Shares `REPORT` and useful summary text while omitting full room message history by default | Do not assume generated reports are automatically scrubbed; review before publishing |
@@ -85,7 +86,8 @@ Use the two views for different decisions:
 5. Review `edge.config.json`, especially `runCommand`, `pingUrl`, `timeoutMs`, and the service user that will execute the adapter.
 6. Start the edge with `agent-bus connect --config edge.config.json` or the generated service.
 7. Verify with `agent-bus nodes`, `agent-bus status`, and then a low-risk fake/echo task before enabling powerful adapters.
-8. Share only reviewed artifacts, preferably `agent-bus room export ROOM_ID --reports-only`.
+8. Keep `modelRouter.allowEdgeAgentModels` disabled until you intentionally want edge-to-edge dispatch through `model: "agent:<id>"`.
+9. Share only reviewed artifacts, preferably `agent-bus room export ROOM_ID --reports-only`.
 
 ## Adapter Execution Scope Checklist
 

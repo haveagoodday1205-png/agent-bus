@@ -31,6 +31,8 @@ async function main() {
     },
     modelRouter: {
       enabled: true,
+      agentModels: true,
+      allowEdgeAgentModels: true,
       defaultBackend: "mock-local",
       defaultModel: "agent-bus-mock",
       backends: [{
@@ -273,7 +275,38 @@ async function main() {
       runCommand: `${quoteCommandArg(node)} ${quoteCommandArg(envDumpScript)}`
     }]
   }, null, 2)}\n`);
-  const edge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
+  let edge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
+  await waitForAgent("env-agent", token);
+  const agentModels = await requestJson("http://127.0.0.1:8788/v1/models", {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  assert(agentModels.data?.some((model) => model.id === "agent:env-agent"), "agent-backed model was not listed for admin token");
+  const edgeAgentModels = await requestJson("http://127.0.0.1:8788/v1/models", {
+    headers: { authorization: `Bearer ${paired.token}` }
+  });
+  assert(edgeAgentModels.data?.some((model) => model.id === "agent:env-agent"), "agent-backed model was not listed for edge token");
+  assert(!edgeAgentModels.data?.some((model) => model.id === "agent-bus-default"), "edge token model list should not expose backend aliases");
+  const agentChat = await requestJson("http://127.0.0.1:8788/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${paired.token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent:env-agent",
+      messages: [{ role: "user", content: "agent model smoke" }],
+      timeout_seconds: 10
+    })
+  });
+  assert(agentChat.model === "agent:env-agent", "agent-backed chat returned the wrong model");
+  assert(agentChat.agent_bus?.agent_id === "env-agent", "agent-backed chat did not include Agent Bus metadata");
+  const agentChatEnv = JSON.parse(agentChat.choices?.[0]?.message?.content || "{}");
+  assert(agentChatEnv.AGENT_ID === "env-agent", "agent-backed chat did not execute the target edge agent");
+  assert(agentChatEnv.AGENT_THREAD_ID === agentChat.agent_bus.thread_id, "agent-backed chat did not set the run thread env");
+  assert(agentChatEnv.AGENT_MESSAGE_FILE_TEXT_PREFIX.includes("Agent Bus"), "agent-backed chat did not pass a model-replacement prompt");
+  if (!edge.killed) edge.kill("SIGTERM");
+
+  edge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
   await waitForAgent("env-agent", token);
   const envThread = await requestJson("http://127.0.0.1:8788/threads", {
     method: "POST",
@@ -300,7 +333,7 @@ async function main() {
   assert(envOut.AGENT_ROOM_ID === "", "edge env should leave AGENT_ROOM_ID empty for normal threads");
   assert(envOut.AGENT_ID === "env-agent", "edge env did not include AGENT_ID");
   assert(envOut.EDGE_NODE_ID === "env-smoke-node", "edge env did not include EDGE_NODE_ID");
-  assert(envOut.AGENT_CACHE_KEY === `agent-bus-env-agent-${envThread.id}`, "edge env did not build a stable AGENT_CACHE_KEY");
+  assert(/^agent-bus-env-agent-thread-[a-f0-9]{16}$/.test(envOut.AGENT_CACHE_KEY), "edge env did not build a compact stable AGENT_CACHE_KEY");
   assert(envOut.AGENT_SESSION_ID === envOut.AGENT_CACHE_KEY, "edge env did not mirror cache key as session id");
   if (!edge.killed) edge.kill("SIGTERM");
 

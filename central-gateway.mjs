@@ -10,6 +10,7 @@ const argv = process.argv.slice(2);
 const command = argv[0] || "serve";
 const configPath = optionValue("--config") || path.join(__dirname, "central.config.json");
 const NODE_STALE_SECONDS = intEnv("AGENT_BUS_NODE_STALE_SECONDS", 180);
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped"]);
 
 const state = {
   nodes: new Map(),
@@ -85,6 +86,9 @@ function loadConfig(file) {
   config.defaults ||= {};
   config.modelRouter ||= {};
   config.modelRouter.enabled ??= true;
+  config.modelRouter.agentModels ??= true;
+  config.modelRouter.allowEdgeAgentModels ??= false;
+  config.modelRouter.agentModelTimeoutSeconds ??= 600;
   config.modelRouter.backends ||= [];
   config.edgeTokens ||= [];
   return config;
@@ -318,10 +322,16 @@ async function serve(config) {
         const run = completeRun(config, body);
         return sendJson(res, run);
       }
-      requireAuth(req, config, ["admin"]);
       if (req.method === "GET" && url.pathname === "/v1/models") {
-        return sendJson(res, openAiModels(config));
+        const scope = requireAuth(req, config, allowEdgeAgentModels(config) ? ["admin", "edge"] : ["admin"]);
+        return sendJson(res, openAiModels(config, { agentOnly: scope === "edge" }));
       }
+      if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+        const body = await readJson(req);
+        requireAuth(req, config, chatCompletionScopes(config, body));
+        return proxyChatCompletions(config, req, res, body);
+      }
+      requireAuth(req, config, ["admin"]);
       if (req.method === "POST" && url.pathname === "/route") {
         const body = await readJson(req);
         if (!body.message || typeof body.message !== "string") {
@@ -332,10 +342,6 @@ async function serve(config) {
           agents: body.agents
         });
         return sendJson(res, publicSelection(selection));
-      }
-      if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-        const body = await readJson(req);
-        return proxyChatCompletions(config, req, res, body);
       }
       if (req.method === "POST" && url.pathname === "/threads") {
         const body = await readJson(req);
@@ -660,23 +666,35 @@ function agentBusWellKnown() {
   };
 }
 
-function openAiModels(config) {
+function openAiModels(config, options = {}) {
   const seen = new Map();
-  for (const backend of modelBackends(config)) {
-    for (const model of backend.models || []) {
-      seen.set(model, {
-        id: model,
-        object: "model",
-        created: 0,
-        owned_by: backend.id || "agent-bus"
-      });
+  if (!options.agentOnly) {
+    for (const backend of modelBackends(config)) {
+      for (const model of backend.models || []) {
+        seen.set(model, {
+          id: model,
+          object: "model",
+          created: 0,
+          owned_by: backend.id || "agent-bus"
+        });
+      }
+      for (const alias of Object.keys(backend.modelAliases || {})) {
+        seen.set(alias, {
+          id: alias,
+          object: "model",
+          created: 0,
+          owned_by: backend.id || "agent-bus"
+        });
+      }
     }
-    for (const alias of Object.keys(backend.modelAliases || {})) {
-      seen.set(alias, {
-        id: alias,
+  }
+  if (agentModelsEnabled(config)) {
+    for (const agent of publicAgents()) {
+      seen.set(`agent:${agent.id}`, {
+        id: `agent:${agent.id}`,
         object: "model",
         created: 0,
-        owned_by: backend.id || "agent-bus"
+        owned_by: "agent-bus-edge"
       });
     }
   }
@@ -684,6 +702,11 @@ function openAiModels(config) {
 }
 
 async function proxyChatCompletions(config, req, res, body) {
+  const agentId = agentModelId(body.model);
+  if (agentId) {
+    const { payload, status } = await createAgentChatCompletion(config, body, agentId);
+    return sendJson(res, payload, status);
+  }
   const { backend, routedModel } = selectModelBackend(config, body.model);
   const proxied = { ...body, model: routedModel };
   const headers = {
@@ -731,6 +754,174 @@ async function proxyChatCompletions(config, req, res, body) {
     res.write(Buffer.from(value));
   }
   res.end();
+}
+
+function chatCompletionScopes(config, body) {
+  return agentModelId(body.model) && allowEdgeAgentModels(config) ? ["admin", "edge"] : ["admin"];
+}
+
+function agentModelsEnabled(config) {
+  return config.modelRouter?.enabled !== false && config.modelRouter?.agentModels !== false;
+}
+
+function allowEdgeAgentModels(config) {
+  return agentModelsEnabled(config) && config.modelRouter?.allowEdgeAgentModels === true;
+}
+
+function agentModelId(model) {
+  const text = String(model || "").trim();
+  if (text.startsWith("agent:")) return text.slice(6).trim();
+  if (text.startsWith("agent/")) return text.slice(6).trim();
+  return "";
+}
+
+async function createAgentChatCompletion(config, body, agentId) {
+  if (!agentModelsEnabled(config)) {
+    return { payload: openAiError("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), status: 503 };
+  }
+  if (body.stream) {
+    return { payload: openAiError("agent-backed models do not support stream=true yet", "unsupported_feature", "stream"), status: 400 };
+  }
+  const agent = publicAgents().find((item) => item.id === agentId);
+  if (!agent) {
+    return { payload: openAiError(`agent model is not online: agent:${agentId}`, "agent_bus_agent_not_online", "model"), status: 404 };
+  }
+  if (!chatMessagesHaveContent(body.messages)) {
+    return { payload: openAiError("messages are required for agent-backed chat completions", "invalid_request_error", "messages"), status: 400 };
+  }
+  const prompt = chatMessagesToAgentPrompt(body.messages);
+
+  const thread = {
+    id: `thread_${crypto.randomUUID()}`,
+    created_at: new Date().toISOString(),
+    source: "chat.completions.agent",
+    mode: "agent-model",
+    message: prompt,
+    model: `agent:${agentId}`,
+    selection: {
+      reason: "OpenAI-compatible chat completion routed to an Agent Bus edge agent.",
+      matched: ["agent-model"],
+      agents: [agent.id]
+    },
+    runs: []
+  };
+  state.threads.set(thread.id, thread);
+  writeSnapshot(config, "threads", thread.id, thread);
+  const run = createAgentRun(config, thread, agent, prompt);
+  writeSnapshot(config, "threads", thread.id, thread);
+  appendJsonl(config, "threads.jsonl", thread);
+
+  const finalRun = await waitForRunTerminal(config, run.id, agentModelTimeoutSeconds(config, body));
+  if (String(finalRun.status || "").toLowerCase() !== "completed") {
+    const message = finalRun.stderr || finalRun.summary || finalRun.stdout || "agent model run did not complete";
+    const status = TERMINAL_RUN_STATUSES.has(String(finalRun.status || "").toLowerCase()) ? 502 : 504;
+    const payload = openAiError(trimOutput(message), "agent_bus_agent_run_failed", "model");
+    Object.assign(payload.error, {
+      run_id: run.id,
+      thread_id: thread.id,
+      agent_id: agentId,
+      status: finalRun.status || "timeout"
+    });
+    return { payload, status };
+  }
+
+  const content = String(finalRun.stdout || finalRun.summary || "").trim();
+  return {
+    status: 200,
+    payload: {
+      id: `chatcmpl-agentbus-${run.id.replace(/^run_/, "")}`,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model: `agent:${agentId}`,
+      choices: [{
+        index: 0,
+        message: {
+          role: "assistant",
+          content
+        },
+        finish_reason: "stop"
+      }],
+      usage: {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      },
+      agent_bus: {
+        thread_id: thread.id,
+        run_id: run.id,
+        agent_id: agentId,
+        node_id: agent.node_id
+      }
+    }
+  };
+}
+
+function chatMessagesToAgentPrompt(messages) {
+  const lines = [
+    "You are being invoked through Agent Bus as an OpenAI-compatible chat completion model.",
+    "Return the assistant response for the latest user request. Be direct and useful.",
+    "",
+    "Conversation:"
+  ];
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (!message || typeof message !== "object") continue;
+    const role = String(message.role || "user");
+    const name = String(message.name || "").trim();
+    const label = `${role}${name ? ` (${name})` : ""}`;
+    const content = chatMessageContentToText(message.content);
+    if (!content) continue;
+    lines.push(`[${label}]`, content, "");
+  }
+  lines.push("Assistant:");
+  return lines.join("\n").trim();
+}
+
+function chatMessagesHaveContent(messages) {
+  if (!Array.isArray(messages)) return false;
+  return messages.some((message) => message && typeof message === "object" && chatMessageContentToText(message.content).trim());
+}
+
+function chatMessageContentToText(content) {
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (part && typeof part === "object") {
+        const type = String(part.type || "");
+        if (["text", "input_text", "output_text"].includes(type)) return String(part.text || "");
+        if ("text" in part) return String(part.text || "");
+        return type ? `[${type} omitted]` : "";
+      }
+      return part == null ? "" : String(part);
+    }).filter(Boolean).join("\n");
+  }
+  return String(content || "");
+}
+
+function agentModelTimeoutSeconds(config, body) {
+  const raw = body.timeout_seconds ?? body.timeoutSeconds ?? config.modelRouter?.agentModelTimeoutSeconds ?? 600;
+  const value = Number.parseInt(raw, 10);
+  return Math.max(1, Math.min(Number.isFinite(value) ? value : 600, 3600));
+}
+
+async function waitForRunTerminal(config, runId, timeoutSeconds) {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let lastRun = state.runs.get(runId) || {};
+  while (Date.now() < deadline) {
+    lastRun = state.runs.get(runId) || readSnapshot(config, "runs", runId) || lastRun;
+    if (TERMINAL_RUN_STATUSES.has(String(lastRun.status || "").toLowerCase())) return lastRun;
+    await delay(250);
+  }
+  return { ...lastRun, status: "timeout" };
+}
+
+function openAiError(message, type, param = "") {
+  return {
+    error: {
+      message: String(message || ""),
+      type,
+      code: type,
+      ...(param ? { param } : {})
+    }
+  };
 }
 
 function selectModelBackend(config, requestedModel) {
@@ -852,6 +1043,38 @@ function publicSelection(selection) {
   };
 }
 
+function createAgentRun(config, thread, agent, message) {
+  const run = {
+    id: `run_${crypto.randomUUID()}`,
+    thread_id: thread.id,
+    agent_id: agent.id,
+    node_id: agent.node_id,
+    kind: agent.kind,
+    role: agent.role,
+    status: "queued",
+    created_at: new Date().toISOString(),
+    started_at: null,
+    completed_at: null,
+    message,
+    stdout: "",
+    stderr: "",
+    events: []
+  };
+  thread.runs.push(run);
+  state.runs.set(run.id, run);
+  writeSnapshot(config, "runs", run.id, run);
+  appendJsonl(config, "runs.jsonl", run);
+  enqueueTask(agent.node_id, {
+    type: "task.run",
+    run_id: run.id,
+    thread_id: thread.id,
+    agent_id: agent.id,
+    message,
+    created_at: run.created_at
+  });
+  return run;
+}
+
 function createThread(config, body) {
   const selection = selectAgentsForMessage(body.message, {
     mode: body.mode || config.defaults.mode || "broadcast",
@@ -872,34 +1095,7 @@ function createThread(config, body) {
   };
 
   for (const agent of selection.agents) {
-    const run = {
-      id: `run_${crypto.randomUUID()}`,
-      thread_id: thread.id,
-      agent_id: agent.id,
-      node_id: agent.node_id,
-      kind: agent.kind,
-      role: agent.role,
-      status: "queued",
-      created_at: new Date().toISOString(),
-      started_at: null,
-      completed_at: null,
-      message: body.message,
-      stdout: "",
-      stderr: "",
-      events: []
-    };
-    thread.runs.push(run);
-    state.runs.set(run.id, run);
-    writeSnapshot(config, "runs", run.id, run);
-    appendJsonl(config, "runs.jsonl", run);
-    enqueueTask(agent.node_id, {
-      type: "task.run",
-      run_id: run.id,
-      thread_id: thread.id,
-      agent_id: agent.id,
-      message: body.message,
-      created_at: run.created_at
-    });
+    createAgentRun(config, thread, agent, body.message);
   }
 
   state.threads.set(thread.id, thread);
@@ -1119,6 +1315,10 @@ function optionValue(name) {
 function intEnv(name, fallback) {
   const parsed = Number.parseInt(process.env[name] || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function resolvePath(value, baseDir) {

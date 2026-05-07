@@ -32,6 +32,7 @@ async function main() {
 
   const gatewayPort = await freePort();
   const token = "sk-offline-smoke-token-000000";
+  const edgeToken = "abt_edge_offline_smoke_token_000000";
   const base = `http://127.0.0.1:${gatewayPort}`;
   const centralConfig = path.join(tempDir, "central.config.json");
   const edgeConfig = path.join(tempDir, "edge.config.json");
@@ -44,10 +45,13 @@ async function main() {
     token,
     defaults: {
       mode: "orchestrate",
-      pollTimeoutMs: 25000
+      pollTimeoutMs: 1000
     },
+    edgeTokens: [edgeToken],
     modelRouter: {
-      enabled: false,
+      enabled: true,
+      agentModels: true,
+      allowEdgeAgentModels: true,
       backends: []
     }
   }, null, 2)}\n`);
@@ -57,8 +61,8 @@ async function main() {
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "offline-smoke-node",
     gatewayUrl: base,
-    token,
-    pollTimeoutMs: 25000,
+    token: edgeToken,
+    pollTimeoutMs: 1000,
     idleDelayMs: 100,
     defaultTimeoutMs: 15000,
     agents: [{
@@ -81,7 +85,7 @@ async function main() {
   });
   await waitForJson(`${base}/health`);
 
-  const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig, "--once"], {
+  const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
     AGENT_BUS_CONFIG: edgeConfig
   });
   const agent = await waitForAgent(base, token, "offline-agent");
@@ -89,6 +93,22 @@ async function main() {
   assert(agent.node_status === "online", "agent discovery did not expose online node status");
   assert(Boolean(agent.last_seen_at), "agent discovery did not expose last_seen_at");
   assert(agent.ping_status === "not_configured", "offline agent should report ping_status=not_configured");
+  const models = await requestJson(`${base}/v1/models`, { headers: authHeaders(token) });
+  assert(models.data?.some((item) => item.id === "agent:offline-agent"), "admin model list did not include the offline agent model");
+  const edgeModels = await requestJson(`${base}/v1/models`, { headers: authHeaders(edgeToken) });
+  assert(edgeModels.data?.some((item) => item.id === "agent:offline-agent"), "edge model list did not include the offline agent model");
+  const agentChat = await requestJson(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: authJsonHeaders(edgeToken),
+    body: JSON.stringify({
+      model: "agent:offline-agent",
+      messages: [{ role: "user", content: "agent model replacement smoke" }],
+      timeout_seconds: 10
+    })
+  });
+  assert(agentChat.model === "agent:offline-agent", "agent-backed chat completion returned the wrong model");
+  assert(agentChat.agent_bus?.agent_id === "offline-agent", "agent-backed chat completion did not include Agent Bus run metadata");
+  assert(/offline smoke run completed/.test(agentChat.choices?.[0]?.message?.content || ""), "agent-backed chat completion did not return agent stdout");
 
   const room = await requestJson(`${base}/rooms`, {
     method: "POST",
@@ -153,6 +173,8 @@ async function main() {
   assert(!Object.hasOwn(summaryJson, "messages"), "CLI room export --reports-only json included full messages");
 
   if (!edge.killed) edge.kill("SIGTERM");
+  await waitForExit(edge);
+  await delay(1200);
   const pauseRoom = await requestJson(`${base}/rooms`, {
     method: "POST",
     headers: authJsonHeaders(token),
@@ -386,6 +408,17 @@ function assert(condition, message) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitForExit(child, timeoutMs = 5000) {
+  if (child.exitCode !== null || child.signalCode) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 function quoteCommandArg(value) {

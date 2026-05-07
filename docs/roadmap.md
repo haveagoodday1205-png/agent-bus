@@ -4,6 +4,25 @@ Agent Bus starts as a practical gateway for Codex, OpenClaw, Hermes, and OpenAI-
 
 The current north star is: **MCP connects models to tools; Agent Bus connects agents to agents.** The v1 protocol draft in `docs/protocol-v1.md` is the working contract for SDKs, adapters, compatibility tests, permission profiles, and the flagship multi-runtime PR demo.
 
+## Current Batch: Try, Trust, Integrate
+
+The next batch should be a small release train instead of a broad feature sprint. The goal is to make a new user try Agent Bus in under five minutes, make an operator understand what happened after a room run, and make third-party agents join without reading internals.
+
+Recommended PR sequence:
+
+1. Demo golden path: make `agent-bus demo` and `docker compose up` start a central gateway, one edge, two toy agents, a seeded room, and copy-paste examples for `/v1/chat/completions`, `/v1/responses`, room read/write, and `agent:<id>` model calls.
+2. Doctor and setup diagnostics: expand `agent-bus doctor` so it checks ports, config shape, central/edge reachability, OpenAI-compatible endpoints, room creation, and agent model availability, then prints diagnostics that are useful in bug reports.
+3. Trace and audit events: propagate a request or trace id through central, edge, room messages, model calls, and agent wakes; add JSONL export plus CLI inspection commands such as room tailing and trace lookup.
+4. Security defaults and trust docs: document central vs edge trust boundaries, local/dev/prod auth guidance, cache-scope privacy semantics, capability declarations, and what is not safe for hostile multi-tenant use yet.
+5. Room protocol spec v0: publish message schema, identity fields, directive syntax, blackboard semantics, wake semantics, cache-stable room contract guidance, and versioning policy.
+6. SDK examples: add one-file Python and TypeScript room agents, OpenAI SDK examples for Chat Completions and Responses, and a wrapper example for external agent processes.
+
+Non-goals for this batch:
+
+- Do not add more model-provider surface area unless the demo needs it.
+- Do not overbuild production auth before the trust boundary is documented.
+- Do not start a dashboard before JSONL traces and CLI inspection exist.
+
 ## v1 Protocol And Runtime Direction
 
 The next strategic phase should make Agent Bus a small open protocol plus self-hostable runtime rather than a chat-only coordination toy.

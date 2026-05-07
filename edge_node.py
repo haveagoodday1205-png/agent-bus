@@ -282,6 +282,7 @@ MAX_ENV_MESSAGE_BYTES = 24 * 1024
 def agent_runtime_env(config, agent, task, message_file=""):
     thread_id = str(task.get("thread_id") or "")
     room_id = str(task.get("room_id") or "")
+    trace_id = str(task.get("trace_id") or "")
     cache_scope = str(task.get("cache_scope") or "")
     message = str(task.get("message", ""))
     cache_key = agent_cache_key(agent, task, cache_scope or room_id or thread_id or task.get("run_id") or "")
@@ -292,6 +293,7 @@ def agent_runtime_env(config, agent, task, message_file=""):
         "AGENT_RUN_ID": task.get("run_id", ""),
         "AGENT_THREAD_ID": thread_id,
         "AGENT_ROOM_ID": room_id,
+        "AGENT_TRACE_ID": trace_id,
         "AGENT_CACHE_SCOPE": cache_scope,
         "AGENT_CACHE_KEY": cache_key,
         "AGENT_SESSION_ID": cache_key,
@@ -389,11 +391,11 @@ def run_command(config, agent, task, command, emit=True):
 
 
 def event(config, task, payload):
-    return post(config, "/edge/events", {"node_id": config["nodeId"], "run_id": task["run_id"], "event": payload})
+    return post(config, "/edge/events", {"node_id": config["nodeId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "event": payload})
 
 
 def complete(config, task, result):
-    return post(config, "/edge/complete", {"node_id": config["nodeId"], "run_id": task["run_id"], "result": result})
+    return post(config, "/edge/complete", {"node_id": config["nodeId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "result": result})
 
 
 def post(config, pathname, body):

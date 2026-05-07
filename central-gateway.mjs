@@ -353,7 +353,7 @@ async function serve(config) {
         if (!body.message || typeof body.message !== "string") {
           return sendJson(res, { error: "message is required" }, 400);
         }
-        const thread = createThread(config, body);
+        const thread = createThread(config, body, requestTraceId(req, body));
         return sendJson(res, thread, 201);
       }
       if (req.method === "GET" && url.pathname.startsWith("/threads/")) {
@@ -367,6 +367,10 @@ async function serve(config) {
         const run = readSnapshot(config, "runs", id);
         if (!run) return sendJson(res, { error: "not_found" }, 404);
         return sendJson(res, run);
+      }
+      if (req.method === "GET" && url.pathname.startsWith("/traces/")) {
+        const traceId = url.pathname.split("/").filter(Boolean)[1];
+        return sendJson(res, traceLookup(config, traceId));
       }
 
       return sendJson(res, { error: "not_found" }, 404);
@@ -634,6 +638,7 @@ function agentBusManifest(config) {
       agents: "GET /agents",
       route: "POST /route",
       threads: "POST /threads",
+      trace: "GET /traces/{trace_id}",
       models: "GET /v1/models",
       chat_completions: "POST /v1/chat/completions",
       responses: "POST /v1/responses",
@@ -708,16 +713,18 @@ function openAiModels(config, options = {}) {
 }
 
 async function proxyChatCompletions(config, req, res, body) {
+  const traceId = requestTraceId(req, body);
   const agentId = agentModelId(body.model);
   if (agentId) {
-    const { payload, status } = await createAgentChatCompletion(config, body, agentId);
+    const { payload, status } = await createAgentChatCompletion(config, body, agentId, traceId);
     return sendJson(res, payload, status);
   }
   const { backend, routedModel } = selectModelBackend(config, body.model);
   const proxied = { ...body, model: routedModel };
   const headers = {
     "content-type": "application/json",
-    "accept": body.stream ? "text/event-stream" : "application/json"
+    "accept": body.stream ? "text/event-stream" : "application/json",
+    "x-agent-bus-trace-id": traceId
   };
   const apiKey = backendApiKey(backend);
   if (apiKey) {
@@ -763,16 +770,18 @@ async function proxyChatCompletions(config, req, res, body) {
 }
 
 async function proxyResponses(config, req, res, body) {
+  const traceId = requestTraceId(req, body);
   const agentId = agentModelId(body.model);
   if (agentId) {
-    const { payload, status } = await createAgentResponse(config, body, agentId);
+    const { payload, status } = await createAgentResponse(config, body, agentId, traceId);
     return sendJson(res, payload, status);
   }
   const { backend, routedModel } = selectModelBackend(config, body.model);
   const proxied = { ...body, model: routedModel };
   const headers = {
     "content-type": "application/json",
-    "accept": body.stream ? "text/event-stream" : "application/json"
+    "accept": body.stream ? "text/event-stream" : "application/json",
+    "x-agent-bus-trace-id": traceId
   };
   const apiKey = backendApiKey(backend);
   if (apiKey) {
@@ -840,7 +849,35 @@ function agentModelId(model) {
   return "";
 }
 
-async function createAgentChatCompletion(config, body, agentId) {
+function sanitizeTraceId(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.replace(/[^A-Za-z0-9._:-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 128);
+}
+
+function newTraceId() {
+  return `trace_${crypto.randomUUID()}`;
+}
+
+function traceIdFromBody(body = {}) {
+  const direct = sanitizeTraceId(body.trace_id || body.traceId || body.request_id || body.requestId);
+  if (direct) return direct;
+  if (body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)) {
+    const value = sanitizeTraceId(body.metadata.agent_bus_trace_id || body.metadata.trace_id || body.metadata.traceId || body.metadata.request_id);
+    if (value) return value;
+  }
+  if (body.agent_bus && typeof body.agent_bus === "object" && !Array.isArray(body.agent_bus)) {
+    const value = sanitizeTraceId(body.agent_bus.trace_id || body.agent_bus.traceId || body.agent_bus.request_id);
+    if (value) return value;
+  }
+  return "";
+}
+
+function requestTraceId(req, body = {}) {
+  return traceIdFromBody(body) || sanitizeTraceId(req.headers["x-agent-bus-trace-id"] || req.headers["x-request-id"]) || newTraceId();
+}
+
+async function createAgentChatCompletion(config, body, agentId, traceId = "") {
   if (!agentModelsEnabled(config)) {
     return { payload: openAiError("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), status: 503 };
   }
@@ -862,6 +899,7 @@ async function createAgentChatCompletion(config, body, agentId) {
     created_at: new Date().toISOString(),
     source: "chat.completions.agent",
     mode: "agent-model",
+    trace_id: traceId || newTraceId(),
     message: prompt,
     model: `agent:${agentId}`,
     selection: {
@@ -886,6 +924,7 @@ async function createAgentChatCompletion(config, body, agentId) {
     Object.assign(payload.error, {
       run_id: run.id,
       thread_id: thread.id,
+      trace_id: thread.trace_id,
       agent_id: agentId,
       status: finalRun.status || "timeout"
     });
@@ -916,6 +955,7 @@ async function createAgentChatCompletion(config, body, agentId) {
       agent_bus: {
         thread_id: thread.id,
         run_id: run.id,
+        trace_id: thread.trace_id,
         agent_id: agentId,
         node_id: agent.node_id
       }
@@ -923,7 +963,7 @@ async function createAgentChatCompletion(config, body, agentId) {
   };
 }
 
-async function createAgentResponse(config, body, agentId) {
+async function createAgentResponse(config, body, agentId, traceId = "") {
   if (!agentModelsEnabled(config)) {
     return { payload: openAiError("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), status: 503 };
   }
@@ -945,6 +985,7 @@ async function createAgentResponse(config, body, agentId) {
     created_at: new Date().toISOString(),
     source: "responses.agent",
     mode: "agent-model",
+    trace_id: traceId || newTraceId(),
     message: prompt,
     model: `agent:${agentId}`,
     selection: {
@@ -969,6 +1010,7 @@ async function createAgentResponse(config, body, agentId) {
     Object.assign(payload.error, {
       run_id: run.id,
       thread_id: thread.id,
+      trace_id: thread.trace_id,
       agent_id: agentId,
       status: finalRun.status || "timeout"
     });
@@ -1011,6 +1053,7 @@ function agentResponsePayload(agentId, agent, thread, run, content, body) {
     agent_bus: {
       thread_id: thread.id,
       run_id: run.id,
+      trace_id: thread.trace_id,
       agent_id: agentId,
       node_id: agent.node_id
     }
@@ -1254,10 +1297,12 @@ function publicSelection(selection) {
   };
 }
 
-function createAgentRun(config, thread, agent, message) {
+function createAgentRun(config, thread, agent, message, traceId = "") {
+  traceId = traceId || thread.trace_id || newTraceId();
   const run = {
     id: `run_${crypto.randomUUID()}`,
     thread_id: thread.id,
+    trace_id: traceId,
     agent_id: agent.id,
     node_id: agent.node_id,
     kind: agent.kind,
@@ -1280,6 +1325,7 @@ function createAgentRun(config, thread, agent, message) {
     type: "task.run",
     run_id: run.id,
     thread_id: thread.id,
+    trace_id: traceId,
     agent_id: agent.id,
     message,
     ...(run.cache_scope ? { cache_scope: run.cache_scope } : {}),
@@ -1288,13 +1334,15 @@ function createAgentRun(config, thread, agent, message) {
   return run;
 }
 
-function createThread(config, body) {
+function createThread(config, body, traceId = "") {
+  traceId = traceId || traceIdFromBody(body) || newTraceId();
   const selection = selectAgentsForMessage(body.message, {
     mode: body.mode || config.defaults.mode || "broadcast",
     agents: body.agents
   });
   const thread = {
     id: `thread_${crypto.randomUUID()}`,
+    trace_id: traceId,
     created_at: new Date().toISOString(),
     source: body.source || "http",
     mode: selection.mode,
@@ -1308,7 +1356,7 @@ function createThread(config, body) {
   };
 
   for (const agent of selection.agents) {
-    createAgentRun(config, thread, agent, body.message);
+    createAgentRun(config, thread, agent, body.message, traceId);
   }
 
   state.threads.set(thread.id, thread);
@@ -1381,6 +1429,8 @@ function recordRunEvent(config, body) {
     node_id: body.node_id || run.node_id,
     ...(body.event || {})
   };
+  event.trace_id = sanitizeTraceId(body.trace_id || event.trace_id || run.trace_id);
+  if (event.trace_id && !run.trace_id) run.trace_id = event.trace_id;
   if (event.type === "run.started") {
     run.status = "running";
     run.started_at ||= event.at;
@@ -1403,6 +1453,7 @@ function completeRun(config, body) {
     throw err;
   }
   const result = body.result || {};
+  if (body.trace_id && !run.trace_id) run.trace_id = sanitizeTraceId(body.trace_id);
   run.status = result.status || (Number(result.exit_code || 0) === 0 ? "completed" : "failed");
   run.completed_at = new Date().toISOString();
   run.exit_code = result.exit_code ?? null;
@@ -1493,6 +1544,84 @@ function readSnapshot(config, folder, id) {
   const file = path.join(config.dataDir, folder, `${id}.json`);
   if (!fs.existsSync(file)) return null;
   return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function readSnapshots(config, folder) {
+  const dir = path.join(config.dataDir, folder);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .flatMap((name) => {
+      try {
+        return [JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))];
+      } catch {
+        return [];
+      }
+    });
+}
+
+function readJsonl(config, fileName) {
+  const file = path.join(config.dataDir, fileName);
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
+}
+
+function traceLookup(config, traceId) {
+  const id = sanitizeTraceId(traceId);
+  if (!id) {
+    const err = new Error("trace_id is required");
+    err.statusCode = 400;
+    throw err;
+  }
+  const threads = readSnapshots(config, "threads").filter((item) => objectHasTrace(item, id));
+  const rooms = readSnapshots(config, "rooms").filter((item) => objectHasTrace(item, id));
+  const runs = readSnapshots(config, "runs").filter((item) => objectHasTrace(item, id));
+  const events = readJsonl(config, "events.jsonl").filter((item) => objectHasTrace(item, id));
+  if (!threads.length && !rooms.length && !runs.length && !events.length) {
+    const err = new Error("trace not found");
+    err.statusCode = 404;
+    throw err;
+  }
+  return {
+    trace_id: id,
+    summary: {
+      threads: threads.length,
+      rooms: rooms.length,
+      runs: runs.length,
+      events: events.length,
+      agents: [...new Set(runs.map((item) => item.agent_id).filter(Boolean))].sort(),
+      nodes: [...new Set(runs.map((item) => item.node_id).filter(Boolean))].sort(),
+      statuses: [...new Set(runs.map((item) => item.status).filter(Boolean))].sort()
+    },
+    threads: threads.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || ""))),
+    rooms: rooms.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || ""))),
+    runs: runs.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || ""))),
+    events: events.sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")))
+  };
+}
+
+function objectHasTrace(value, traceId) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (sanitizeTraceId(value.trace_id || value.traceId) === traceId) return true;
+  for (const key of ["runs", "events", "messages", "reports", "conversation", "reminders"]) {
+    if (Array.isArray(value[key]) && value[key].some((item) => objectHasTrace(item, traceId))) return true;
+  }
+  if (value.blackboard && typeof value.blackboard === "object" && !Array.isArray(value.blackboard)) {
+    for (const item of Object.values(value.blackboard)) {
+      if (Array.isArray(item) && item.some((entry) => objectHasTrace(entry, traceId))) return true;
+    }
+  }
+  return false;
 }
 
 function trimOutput(value) {

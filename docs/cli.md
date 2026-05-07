@@ -262,6 +262,8 @@ agent-bus room export room_xxx --format json --out room.json --gateway https://Y
 agent-bus room export room_xxx --format json --no-redact --out room-private.json --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room export room_xxx --format events --out room-events.json --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room replay --in room-events.json --format markdown
+agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus trace export trace_xxx --format markdown --out trace.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
 ```
 
 Room exports include the room goal, reports, blackboard notes, runs, and messages. Add `--reports-only` to omit full messages for public demos or issue summaries. Gateway responses are already redacted, and the CLI adds another pass over common token-like strings by default. Use `--no-redact` only to disable that extra client-side pass for private archives, and review any export before sharing it for private prompts, logs, domains, and internal machine names.
@@ -269,6 +271,18 @@ Room exports include the room goal, reports, blackboard notes, runs, and message
 `--format events` writes a room event bundle (`agent_bus.room_event_bundle`) derived from the room snapshot. It is designed for durable demos, bug reports, and SDK compatibility fixtures: `agent-bus room replay --in room-events.json` can rebuild a deterministic summary without contacting a gateway or model provider.
 
 Use `agent-bus room pause ROOM_ID --reason "..."` as the safe recovery action for old rooms that should no longer wake agents. Pausing preserves the transcript, reports, blackboard, and run history; stops future manual wakes and auto-rotation; cancels queued runs in that room; and removes those queued tasks from the gateway queue. Pause does not kill already-running OS processes or delete any snapshots, so let running work finish or handle it outside Agent Bus before sharing an export.
+
+## Traces
+
+```bash
+agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus trace show trace_xxx --json --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus trace export trace_xxx --format markdown --out trace.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
+```
+
+Trace ids connect rooms, direct threads, agent-backed Chat Completions/Responses, runs, edge events, and agent process environments. Clients can set one with `trace_id`, `traceId`, `metadata.agent_bus_trace_id`, `agent_bus.trace_id`, or the `x-agent-bus-trace-id` header. If omitted, the gateway creates a `trace_...` id for new work.
+
+Edge command adapters receive `AGENT_TRACE_ID`. Events and completion reports include the same id, so `agent-bus trace show` can answer what ran, which agent handled it, which node executed it, and which room or thread it belonged to.
 
 ## Local Probe
 

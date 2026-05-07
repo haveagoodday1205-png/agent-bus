@@ -344,6 +344,7 @@ const MAX_ENV_MESSAGE_BYTES = 24 * 1024;
 function agentRuntimeEnv(config, agent, task, messageFile = "") {
   const threadId = String(task.thread_id || "");
   const roomId = String(task.room_id || "");
+  const traceId = String(task.trace_id || "");
   const cacheScope = String(task.cache_scope || "");
   const message = String(task.message || "");
   const cacheKey = agentCacheKey(agent, task, cacheScope || roomId || threadId || task.run_id || "");
@@ -354,6 +355,7 @@ function agentRuntimeEnv(config, agent, task, messageFile = "") {
     AGENT_RUN_ID: task.run_id || "",
     AGENT_THREAD_ID: threadId,
     AGENT_ROOM_ID: roomId,
+    AGENT_TRACE_ID: traceId,
     AGENT_CACHE_SCOPE: cacheScope,
     AGENT_CACHE_KEY: cacheKey,
     AGENT_SESSION_ID: cacheKey,
@@ -492,6 +494,7 @@ async function event(config, task, payload) {
   return postJson(config, "/edge/events", {
     node_id: config.nodeId,
     run_id: task.run_id,
+    trace_id: task.trace_id || "",
     event: payload
   });
 }
@@ -500,6 +503,7 @@ async function complete(config, task, result) {
   return postJson(config, "/edge/complete", {
     node_id: config.nodeId,
     run_id: task.run_id,
+    trace_id: task.trace_id || "",
     result
   });
 }

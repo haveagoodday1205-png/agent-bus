@@ -295,6 +295,9 @@ class Handler(BaseHTTPRequestHandler):
                 room_id = path.rsplit("/", 1)[-1]
                 item = STATE["rooms"].get(room_id) or read_snapshot(self.config, "rooms", room_id)
                 return self.json(item or {"error": "not_found"}, 200 if item else 404)
+            if path.startswith("/traces/"):
+                trace_id = path.rsplit("/", 1)[-1]
+                return self.json(trace_lookup(self.config, trace_id))
             if path.startswith("/threads/"):
                 item = read_snapshot(self.config, "threads", path.rsplit("/", 1)[-1])
                 return self.json(item or {"error": "not_found"}, 200 if item else 404)
@@ -344,15 +347,15 @@ class Handler(BaseHTTPRequestHandler):
                 selection = select_agents(body.get("message", ""), body)
                 return self.json(public_selection(selection))
             if path == "/threads":
-                return self.json(create_thread(self.config, body), 201)
+                return self.json(create_thread(self.config, body, self.request_trace_id(body)), 201)
             if path == "/rooms":
-                return self.json(create_room(self.config, body), 201)
+                return self.json(create_room(self.config, body, self.request_trace_id(body)), 201)
             if path.startswith("/rooms/"):
                 parts = path.strip("/").split("/")
                 if len(parts) == 3 and parts[2] == "messages":
-                    return self.json(add_room_message(self.config, parts[1], body), 201)
+                    return self.json(add_room_message(self.config, parts[1], body, self.request_trace_id(body)), 201)
                 if len(parts) == 3 and parts[2] == "wake":
-                    return self.json(wake_room(self.config, parts[1], body))
+                    return self.json(wake_room(self.config, parts[1], body, self.request_trace_id(body)))
                 if len(parts) == 3 and parts[2] == "pause":
                     return self.json(pause_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "reminders":
@@ -377,6 +380,10 @@ class Handler(BaseHTTPRequestHandler):
             err.status_code = 401
             raise err
         return scope
+
+    def request_trace_id(self, body):
+        header_value = self.headers.get("x-agent-bus-trace-id") or self.headers.get("x-request-id") or ""
+        return trace_id_from_body(body) or sanitize_trace_id(header_value) or new_trace_id()
 
     def read_json(self):
         length = int(self.headers.get("content-length") or 0)
@@ -411,9 +418,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def proxy_chat_completions(self, body):
+        trace_id = self.request_trace_id(body)
         agent_id = agent_model_id(body.get("model"))
         if agent_id:
-            payload, status = create_agent_chat_completion(self.config, body, agent_id)
+            payload, status = create_agent_chat_completion(self.config, body, agent_id, trace_id)
             return self.json(payload, status)
         backend, routed_model = select_model_backend(self.config, body.get("model"))
         proxied = dict(body)
@@ -422,6 +430,7 @@ class Handler(BaseHTTPRequestHandler):
         req = Request(join_url(backend["baseUrl"], "/chat/completions"), data=data, method="POST")
         req.add_header("content-type", "application/json")
         req.add_header("accept", "text/event-stream" if body.get("stream") else "application/json")
+        req.add_header("x-agent-bus-trace-id", trace_id)
         api_key = backend_api_key(backend)
         if api_key:
             req.add_header("authorization", "Bearer " + api_key)
@@ -461,9 +470,10 @@ class Handler(BaseHTTPRequestHandler):
             }, 502)
 
     def proxy_responses(self, body):
+        trace_id = self.request_trace_id(body)
         agent_id = agent_model_id(body.get("model"))
         if agent_id:
-            payload, status = create_agent_response(self.config, body, agent_id)
+            payload, status = create_agent_response(self.config, body, agent_id, trace_id)
             return self.json(payload, status)
         backend, routed_model = select_model_backend(self.config, body.get("model"))
         proxied = dict(body)
@@ -472,6 +482,7 @@ class Handler(BaseHTTPRequestHandler):
         req = Request(join_url(backend["baseUrl"], "/responses"), data=data, method="POST")
         req.add_header("content-type", "application/json")
         req.add_header("accept", "text/event-stream" if body.get("stream") else "application/json")
+        req.add_header("x-agent-bus-trace-id", trace_id)
         api_key = backend_api_key(backend)
         if api_key:
             req.add_header("authorization", "Bearer " + api_key)
@@ -648,6 +659,7 @@ def agent_bus_manifest(config):
             "room": "GET /rooms/{room_id}",
             "room_message": "POST /rooms/{room_id}/messages",
             "room_wake": "POST /rooms/{room_id}/wake",
+            "trace": "GET /traces/{trace_id}",
             "models": "GET /v1/models",
             "chat_completions": "POST /v1/chat/completions",
             "responses": "POST /v1/responses",
@@ -755,7 +767,38 @@ def agent_model_id(model):
     return ""
 
 
-def create_agent_chat_completion(config, body, agent_id):
+def sanitize_trace_id(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"[^A-Za-z0-9._:-]+", "-", text).strip("-")
+    return text[:128]
+
+
+def new_trace_id():
+    return "trace_" + str(uuid.uuid4())
+
+
+def trace_id_from_body(body):
+    if not isinstance(body, dict):
+        return ""
+    direct = sanitize_trace_id(body.get("trace_id") or body.get("traceId") or body.get("request_id") or body.get("requestId"))
+    if direct:
+        return direct
+    metadata = body.get("metadata")
+    if isinstance(metadata, dict):
+        value = sanitize_trace_id(metadata.get("agent_bus_trace_id") or metadata.get("trace_id") or metadata.get("traceId") or metadata.get("request_id"))
+        if value:
+            return value
+    agent_bus = body.get("agent_bus")
+    if isinstance(agent_bus, dict):
+        value = sanitize_trace_id(agent_bus.get("trace_id") or agent_bus.get("traceId") or agent_bus.get("request_id"))
+        if value:
+            return value
+    return ""
+
+
+def create_agent_chat_completion(config, body, agent_id, trace_id=None):
     if not agent_models_enabled(config):
         return openai_error("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), 503
     if body.get("stream"):
@@ -775,6 +818,7 @@ def create_agent_chat_completion(config, body, agent_id):
         "created_at": now(),
         "source": "chat.completions.agent",
         "mode": "agent-model",
+        "trace_id": trace_id or new_trace_id(),
         "message": prompt,
         "model": "agent:" + agent_id,
         "selection": {
@@ -800,6 +844,7 @@ def create_agent_chat_completion(config, body, agent_id):
         error = openai_error(trim(message), "agent_bus_agent_run_failed", "model")
         error["error"]["run_id"] = run["id"]
         error["error"]["thread_id"] = thread["id"]
+        error["error"]["trace_id"] = thread["trace_id"]
         error["error"]["agent_id"] = agent_id
         error["error"]["status"] = final_run.get("status", "timeout")
         return error, status
@@ -826,13 +871,14 @@ def create_agent_chat_completion(config, body, agent_id):
         "agent_bus": {
             "thread_id": thread["id"],
             "run_id": run["id"],
+            "trace_id": thread["trace_id"],
             "agent_id": agent_id,
             "node_id": agent.get("node_id"),
         },
     }, 200
 
 
-def create_agent_response(config, body, agent_id):
+def create_agent_response(config, body, agent_id, trace_id=None):
     if not agent_models_enabled(config):
         return openai_error("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), 503
     if body.get("stream"):
@@ -851,6 +897,7 @@ def create_agent_response(config, body, agent_id):
         "created_at": now(),
         "source": "responses.agent",
         "mode": "agent-model",
+        "trace_id": trace_id or new_trace_id(),
         "message": prompt,
         "model": "agent:" + agent_id,
         "selection": {
@@ -876,6 +923,7 @@ def create_agent_response(config, body, agent_id):
         error = openai_error(trim(message), "agent_bus_agent_run_failed", "model")
         error["error"]["run_id"] = run["id"]
         error["error"]["thread_id"] = thread["id"]
+        error["error"]["trace_id"] = thread["trace_id"]
         error["error"]["agent_id"] = agent_id
         error["error"]["status"] = final_run.get("status", "timeout")
         return error, status
@@ -914,6 +962,7 @@ def agent_response_payload(agent_id, agent, thread, run, content, body):
         "agent_bus": {
             "thread_id": thread["id"],
             "run_id": run["id"],
+            "trace_id": thread.get("trace_id"),
             "agent_id": agent_id,
             "node_id": agent.get("node_id"),
         },
@@ -1339,7 +1388,7 @@ def list_rooms(config):
     )
 
 
-def create_room(config, body):
+def create_room(config, body, trace_id=None):
     goal = body.get("goal") or body.get("message")
     if not goal:
         err = Exception("goal is required")
@@ -1356,8 +1405,10 @@ def create_room(config, body):
         raise err
     max_steps = int(body.get("max_steps") if body.get("max_steps") is not None else body.get("maxSteps", 0))
     max_steps = max(0, max_steps)
+    room_trace_id = trace_id or trace_id_from_body(body) or new_trace_id()
     room = {
         "id": "room_" + str(uuid.uuid4()),
+        "trace_id": room_trace_id,
         "title": body.get("title") or goal[:80],
         "goal": goal,
         "status": "active",
@@ -1387,6 +1438,7 @@ def create_room(config, body):
             "speaker": "user",
             "role": "user",
             "content": goal,
+            "trace_id": room_trace_id,
             "at": now(),
         }],
         "runs": [],
@@ -1395,14 +1447,15 @@ def create_room(config, body):
     }
     STATE["rooms"][room["id"]] = room
     wake_ids = body.get("wakeAgents") or body.get("wake_agents") or [room["agents"][0]]
-    wake_room_agents(config, room, wake_ids, body.get("reason") or "Initial room wake.")
+    wake_room_agents(config, room, wake_ids, body.get("reason") or "Initial room wake.", room_trace_id)
     write_room(config, room)
     append_jsonl(config, "rooms.jsonl", room)
     return room
 
 
-def add_room_message(config, room_id, body):
+def add_room_message(config, room_id, body, trace_id=None):
     room = get_room(config, room_id)
+    trace_id = trace_id or trace_id_from_body(body) or room.get("trace_id") or new_trace_id()
     content = body.get("content") or body.get("message")
     if not content:
         err = Exception("message content is required")
@@ -1412,24 +1465,26 @@ def add_room_message(config, room_id, body):
         "speaker": body.get("speaker") or "user",
         "role": body.get("role") or "user",
         "content": content,
+        "trace_id": trace_id,
         "at": now(),
     })
     room["updated_at"] = now()
     if body.get("wake", True) is not False:
         wake_ids = body.get("agents") or [next_room_agent(room)]
-        wake_room_agents(config, room, wake_ids, body.get("reason") or "New room message.")
+        wake_room_agents(config, room, wake_ids, body.get("reason") or "New room message.", trace_id)
     write_room(config, room)
     return room
 
 
-def wake_room(config, room_id, body):
+def wake_room(config, room_id, body, trace_id=None):
     room = get_room(config, room_id)
+    trace_id = trace_id or trace_id_from_body(body) or room.get("trace_id") or new_trace_id()
     agents = body.get("agents")
     if not agents and body.get("agent"):
         agents = [body.get("agent")]
     if not agents:
         agents = [next_room_agent(room)]
-    wake_room_agents(config, room, agents, body.get("reason") or "Manual wake.")
+    wake_room_agents(config, room, agents, body.get("reason") or "Manual wake.", trace_id)
     write_room(config, room)
     return room
 
@@ -1487,9 +1542,10 @@ def remove_queued_tasks(run_ids):
             STATE["queues"][node_id] = kept
     return removed
 
-def wake_room_agents(config, room, agent_ids, reason):
+def wake_room_agents(config, room, agent_ids, reason, trace_id=None):
     if isinstance(agent_ids, str):
         agent_ids = [agent_ids]
+    trace_id = trace_id or room.get("trace_id") or new_trace_id()
     out = []
     for agent_id in agent_ids:
         if not agent_id:
@@ -1508,7 +1564,7 @@ def wake_room_agents(config, room, agent_ids, reason):
             room.setdefault("reports", []).append({"at": now(), "speaker": "system", "content": "Agent offline or unknown: " + agent_id})
             continue
         message = autonomous_prompt(room, agent, reason)
-        run = create_room_run(config, room, agent, message)
+        run = create_room_run(config, room, agent, message, trace_id)
         autonomy["steps"] = steps + 1
         if agent_id in (room.get("agents") or []):
             autonomy["next_index"] = (room.get("agents") or []).index(agent_id) + 1
@@ -1560,11 +1616,13 @@ def autonomous_prompt(room, agent, reason):
     return "\n".join(lines)
 
 
-def create_room_run(config, room, agent, message):
+def create_room_run(config, room, agent, message, trace_id=None):
+    trace_id = trace_id or room.get("trace_id") or new_trace_id()
     run = {
         "id": "run_" + str(uuid.uuid4()),
         "thread_id": room["id"],
         "room_id": room["id"],
+        "trace_id": trace_id,
         "agent_id": agent["id"],
         "node_id": agent["node_id"],
         "kind": agent["kind"],
@@ -1587,6 +1645,7 @@ def create_room_run(config, room, agent, message):
         "run_id": run["id"],
         "thread_id": room["id"],
         "room_id": room["id"],
+        "trace_id": trace_id,
         "agent_id": agent["id"],
         "message": message,
         "created_at": run["created_at"],
@@ -1594,16 +1653,18 @@ def create_room_run(config, room, agent, message):
     return run
 
 
-def create_thread(config, body):
+def create_thread(config, body, trace_id=None):
     if not body.get("message"):
         err = Exception("message is required")
         err.status_code = 400
         raise err
+    trace_id = trace_id or trace_id_from_body(body) or new_trace_id()
     selection = select_agents(body["message"], {"mode": body.get("mode", config["defaults"]["mode"]), "agents": body.get("agents")})
     if body.get("mode") == "group":
-        return create_group_thread(config, body, selection)
+        return create_group_thread(config, body, selection, trace_id)
     thread = {
         "id": "thread_" + str(uuid.uuid4()),
+        "trace_id": trace_id,
         "created_at": now(),
         "source": body.get("source", "http"),
         "mode": selection["mode"],
@@ -1616,22 +1677,24 @@ def create_thread(config, body):
         "runs": [],
     }
     for agent in selection["agents"]:
-        create_run(config, thread, agent, body["message"])
+        create_run(config, thread, agent, body["message"], trace_id=trace_id)
     STATE["threads"][thread["id"]] = thread
     write_snapshot(config, "threads", thread["id"], thread)
     append_jsonl(config, "threads.jsonl", thread)
     return thread
 
 
-def create_group_thread(config, body, selection):
+def create_group_thread(config, body, selection, trace_id=None):
     agents = selection["agents"]
     if len(agents) < 2:
         err = Exception("group mode requires at least two agents")
         err.status_code = 400
         raise err
     rounds = max(1, min(int(body.get("rounds") or 2), 8))
+    trace_id = trace_id or trace_id_from_body(body) or new_trace_id()
     thread = {
         "id": "thread_" + str(uuid.uuid4()),
+        "trace_id": trace_id,
         "created_at": now(),
         "source": body.get("source", "http"),
         "mode": "group",
@@ -1650,6 +1713,7 @@ def create_group_thread(config, body, selection):
             "speaker": "user",
             "role": "user",
             "content": body["message"],
+            "trace_id": trace_id,
             "at": now(),
         }],
         "runs": [],
@@ -1678,7 +1742,7 @@ def schedule_group_turn(config, thread):
         err.status_code = 409
         raise err
     message = group_prompt(thread, agent_id, turn_index)
-    create_run(config, thread, agent, message, turn_index=turn_index)
+    create_run(config, thread, agent, message, turn_index=turn_index, trace_id=thread.get("trace_id"))
     group["turn_index"] = turn_index + 1
     thread["group"] = group
     thread["status"] = "running"
@@ -1708,10 +1772,12 @@ def group_prompt(thread, agent_id, turn_index):
     return "\n".join(lines)
 
 
-def create_run(config, thread, agent, message, turn_index=None):
+def create_run(config, thread, agent, message, turn_index=None, trace_id=None):
+    trace_id = trace_id or thread.get("trace_id") or new_trace_id()
     run = {
         "id": "run_" + str(uuid.uuid4()),
         "thread_id": thread["id"],
+        "trace_id": trace_id,
         "agent_id": agent["id"],
         "node_id": agent["node_id"],
         "kind": agent["kind"],
@@ -1737,6 +1803,7 @@ def create_run(config, thread, agent, message, turn_index=None):
         "type": "task.run",
         "run_id": run["id"],
         "thread_id": thread["id"],
+        "trace_id": trace_id,
         "agent_id": agent["id"],
         "message": message,
         **({"cache_scope": run["cache_scope"]} if run.get("cache_scope") else {}),
@@ -1797,6 +1864,9 @@ def record_event(config, body):
         return
     touch_node_seen(body.get("node_id") or run.get("node_id"))
     event = {"at": now(), "node_id": body.get("node_id") or run.get("node_id"), **(body.get("event") or {})}
+    event["trace_id"] = sanitize_trace_id(body.get("trace_id") or event.get("trace_id") or run.get("trace_id"))
+    if event["trace_id"] and not run.get("trace_id"):
+        run["trace_id"] = event["trace_id"]
     if event.get("type") == "run.started":
         run["status"] = "running"
         run["started_at"] = run.get("started_at") or event["at"]
@@ -1818,6 +1888,8 @@ def complete_run(config, body):
         err.status_code = 404
         raise err
     touch_node_seen(body.get("node_id") or run.get("node_id"))
+    if body.get("trace_id") and not run.get("trace_id"):
+        run["trace_id"] = sanitize_trace_id(body.get("trace_id"))
     result = body.get("result") or {}
     exit_code = result.get("exit_code")
     run["status"] = result.get("status") or ("completed" if exit_code == 0 else "failed")
@@ -1868,6 +1940,7 @@ def continue_room_run(config, run):
         "speaker": run.get("agent_id"),
         "role": run.get("kind") or "agent",
         "run_id": run["id"],
+        "trace_id": run.get("trace_id") or room.get("trace_id"),
         "status": run.get("status"),
         "content": content,
         "at": run.get("completed_at") or now(),
@@ -1876,7 +1949,7 @@ def continue_room_run(config, run):
     finalize_room_completion(room)
     scheduled_actions = {"wake", "reminder", "done"}
     if not any(action in scheduled_actions for action in actions) and room.get("status") == "active" and room.get("autonomy", {}).get("auto_rotate", True):
-        wake_room_agents(config, room, [next_room_agent(room)], "Continue the room from the latest message.")
+        wake_room_agents(config, room, [next_room_agent(room)], "Continue the room from the latest message.", run.get("trace_id") or room.get("trace_id"))
     room["updated_at"] = now()
     write_room(config, room)
 
@@ -1894,14 +1967,14 @@ def process_room_directives(config, room, run, content):
             continue
         match = re.match(r"^REPORT\s*:\s*(.+)", line, re.I)
         if match:
-            report = {"at": now(), "speaker": run.get("agent_id"), "content": match.group(1).strip(), "run_id": run["id"]}
+            report = {"at": now(), "speaker": run.get("agent_id"), "content": match.group(1).strip(), "run_id": run["id"], "trace_id": run.get("trace_id") or room.get("trace_id")}
             room.setdefault("reports", []).append(report)
             room.setdefault("blackboard", {}).setdefault("reports", []).append(report)
             actions.append("report")
             continue
         match = re.match(r"^BLACKBOARD\s*:\s*(.+)", line, re.I)
         if match:
-            note = {"at": now(), "speaker": run.get("agent_id"), "content": match.group(1).strip(), "run_id": run["id"]}
+            note = {"at": now(), "speaker": run.get("agent_id"), "content": match.group(1).strip(), "run_id": run["id"], "trace_id": run.get("trace_id") or room.get("trace_id")}
             room.setdefault("blackboard", {}).setdefault("notes", []).append(note)
             actions.append("blackboard")
             continue
@@ -1915,6 +1988,7 @@ def process_room_directives(config, room, run, content):
                     "agent": agent_id,
                     "delay_seconds": parse_delay_seconds(amount, unit),
                     "reason": reason.strip(),
+                    "trace_id": run.get("trace_id") or room.get("trace_id"),
                 })
                 actions.append("reminder")
             continue
@@ -1922,7 +1996,7 @@ def process_room_directives(config, room, run, content):
         if match:
             agent_id, task = match.groups()
             if agent_id in agent_ids:
-                wake_room_agents(config, room, [agent_id], task.strip())
+                wake_room_agents(config, room, [agent_id], task.strip(), run.get("trace_id") or room.get("trace_id"))
                 actions.append("wake")
             continue
     return actions
@@ -1980,6 +2054,7 @@ def continue_group_thread(config, run):
         "speaker": run.get("agent_id"),
         "role": run.get("kind") or "agent",
         "run_id": run["id"],
+        "trace_id": run.get("trace_id") or thread.get("trace_id"),
         "status": run.get("status"),
         "content": content,
         "at": run.get("completed_at") or now(),
@@ -2033,6 +2108,7 @@ def add_room_reminder(config, room_id, body):
     reminder = {
         "id": "reminder_" + str(uuid.uuid4()),
         "room_id": room_id,
+        "trace_id": body.get("trace_id") or room.get("trace_id"),
         "agent_id": agent_id,
         "reason": body.get("reason") or "Scheduled room wake.",
         "due_at": time.time() + max(1, delay_seconds),
@@ -2058,7 +2134,7 @@ def reminder_loop(config):
                 room = get_room(config, reminder["room_id"])
                 reminder["status"] = "fired"
                 reminder["fired_at"] = now()
-                wake_room_agents(config, room, [reminder["agent_id"]], reminder.get("reason") or "Scheduled room wake.")
+                wake_room_agents(config, room, [reminder["agent_id"]], reminder.get("reason") or "Scheduled room wake.", reminder.get("trace_id") or room.get("trace_id"))
                 write_room(config, room)
         except Exception as exc:
             append_jsonl(config, "errors.jsonl", {"at": now(), "source": "reminder_loop", "error": str(exc)})
@@ -2118,6 +2194,72 @@ def read_snapshots(config, folder):
             out.append(json.loads(path.read_text(encoding="utf-8")))
         except Exception:
             continue
+    return out
+
+
+def trace_lookup(config, trace_id):
+    trace_id = sanitize_trace_id(trace_id)
+    if not trace_id:
+        err = Exception("trace_id is required")
+        err.status_code = 400
+        raise err
+    threads = [item for item in read_snapshots(config, "threads") if object_has_trace(item, trace_id)]
+    rooms = [item for item in read_snapshots(config, "rooms") if object_has_trace(item, trace_id)]
+    runs = [item for item in read_snapshots(config, "runs") if object_has_trace(item, trace_id)]
+    events = [item for item in read_jsonl(config, "events.jsonl") if object_has_trace(item, trace_id)]
+    result = {
+        "trace_id": trace_id,
+        "summary": {
+            "threads": len(threads),
+            "rooms": len(rooms),
+            "runs": len(runs),
+            "events": len(events),
+            "agents": sorted({item.get("agent_id") for item in runs if item.get("agent_id")}),
+            "nodes": sorted({item.get("node_id") for item in runs if item.get("node_id")}),
+            "statuses": sorted({item.get("status") for item in runs if item.get("status")}),
+        },
+        "threads": sorted(threads, key=lambda item: item.get("created_at") or ""),
+        "rooms": sorted(rooms, key=lambda item: item.get("created_at") or ""),
+        "runs": sorted(runs, key=lambda item: item.get("created_at") or ""),
+        "events": sorted(events, key=lambda item: item.get("at") or ""),
+    }
+    if not (threads or rooms or runs or events):
+        err = Exception("trace not found")
+        err.status_code = 404
+        raise err
+    return result
+
+
+def object_has_trace(value, trace_id):
+    if not isinstance(value, dict):
+        return False
+    if sanitize_trace_id(value.get("trace_id") or value.get("traceId")) == trace_id:
+        return True
+    for key in ("runs", "events", "messages", "reports", "conversation", "reminders"):
+        items = value.get(key)
+        if isinstance(items, list) and any(object_has_trace(item, trace_id) for item in items):
+            return True
+    blackboard = value.get("blackboard")
+    if isinstance(blackboard, dict):
+        for items in blackboard.values():
+            if isinstance(items, list) and any(object_has_trace(item, trace_id) for item in items):
+                return True
+    return False
+
+
+def read_jsonl(config, name):
+    path = Path(config["dataDir"]) / name
+    if not path.exists():
+        return []
+    out = []
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                continue
     return out
 
 

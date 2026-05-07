@@ -144,6 +144,10 @@ async function main() {
     await room(argv.slice(1));
     return;
   }
+  if (command === "trace" || command === "traces") {
+    await trace(argv.slice(1));
+    return;
+  }
   if (command === "status") {
     await status(argv.slice(1));
     return;
@@ -190,6 +194,8 @@ Usage:
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
+  agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus trace export trace_xxx --format markdown --out trace.md
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
 
 Gateway queries:
@@ -1396,6 +1402,7 @@ async function room(args) {
     const autoRotate = booleanOption(args, "--auto-rotate", "--no-auto-rotate");
     const body = {
       title: optionValue(args, "--title") || undefined,
+      trace_id: optionValue(args, "--trace-id") || optionValue(args, "--trace") || undefined,
       goal,
       agents,
       wakeAgents: wakeAgents.length ? wakeAgents : undefined,
@@ -1410,6 +1417,7 @@ async function room(args) {
     const singleAgent = optionValue(args, "--agent");
     const body = {
       reason: optionValue(args, "--reason") || optionValue(args, "--message") || "Manual wake.",
+      trace_id: optionValue(args, "--trace-id") || optionValue(args, "--trace") || undefined,
       ...(agents.length ? { agents } : {}),
       ...(singleAgent ? { agent: singleAgent } : {})
     };
@@ -1431,12 +1439,119 @@ async function room(args) {
     const body = {
       message,
       speaker: optionValue(args, "--speaker") || "user",
+      trace_id: optionValue(args, "--trace-id") || optionValue(args, "--trace") || undefined,
       ...(wake === undefined ? {} : { wake }),
       ...(agents.length ? { agents } : {})
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
   throw new Error("Usage: agent-bus room list|show|export|replay|create|wake|pause|message [options]");
+}
+
+async function trace(args) {
+  const action = args[0] || "show";
+  if (!["show", "get", "export", "dump"].includes(action)) {
+    throw new Error("Usage: agent-bus trace show|export TRACE_ID [--format json|markdown] [--out file]");
+  }
+  const traceId = requiredPositional(args, 1, "trace id");
+  const format = optionValue(args, "--format") || (args.includes("--json") ? "json" : action === "export" ? "json" : "human");
+  const result = await gatewayJson(`/traces/${pathPart(traceId)}`, { auth: true, args });
+  const out = optionValue(args, "--out") || optionValue(args, "-o") || "";
+  let text = "";
+  if (format === "json") {
+    text = `${JSON.stringify(result, null, 2)}\n`;
+  } else if (format === "markdown" || format === "md") {
+    text = formatTraceMarkdown(result);
+  } else if (format === "human" || format === "text") {
+    text = formatTraceHuman(result);
+  } else {
+    throw new Error("trace --format must be json, markdown, or human.");
+  }
+  if (out) {
+    fs.writeFileSync(path.resolve(out), text);
+    return;
+  }
+  process.stdout.write(text);
+}
+
+function formatTraceHuman(traceData) {
+  const s = traceData.summary || {};
+  const lines = [
+    `Trace ${traceData.trace_id}`,
+    `Threads ${s.threads || 0}, rooms ${s.rooms || 0}, runs ${s.runs || 0}, events ${s.events || 0}`,
+    `Agents: ${(s.agents || []).join(", ") || "-"}`,
+    `Nodes: ${(s.nodes || []).join(", ") || "-"}`,
+    `Statuses: ${(s.statuses || []).join(", ") || "-"}`
+  ];
+  if (traceData.runs?.length) {
+    lines.push("", "Runs:");
+    for (const run of traceData.runs) {
+      const target = run.room_id ? ` room=${run.room_id}` : ` thread=${run.thread_id || "-"}`;
+      lines.push(`- ${run.id}: ${run.status || "unknown"} agent=${run.agent_id || "-"} node=${run.node_id || "-"}${target}`);
+    }
+  }
+  if (traceData.events?.length) {
+    lines.push("", "Recent events:");
+    for (const event of traceData.events.slice(-10)) {
+      const stream = event.stream ? ` ${event.stream}` : "";
+      lines.push(`- ${event.at || "-"} ${event.type || "event"}${stream} run=${event.run_id || "-"}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatTraceMarkdown(traceData) {
+  const s = traceData.summary || {};
+  const lines = [
+    `# Agent Bus Trace ${traceData.trace_id}`,
+    "",
+    `- Threads: ${s.threads || 0}`,
+    `- Rooms: ${s.rooms || 0}`,
+    `- Runs: ${s.runs || 0}`,
+    `- Events: ${s.events || 0}`,
+    `- Agents: ${(s.agents || []).join(", ") || "-"}`,
+    `- Nodes: ${(s.nodes || []).join(", ") || "-"}`,
+    `- Statuses: ${(s.statuses || []).join(", ") || "-"}`,
+    ""
+  ];
+  if (traceData.rooms?.length) {
+    lines.push("## Rooms", "");
+    for (const room of traceData.rooms) {
+      lines.push(`- \`${room.id}\`: ${room.status || "unknown"}; agents=${(room.agents || []).join(", ") || "-"}; updated=${room.updated_at || "-"}`);
+    }
+    lines.push("");
+  }
+  if (traceData.threads?.length) {
+    lines.push("## Threads", "");
+    for (const thread of traceData.threads) {
+      lines.push(`- \`${thread.id}\`: ${thread.mode || "unknown"}; source=${thread.source || "-"}; created=${thread.created_at || "-"}`);
+    }
+    lines.push("");
+  }
+  if (traceData.runs?.length) {
+    lines.push("## Runs", "");
+    for (const run of traceData.runs) {
+      const target = run.room_id ? `room=\`${run.room_id}\`` : `thread=\`${run.thread_id || "-"}\``;
+      lines.push(`- \`${run.id}\`: ${run.status || "unknown"}; agent=${run.agent_id || "-"}; node=${run.node_id || "-"}; ${target}`);
+      if (run.summary) lines.push(`  - Summary: ${oneLine(run.summary, 240)}`);
+      if (run.stderr) lines.push(`  - Stderr: ${oneLine(run.stderr, 240)}`);
+    }
+    lines.push("");
+  }
+  if (traceData.events?.length) {
+    lines.push("## Events", "");
+    for (const event of traceData.events) {
+      const stream = event.stream ? `/${event.stream}` : "";
+      lines.push(`- ${event.at || "-"} \`${event.type || "event"}${stream}\` run=\`${event.run_id || "-"}\``);
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n")}`;
+}
+
+function oneLine(value, limit = 240) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }
 
 function redactRoomExport(value) {
@@ -1469,6 +1584,7 @@ function redactExportText(value) {
 function roomExportSummary(room) {
   return {
     id: room.id,
+    trace_id: room.trace_id,
     title: room.title,
     goal: room.goal,
     status: room.status,
@@ -1483,6 +1599,7 @@ function roomExportSummary(room) {
     },
     runs: (room.runs || []).map((run) => ({
       id: run.id,
+      trace_id: run.trace_id,
       agent_id: run.agent_id,
       status: run.status,
       exit_code: run.exit_code ?? null,

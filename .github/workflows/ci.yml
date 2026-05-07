@@ -35,6 +35,7 @@ jobs:
           node --check scripts/demo-issue-pr.mjs
           node --check scripts/compatibility-smoke.mjs
           node --check scripts/doctor-smoke.mjs
+          node --check scripts/adapter-preset-smoke.mjs
           node --check scripts/trace-smoke.mjs
           node --check scripts/central-restart-smoke.mjs
           node --check scripts/python-sdk-smoke.mjs
@@ -93,6 +94,8 @@ jobs:
         run: npm run demo:starter -- --json
       - name: Doctor smoke
         run: npm run doctor:smoke -- --json
+      - name: Adapter preset smoke
+        run: npm run adapter:preset:smoke -- --json
       - name: Trace smoke
         run: npm run trace:smoke -- --json
       - name: Central restart smoke

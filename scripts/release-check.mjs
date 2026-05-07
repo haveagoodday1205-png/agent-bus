@@ -20,6 +20,7 @@ const jsFiles = [
   "scripts/demo-issue-pr.mjs",
   "scripts/compatibility-smoke.mjs",
   "scripts/doctor-smoke.mjs",
+  "scripts/adapter-preset-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
   "scripts/python-sdk-smoke.mjs",
@@ -46,6 +47,7 @@ try {
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
+  step("adapter preset smoke", process.execPath, ["scripts/adapter-preset-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
   step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);

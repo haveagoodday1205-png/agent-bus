@@ -8,6 +8,7 @@ Agent Bus 0.5.0 turns the project from a working gateway prototype into a more c
 
 - Positions Agent Bus as a self-hosted remote-assistant CLI for making Codex, Hermes, OpenClaw, Ollama, shell adapters, and custom model gateways addressable across machines.
 - Documents shared AI-to-AI rooms, including durable room context, `@agent-id` delegation, `REPORT`, `BLACKBOARD`, `WAKE`, and `DONE` directives.
+- Adds `npm run demo:room`, a model-free first-run room demo that exports share-safe reports-only Markdown.
 - Clarifies trust boundaries for the central gateway, edge nodes, adapters, room participants, and public discovery metadata.
 - Adds contributor expectations for offline/model-free verification and user-facing documentation.
 
@@ -17,11 +18,13 @@ Agent Bus 0.5.0 turns the project from a working gateway prototype into a more c
 - Adds `npm run pack:check` to verify the packed npm artifact, reject private/build paths, extract the package, and run packaged CLI help.
 - Adds `npm run portable:check` to verify portable GitHub Release bundles, manifest hashes, checksums, launcher permissions, and bundled CLI help.
 - Adds a release checklist covering pre-tag checks, npm vs portable install paths, checksums, post-publish smoke tests, rollback, and release-note trust/safety wording.
+- Adds `npm run release:notes` and includes release-note generation in `npm run release:check`.
 
 ### Runtime hardening and first-run experience
 
 - Keeps the no-dependency Node.js and Python gateway/edge core.
 - Preserves room CLI, persisted room list, agent online/ping status, status CLI, offline smoke, discovery/manifest/rooms parity, package/bin/script fixes, OpenClaw context cap, and HOME-safe wrapper behavior.
+- Keeps room autonomy alive after long runs and adds stale-room autonomy smoke coverage for busy edge nodes.
 
 ### Verification expected before release
 

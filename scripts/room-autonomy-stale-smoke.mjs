@@ -107,7 +107,7 @@ async function main() {
       agents: [{ id: "threshold-status-agent", kind: "smoke", role: "worker" }]
     })
   });
-  await delay(1200);
+  await delay(1700);
   const thresholdStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token, "--stale-seconds", "1"]);
   assert(thresholdStatus.nodes?.some((node) => node.id === "threshold-status-node" && node.freshness?.startsWith("stale")), "CLI status --stale-seconds did not apply to node freshness");
   assert(thresholdStatus.agents?.some((agent) => agent.id === "threshold-status-agent" && agent.freshness?.startsWith("stale")), "CLI status --stale-seconds did not apply to agent freshness");
@@ -177,9 +177,14 @@ async function main() {
   assert(staleQueuedStatus.summary?.busy_agents === 1, "CLI status should ignore stale queued runs but keep the running planner busy");
   assert(orphanStatus?.activity === "idle", "CLI status marked a stale queued orphan as live queued work");
   assert(orphanStatus?.stale_queued_runs?.some((run) => run.room_id === orphanRoom.id && run.status === "queued"), "CLI status did not expose stale queued run metadata on the agent");
-  assert(staleQueuedStatus.rooms?.some((item) => item.id === orphanRoom.id && item.stale_queued_runs?.length === 1), "CLI status did not expose stale queued run metadata on the room");
+  const orphanRoomStatus = staleQueuedStatus.rooms?.find((item) => item.id === orphanRoom.id);
+  assert(orphanRoomStatus?.active_runs?.length === 0, "CLI status should exclude stale queued runs from room active_runs");
+  assert(orphanRoomStatus?.stale_queued_runs?.length === 1, "CLI status did not expose stale queued run metadata on the room");
   assert(staleQueuedStatus.warnings?.some((warning) => /Ignored 1 stale queued room run older than 1s; gateway queue is empty/.test(warning)), "CLI status did not warn about the ignored stale queued room run");
   assert(stillRunningPlanner?.activity === "running", "CLI status should not mark a genuine running planner as stale");
+  const staleQueuedHuman = await runCliText(["status", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
+  assert(staleQueuedHuman.includes("Warning: Ignored 1 stale queued room run older than 1s; gateway queue is empty"), "CLI human status did not warn about the ignored stale queued room run");
+  assert(staleQueuedHuman.includes("stale_queued="), "CLI human status did not label stale queued room runs");
 
   await delay(2200);
   const busyAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });

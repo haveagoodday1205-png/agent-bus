@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.3 - Quickstart demos and room recovery
+
+Agent Bus 0.5.3 brings the published npm CLI back in line with the latest GitHub quickstart and room reliability work.
+
+### First-run experience
+
+- Adds installed CLI demos via `agent-bus demo local` and `agent-bus demo room` so new users can verify Agent Bus without model calls.
+- Keeps `agent-bus smoke --offline --json` model-free and suitable for CI, sandboxes, and quota-safe checks.
+
+### Room reliability
+
+- Adds `agent-bus room pause` for recovering old or abandoned rooms while preserving room history, reports, and blackboard context.
+- Distinguishes stale queued room runs from live queued work in `agent-bus status`, so idle agents do not look busy because of old orphaned runs.
+- Adds stale queued room-run smoke coverage and exposes queued-run freshness controls for operators.
+
 ## 0.5.2 - npm package name accepted by registry
 
 Agent Bus 0.5.2 publishes the CLI as `agent-bus-cli` after npm rejected both the unscoped `agent-bus` name and the user-scoped package attempt. The installed executable remains `agent-bus`.

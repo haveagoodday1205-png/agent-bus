@@ -119,6 +119,16 @@ async function main() {
   assert(cliStatus.ok === true, "CLI status did not report ok=true");
   assert(cliStatus.summary?.online_agents === 1, "CLI status did not count the online smoke agent");
   assert(cliStatus.rooms?.some((item) => item.id === finalRoom.id), "CLI status did not include the smoke room");
+  const statusAgent = cliStatus.agents?.find((item) => item.id === "offline-agent");
+  assert(statusAgent?.freshness?.startsWith("online/fresh"), "CLI status JSON did not include derived freshness label");
+  assert(statusAgent?.activity === "idle", "CLI status JSON did not include derived idle activity label");
+  assert(statusAgent?.ping_label === "not configured", "CLI status JSON did not include derived ping label");
+  assert(statusAgent?.last_run_health === "ok", "CLI status JSON did not include derived last-run health");
+  const cliStatusText = await runCliText(["status", "--gateway", base, "--token", token]);
+  assert(cliStatusText.includes("node=online/fresh"), "CLI status human output did not include node freshness");
+  assert(cliStatusText.includes("activity=idle"), "CLI status human output did not include activity label");
+  assert(cliStatusText.includes("ping=not configured"), "CLI status human output did not include ping label");
+  assert(cliStatusText.includes("last_run=ok"), "CLI status human output did not include last-run health");
   const cliExport = await runCliText(["room", "export", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliExport.includes(`# Agent Bus Room: ${finalRoom.title}`), "CLI room export did not render markdown title");
   assert(cliExport.includes("offline smoke run completed"), "CLI room export did not include report content");

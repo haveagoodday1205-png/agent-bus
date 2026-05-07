@@ -67,7 +67,8 @@ Contributors can verify package and install paths before publishing or tagging:
 npm run release:check
 npm run pack:check
 npm run portable:check
-npm run smoke:npm-install   # installs agent-bus-cli@package.json version into a temp prefix
+npm run smoke:npm-install -- --package .  # pre-publish checkout install path
+npm run smoke:npm-install                 # post-publish registry version from package.json
 npm run bundle -- --archive
 ```
 

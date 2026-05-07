@@ -89,6 +89,15 @@ agent-bus smoke --offline
 
 This starts a temporary local Python gateway and edge node, creates a room, runs a fake command agent, and verifies `REPORT`, `BLACKBOARD`, and `DONE` directive handling without calling any model provider. Python 3.10+ is required for this command while room support lives in the Python gateway.
 
+Check gateway and room visibility with status:
+
+```bash
+agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ***
+agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token *** --json
+```
+
+Human output includes operator labels for node freshness (`online/fresh`, `stale`, or `unknown`), activity (`busy/running` or `idle`), ping reachability (`reachable`, `unreachable`, `unhealthy`, `not configured`, or `unknown`), and last-run health (`ok`, `failed`, `running`, or `unknown`). JSON output preserves the raw fields and also includes derived `freshness`, `activity`, `ping_label`, and `last_run_health` fields.
+
 Edge commands receive task metadata in environment variables:
 
 - `AGENT_MESSAGE`

@@ -1318,7 +1318,8 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
   const roomList = Array.isArray(rooms) ? rooms : [];
   const onlineAgents = agentList.filter((agent) => agent.status === "online");
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
-  const activeRooms = roomList.filter((room) => room.status === "active");
+  const activeRooms = roomList.filter((room) => room.status === "active" || room.status === "running");
+  const activeAgentIds = new Set(activeRooms.flatMap((room) => Array.isArray(room.agents) ? room.agents : []));
   return {
     ok: Boolean(health?.ok),
     health,
@@ -1330,16 +1331,31 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
       queued: health?.queued ?? 0,
       online_agents: onlineAgents.length,
       reachable_agents: reachableAgents.length,
+      busy_agents: agentList.filter((agent) => activeAgentIds.has(agent.id)).length,
       rooms: roomList.length,
       active_rooms: activeRooms.length
     },
-    agents: agentList.map((agent) => ({
-      id: agent.id,
-      status: agent.status || "unknown",
-      ping_status: agent.ping_status || agent.health?.ping_status || "unknown",
-      last_run_status: agent.last_run_status || agent.health?.last_run_status || null,
-      last_seen_at: agent.last_seen_at || agent.node_last_seen_at || null
-    })),
+    agents: agentList.map((agent) => {
+      const pingStatus = agent.ping_status || agent.health?.ping_status || "unknown";
+      const lastRunStatus = agent.last_run_status || agent.health?.last_run_status || null;
+      const lastSeenAt = agent.last_seen_at || agent.node_last_seen_at || null;
+      const activeRoomIds = activeRooms
+        .filter((room) => Array.isArray(room.agents) && room.agents.includes(agent.id))
+        .map((room) => room.id)
+        .filter(Boolean);
+      return {
+        id: agent.id,
+        status: agent.status || "unknown",
+        ping_status: pingStatus,
+        last_run_status: lastRunStatus,
+        last_seen_at: lastSeenAt,
+        freshness: statusFreshness(agent.status, lastSeenAt),
+        activity: activeRoomIds.length ? "busy/running" : "idle",
+        active_rooms: activeRoomIds,
+        ping_label: pingLabel(pingStatus),
+        last_run_health: lastRunHealth(lastRunStatus)
+      };
+    }),
     rooms: roomList.slice(0, 8).map((room) => ({
       id: room.id,
       status: room.status,
@@ -1352,18 +1368,47 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
   };
 }
 
+function statusFreshness(status, lastSeenAt) {
+  if (status !== "online") return status || "unknown";
+  if (!lastSeenAt) return "online/unknown";
+  const parsed = Date.parse(lastSeenAt);
+  if (!Number.isFinite(parsed)) return "online/unknown";
+  const ageSeconds = Math.max(0, Math.round((Date.now() - parsed) / 1000));
+  if (ageSeconds > 180) return `stale (${ageSeconds}s ago)`;
+  return `online/fresh (${ageSeconds}s ago)`;
+}
+
+function pingLabel(status) {
+  const value = String(status || "unknown").toLowerCase();
+  if (["reachable", "ok", "healthy", "success"].includes(value)) return "reachable";
+  if (["unreachable", "timeout", "connection_error", "dns_error", "error", "failed"].includes(value)) return "unreachable";
+  if (["unhealthy", "bad_status", "http_error"].includes(value)) return "unhealthy";
+  if (["not_configured", "none", "disabled"].includes(value)) return "not configured";
+  return "unknown";
+}
+
+function lastRunHealth(status) {
+  const value = String(status || "").toLowerCase();
+  if (!value) return "unknown";
+  if (["completed", "complete", "success", "succeeded", "ok"].includes(value)) return "ok";
+  if (["failed", "failure", "error", "errored", "timeout", "timed_out", "cancelled", "canceled", "nonzero"].includes(value)) return "failed";
+  if (["running", "active", "queued", "pending", "started"].includes(value)) return "running";
+  return "unknown";
+}
+
 function printStatus(result) {
   const s = result.summary || {};
   console.log(`Agent Bus status: ${result.ok ? "OK" : "WARN"}`);
-  console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, queued ${s.queued}`);
+  console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, queued ${s.queued}`);
   if (result.warnings?.length) {
     for (const warning of result.warnings) console.log(`Warning: ${warning}`);
   }
   if (result.agents.length) {
     console.log("\nAgents:");
     for (const agent of result.agents) {
-      const run = agent.last_run_status ? ` last_run=${agent.last_run_status}` : "";
-      console.log(`- ${agent.id}: ${agent.status}, ping=${agent.ping_status}${run}`);
+      const seen = agent.last_seen_at ? ` seen=${agent.last_seen_at}` : " seen=unknown";
+      const active = agent.active_rooms?.length ? ` rooms=${agent.active_rooms.join(",")}` : "";
+      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${seen}${active}`);
     }
   }
   if (result.rooms.length) {

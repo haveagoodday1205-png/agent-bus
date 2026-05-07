@@ -28,6 +28,8 @@ const messages = {
     broadcast: "broadcast",
     busy: "busy",
     capabilities: "Capabilities",
+    cacheScope: "Cache Scope",
+    cacheScopePlaceholder: "Optional stable key for agent:<id> calls",
     chatPlaceholder: "Send a message through /v1/chat/completions",
     checking: "checking",
     clear: "Clear",
@@ -141,6 +143,8 @@ const messages = {
     broadcast: "广播给全部",
     busy: "忙碌",
     capabilities: "能力",
+    cacheScope: "缓存范围",
+    cacheScopePlaceholder: "agent:<id> 调用的可选稳定键",
     chatPlaceholder: "通过 /v1/chat/completions 发送消息",
     checking: "检查中",
     clear: "清空",
@@ -692,10 +696,24 @@ function renderConversation(thread) {
 async function loadModels() {
   try {
     const data = await request("v1/models");
+    renderModelSuggestions(data.data || []);
     $("modelOutput").textContent = JSON.stringify(data, null, 2);
     logEvent(t("modelsLoaded", { count: data.data?.length || 0 }));
   } catch (err) {
     $("modelOutput").textContent = err.message;
+  }
+}
+
+function renderModelSuggestions(models) {
+  const list = $("modelSuggestions");
+  if (!list) return;
+  list.textContent = "";
+  for (const model of models) {
+    const id = String(model.id || "").trim();
+    if (!id) continue;
+    const option = document.createElement("option");
+    option.value = id;
+    list.append(option);
   }
 }
 
@@ -706,12 +724,17 @@ async function sendChat(event) {
   if (!prompt) return logEvent(t("modelPromptEmpty"));
   $("modelOutput").textContent = t("waiting");
   try {
+    const body = {
+      model,
+      messages: [{ role: "user", content: prompt }]
+    };
+    const cacheScope = $("cacheScopeInput").value.trim();
+    if (cacheScope) {
+      body.metadata = { agent_bus_cache_scope: cacheScope };
+    }
     const data = await request("v1/chat/completions", {
       method: "POST",
-      body: {
-        model,
-        messages: [{ role: "user", content: prompt }]
-      }
+      body
     });
     $("modelOutput").textContent = JSON.stringify(data, null, 2);
   } catch (err) {

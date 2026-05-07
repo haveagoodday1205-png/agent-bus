@@ -334,11 +334,12 @@ It exits non-zero only on hard failures. Warnings are meant to guide setup witho
 Run a central gateway in a container:
 
 ```bash
+cp .env.example .env
 agent-bus init central --out central.config.json
-docker compose up --build
+docker compose up -d --build
 ```
 
-The image uses the same CLI entrypoint:
+The Compose service runs the full Python central gateway by default and stores central data in the `agent-bus-data` Docker volume. The image still uses the same CLI entrypoint:
 
 ```bash
 docker run --rm agent-bus:local --help

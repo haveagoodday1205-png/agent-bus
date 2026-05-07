@@ -136,15 +136,18 @@ Run a central gateway:
 ```bash
 agent-bus init central --out central.config.json
 # edit token and modelRouter backends
-agent-bus serve --config central.config.json
+agent-bus serve --runtime python --config central.config.json
 ```
 
 Run with Docker:
 
 ```bash
+cp .env.example .env
 agent-bus init central --out central.config.json
-docker compose up --build
+docker compose up -d --build
 ```
+
+The central station does not need a database to start. It stores append-only JSONL logs and redacted JSON snapshots under `AGENT_BUS_DATA_DIR`; use a persistent disk or Docker volume and regular backups. Add SQLite/Postgres later when you need multi-instance writes, large trace queries, or hosted multi-tenant operations.
 
 Generate a long-running service:
 

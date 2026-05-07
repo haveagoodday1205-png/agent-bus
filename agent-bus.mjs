@@ -85,7 +85,7 @@ async function main() {
     return;
   }
   if (command === "serve") {
-    await runScript("central-gateway.mjs", ["serve", ...stripCliOnlyArgs(argv.slice(1))]);
+    await serve(argv.slice(1));
     return;
   }
   if (command === "connect") {
@@ -168,7 +168,7 @@ Usage:
   agent-bus init edge --auto [--gateway https://YOUR-DOMAIN/agent-bus] [--token ...] [--out edge.config.json]
   agent-bus detect [--json]
   agent-bus openclaw prepare [--config ~/.openclaw/openclaw.json] [--workspace ./openclaw-workspace] [--context-tokens 48000]
-  agent-bus serve --config central.config.json
+  agent-bus serve --config central.config.json [--runtime node|python]
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json [--json]
   agent-bus smoke --offline
@@ -230,6 +230,24 @@ function demo(args) {
     return runScript("scripts/demo-local.mjs", extra);
   }
   throw new Error("Usage: agent-bus demo starter|room|agent-model|issue|local");
+}
+
+async function serve(args) {
+  const runtime = String(optionValue(args, "--runtime") || process.env.AGENT_BUS_CENTRAL_RUNTIME || "node").toLowerCase();
+  const config = optionValue(args, "--config") || process.env.AGENT_BUS_CONFIG || "";
+  if (["python", "py", "full"].includes(runtime)) {
+    const python = process.env.AGENT_BUS_PYTHON || findExecutable("python3") || findExecutable("python") || "python3";
+    const env = {
+      ...process.env,
+      ...(config ? { AGENT_BUS_CONFIG: config } : {})
+    };
+    await runProcess("central_gateway.py", python, [materializeScript("central_gateway.py")], { env });
+    return;
+  }
+  if (!["node", "js"].includes(runtime)) {
+    throw new Error("--runtime must be node or python.");
+  }
+  await runScript("central-gateway.mjs", ["serve", ...stripCliOnlyArgs(removeOptionWithValue(args, "--runtime"))]);
 }
 
 function service(args) {
@@ -2463,11 +2481,16 @@ function printJson(value) {
 }
 
 function runScript(name, args) {
+  const script = materializeScript(name);
+  return runProcess(name, process.execPath, [script, ...args]);
+}
+
+function runProcess(name, commandPath, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const script = materializeScript(name);
-    const child = spawn(process.execPath, [script, ...args], {
+    const child = spawn(commandPath, args, {
       stdio: "inherit",
-      env: process.env
+      env: options.env || process.env,
+      windowsHide: true
     });
     let settled = false;
     const cleanupHandlers = [];
@@ -2524,6 +2547,18 @@ function pathPart(value) {
 
 function stripCliOnlyArgs(args) {
   return args;
+}
+
+function removeOptionWithValue(args, name) {
+  const out = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === name) {
+      i += 1;
+      continue;
+    }
+    out.push(args[i]);
+  }
+  return out;
 }
 
 function optionValue(args, name) {

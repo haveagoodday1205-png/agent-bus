@@ -2,6 +2,69 @@
 
 ## Central Gateway
 
+### Storage Decision
+
+Agent Bus does not require a database for the first central station. The central gateway is intentionally a single-writer service that stores:
+
+- append-only JSONL audit streams such as `runs.jsonl`, `events.jsonl`, `rooms.jsonl`, and `edge_tokens.jsonl`
+- redacted JSON snapshots under `threads/`, `runs/`, and `rooms/`
+
+For a self-hosted central gateway, this is simpler and easier to back up than introducing a database on day one. Use a persistent disk or Docker volume for `AGENT_BUS_DATA_DIR`, back it up regularly, and run only one central gateway process against that directory.
+
+Add a database later when one of these is true:
+
+- you need multiple central gateway replicas writing at the same time
+- trace and room queries become too large for file scans
+- you need SQL reports, retention policies, or high-volume audit exports
+- you need hosted multi-tenant isolation and operational tooling
+
+Recommended path:
+
+1. Now: JSONL + snapshots on a persistent volume.
+2. Next: optional SQLite index for traces, rooms, and runs while keeping JSONL as the audit log.
+3. Later: Postgres for multi-instance or hosted deployments.
+
+### Container Deployment
+
+For a public central station, prefer Docker Compose plus a reverse proxy. The bundled container now runs the full Python central gateway by default, because that runtime includes rooms, reminders, traces, pairing, and agent-backed models.
+
+```bash
+cp .env.example .env
+agent-bus init central --out central.config.json
+# Edit .env and central.config.json before exposing the service.
+docker compose up -d --build
+docker compose logs -f agent-bus-central
+```
+
+Important settings:
+
+- Put a long random `AGENT_BUS_TOKEN` in `.env`.
+- Keep `AGENT_BUS_DATA_DIR=/data/central` in the container.
+- Mount `/data` as a persistent volume.
+- Put HTTPS in front of port `8788`; do not expose plain HTTP directly to the public internet.
+- Back up the `agent-bus-data` volume.
+
+Useful container checks:
+
+```bash
+docker compose ps
+docker compose exec agent-bus-central node /app/agent-bus.mjs health --gateway http://127.0.0.1:8788
+docker compose exec agent-bus-central sh -lc 'find /data/central -maxdepth 2 -type f | sort | head'
+```
+
+Backup example:
+
+```bash
+docker run --rm \
+  -v YOUR_COMPOSE_PROJECT_agent-bus-data:/data:ro \
+  -v "$PWD/backups:/backup" \
+  alpine sh -lc 'tar czf /backup/agent-bus-data-$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /data .'
+```
+
+Use `docker volume ls | grep agent-bus-data` to find the exact volume name. Restore by stopping the gateway, extracting the backup into the volume, and starting the gateway again.
+
+### Local Process Deployment
+
 Run the gateway behind HTTPS:
 
 ```bash
@@ -21,11 +84,16 @@ AGENT_BUS_PORT=8788 \
 python3 central_gateway.py
 ```
 
-Docker:
+The Node gateway is still available for lightweight direct-thread deployments:
 
 ```bash
-agent-bus init central --out central.config.json
-docker compose up --build
+agent-bus serve --runtime node --config central.config.json
+```
+
+For full AI-to-AI rooms and traces, use the Python runtime:
+
+```bash
+agent-bus serve --runtime python --config central.config.json
 ```
 
 ## Edge Node

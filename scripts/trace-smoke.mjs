@@ -78,8 +78,8 @@ async function main() {
   }, null, 2)}\n`);
 
   step("Starting trace gateway");
-  const central = start(python, [path.join(root, "central_gateway.py")], {
-    AGENT_BUS_CONFIG: centralConfig,
+  const central = start(node, [path.join(root, "agent-bus.mjs"), "serve", "--runtime", "python", "--config", centralConfig], {
+    AGENT_BUS_PYTHON: python,
     AGENT_BUS_TOKEN: token,
     AGENT_BUS_HOST: "127.0.0.1",
     AGENT_BUS_PORT: String(port),

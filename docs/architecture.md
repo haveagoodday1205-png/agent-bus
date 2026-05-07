@@ -55,8 +55,10 @@ Admin tokens can use `agent:<id>` while `modelRouter.agentModels` is enabled. Sc
 
 ## Runtime Options
 
-- Node gateway: `central-gateway.mjs`
-- Python gateway: `central_gateway.py`
+- Python gateway: `central_gateway.py` for the full central station, including rooms, reminders, traces, pairing, and agent-backed models.
+- Node gateway: `central-gateway.mjs` for lightweight direct-thread deployments and Node-only environments.
 - Node edge: `edge-node.mjs`
 - Python edge: `edge_node.py`
 - Windows local proxy: `windows-openai-proxy.mjs`
+
+The Docker Compose deployment runs the Python gateway by default and stores JSONL logs plus snapshots on a persistent volume. A database is not required for a single central gateway process; add SQLite or Postgres later when query volume, multi-instance writes, or hosted multi-tenant operations require it.

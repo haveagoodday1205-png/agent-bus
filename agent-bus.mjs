@@ -173,7 +173,7 @@ Usage:
   agent-bus room export room_xxx --format json --out room.json --no-redact
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
-  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details]
+  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25]
 
 Gateway queries:
   agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
@@ -1384,7 +1384,7 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
 
 async function hydrateStatusRooms(rooms, args) {
   if (!Array.isArray(rooms) || args.includes("--no-room-details")) return rooms;
-  const limit = positiveIntegerOption(optionValue(args, "--room-detail-limit"), 8, 50);
+  const limit = positiveIntegerOption(optionValue(args, "--room-detail-limit"), 25, 100);
   const active = rooms.filter(isActiveRoom).filter((room) => room.id).slice(0, limit);
   if (!active.length) return rooms;
   const details = new Map();

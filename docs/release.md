@@ -30,6 +30,8 @@ npm run release:check
 
 `release:check` runs syntax checks, Python compile checks, offline room smoke, stale-room autonomy smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
 
+`compat:check` starts a temporary gateway and `examples/hello-agent` edge, then verifies registration, scoped edge discovery, `agent:<id>` Chat Completions, `agent:<id>` Responses, and room directive parsing without calling paid model providers. The CI workflow runs this smoke on Ubuntu, Windows, and macOS so adapter regressions are caught before release.
+
 `pack:check` is the npm artifact gate. It runs `npm pack`, validates required runtime/docs files, rejects private or build paths, checks the CLI entrypoint, extracts the package, and runs `agent-bus --help` from the packed artifact.
 
 `portable:check` is the GitHub Release bundle gate. It builds a temporary portable archive, validates the bundle manifest, SHA-256 values, launcher executable bit, forbidden paths, release manifest, `SHA256SUMS`, archive extraction, and bundled `agent-bus --help`.

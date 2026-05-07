@@ -8,6 +8,9 @@
 - [ ] `node --check central-gateway.mjs`
 - [ ] `node --check edge-node.mjs`
 - [ ] `python3 -m py_compile central_gateway.py edge_node.py`
+- [ ] `npm run protocol:check`
+- [ ] `npm run compat:check`
+- [ ] `npm run smoke:offline`
 - [ ] `node smoke-test.mjs`
 
 ## Security

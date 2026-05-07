@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
 
 jobs:
   test:
@@ -25,9 +28,11 @@ jobs:
           node --check windows-openai-proxy.mjs
           node --check scripts/demo-local.mjs
           node --check scripts/demo-room.mjs
+          node --check scripts/compatibility-smoke.mjs
           node --check scripts/make-portable-release.mjs
           node --check scripts/npm-install-smoke.mjs
           node --check scripts/offline-smoke.mjs
+          node --check scripts/verify-protocol-v1.mjs
           node --check scripts/release-check.mjs
           node --check scripts/release-notes.mjs
           node --check scripts/release-preflight.mjs
@@ -67,7 +72,35 @@ jobs:
         run: npm run pack:check
       - name: Portable release smoke
         run: npm run portable:check
+      - name: Protocol v1 check
+        run: npm run protocol:check
+      - name: Hello-agent compatibility smoke
+        run: npm run compat:check -- --json
       - name: Offline room smoke
         run: npm run smoke:offline -- --json
       - name: Full smoke
         run: npm run smoke
+
+  compatibility:
+    name: compatibility (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax checks
+        run: |
+          node --check scripts/compatibility-smoke.mjs
+          node --check examples/hello-agent/hello-agent.mjs
+      - name: Protocol v1 check
+        run: npm run protocol:check
+      - name: No-quota compatibility smoke
+        run: npm run compat:check -- --json

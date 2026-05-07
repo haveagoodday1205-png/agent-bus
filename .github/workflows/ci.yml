@@ -107,4 +107,6 @@ jobs:
       - name: Protocol v1 check
         run: npm run protocol:check
       - name: No-quota compatibility smoke
+        env:
+          AGENT_BUS_PYTHON: python
         run: npm run compat:check -- --json

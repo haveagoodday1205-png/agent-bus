@@ -9,6 +9,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
 const jsonOut = args.includes("--json");
 const procs = [];
+const childLogs = new WeakMap();
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-compat-smoke-"));
 
 main().catch((err) => {
@@ -84,7 +85,7 @@ async function main() {
     AGENT_BUS_PORT: String(gatewayPort),
     AGENT_BUS_DATA_DIR: path.join(tempDir, "data")
   });
-  await waitForJson(`${base}/health`);
+  await waitForJson(`${base}/health`, 30000, central);
 
   const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
     AGENT_BUS_CONFIG: edgeConfig
@@ -182,11 +183,29 @@ function start(command, commandArgs, env = {}) {
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
-  if (!jsonOut) {
-    child.stdout.on("data", (chunk) => process.stdout.write(chunk));
-    child.stderr.on("data", (chunk) => process.stderr.write(chunk));
-  }
+  const logs = {
+    command,
+    args: commandArgs,
+    stdout: "",
+    stderr: "",
+    error: "",
+    exit: null
+  };
+  childLogs.set(child, logs);
+  child.stdout.on("data", (chunk) => {
+    appendChildLog(logs, "stdout", chunk);
+    if (!jsonOut) process.stdout.write(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    appendChildLog(logs, "stderr", chunk);
+    if (!jsonOut) process.stderr.write(chunk);
+  });
+  child.on("error", (err) => {
+    logs.error = err.message || String(err);
+    if (!jsonOut) console.error(`${path.basename(command)} failed to start: ${logs.error}`);
+  });
   child.on("exit", (code, signal) => {
+    logs.exit = { code, signal };
     if (code && !child.killed && !jsonOut) {
       console.error(`${path.basename(command)} exited with ${code || signal}`);
     }
@@ -217,16 +236,31 @@ function findPython() {
   const candidates = [
     process.env.AGENT_BUS_PYTHON,
     process.env.PYTHON,
+    ...setupPythonPaths(),
     ...commonBundledPythonPaths(),
     process.platform === "win32" ? "python.exe" : "python3",
     "python3",
     "python"
   ].filter(Boolean);
-  for (const candidate of candidates) {
-    const result = spawnSync(candidate, ["--version"], { encoding: "utf8", windowsHide: true });
-    if (!result.error && result.status === 0) return candidate;
+  for (const candidate of unique(candidates)) {
+    const version = pythonVersion(candidate);
+    if (version && isPythonAtLeast(version, 3, 10)) return candidate;
   }
   return "";
+}
+
+function setupPythonPaths() {
+  const roots = [
+    process.env.pythonLocation,
+    process.env.Python_ROOT_DIR,
+    process.env.Python3_ROOT_DIR,
+    process.env.PYTHON_ROOT_DIR,
+    process.env.PYTHON3_ROOT_DIR
+  ].filter(Boolean);
+  const names = process.platform === "win32"
+    ? ["python.exe", "bin/python.exe", "bin/python3.exe"]
+    : ["bin/python3", "bin/python", "python3", "python"];
+  return roots.flatMap((rootDir) => names.map((name) => path.join(rootDir, name)));
 }
 
 function commonBundledPythonPaths() {
@@ -274,16 +308,23 @@ async function waitForRoomComplete(base, token, roomId, timeoutMs = 20000) {
   throw new Error(`Timed out waiting for room ${roomId}`);
 }
 
-async function waitForJson(url, timeoutMs = 10000) {
+async function waitForJson(url, timeoutMs = 10000, child = null) {
   const started = Date.now();
+  let lastError = null;
   while (Date.now() - started < timeoutMs) {
+    if (child && childFailed(child)) {
+      throw new Error(`Process exited before ${url} became ready.\n${formatChildDiagnostics(child)}`);
+    }
     try {
       return await requestJson(url);
-    } catch {
+    } catch (err) {
+      lastError = err;
       await delay(250);
     }
   }
-  throw new Error(`Timed out waiting for ${url}`);
+  const cause = lastError ? `; last request error: ${lastError.message || String(lastError)}` : "";
+  const diagnostics = child ? `\n${formatChildDiagnostics(child)}` : "";
+  throw new Error(`Timed out waiting for ${url}${cause}${diagnostics}`);
 }
 
 async function requestJson(url, options = {}) {
@@ -303,6 +344,63 @@ function assert(condition, message) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function appendChildLog(logs, key, chunk) {
+  const limit = 24000;
+  logs[key] += chunk.toString();
+  if (logs[key].length > limit) logs[key] = logs[key].slice(-limit);
+}
+
+function childFailed(child) {
+  const logs = childLogs.get(child);
+  return Boolean(logs?.error || child.exitCode !== null || child.signalCode);
+}
+
+function formatChildDiagnostics(child) {
+  const logs = childLogs.get(child);
+  if (!logs) return "child diagnostics unavailable";
+  const exit = logs.exit || {
+    code: child.exitCode,
+    signal: child.signalCode
+  };
+  const lines = [
+    `child: ${logs.command} ${logs.args.join(" ")}`,
+    `exit: code=${exit.code ?? "running"} signal=${exit.signal ?? ""}`
+  ];
+  if (logs.error) lines.push(`spawn_error: ${logs.error}`);
+  if (logs.stdout.trim()) lines.push(`stdout:\n${redactDiagnostics(logs.stdout.trim())}`);
+  if (logs.stderr.trim()) lines.push(`stderr:\n${redactDiagnostics(logs.stderr.trim())}`);
+  return lines.join("\n");
+}
+
+function pythonVersion(candidate) {
+  const result = spawnSync(candidate, ["--version"], { encoding: "utf8", windowsHide: true });
+  if (result.error || result.status !== 0) return null;
+  const text = `${result.stdout || ""}\n${result.stderr || ""}`;
+  const match = text.match(/Python\s+(\d+)\.(\d+)(?:\.(\d+))?/i);
+  if (!match) return null;
+  return {
+    command: candidate,
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3] || 0)
+  };
+}
+
+function isPythonAtLeast(version, major, minor) {
+  return version.major > major || (version.major === major && version.minor >= minor);
+}
+
+function unique(values) {
+  return [...new Set(values)];
+}
+
+function redactDiagnostics(text) {
+  return String(text || "")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "sk-[REDACTED]")
+    .replace(/\babt_edge_[A-Za-z0-9_-]{12,}\b/g, "abt_edge_[REDACTED]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, "Bearer [REDACTED]");
 }
 
 function waitForExit(child, timeoutMs = 5000) {

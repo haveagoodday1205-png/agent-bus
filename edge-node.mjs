@@ -66,6 +66,7 @@ function loadConfig(file) {
   config.defaultTimeoutMs ||= 600000;
   config.healthProbeIntervalMs ||= 60000;
   config.healthProbeTimeoutMs ||= 5000;
+  config.runHeartbeatIntervalMs ||= 30000;
   config.agents ||= [];
   config._agentHealth = {};
   config._nextHealthProbeAt = 0;
@@ -163,6 +164,7 @@ async function handleTask(config, task) {
 
   await event(config, task, { type: "run.started", agent_id: agent.id });
   const started = Date.now();
+  const heartbeat = startRunHeartbeat(config, task, agent);
   let result;
   try {
     result = await runAgent(config, agent, task);
@@ -173,10 +175,22 @@ async function handleTask(config, task) {
       stdout: "",
       stderr: err.stack || err.message || String(err)
     };
+  } finally {
+    clearInterval(heartbeat);
   }
   result.duration_ms = Date.now() - started;
   recordRunHealth(config, agent, result);
   await complete(config, task, result);
+}
+
+function startRunHeartbeat(config, task, agent) {
+  const intervalMs = Number(config.runHeartbeatIntervalMs || 0);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return null;
+  const timer = setInterval(() => {
+    event(config, task, { type: "run.heartbeat", agent_id: agent.id }).catch(() => {});
+  }, intervalMs);
+  timer.unref?.();
+  return timer;
 }
 
 async function runAgent(config, agent, task) {

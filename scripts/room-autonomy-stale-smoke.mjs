@@ -56,7 +56,7 @@ async function main() {
     ]
   }, null, 2)}\n`);
 
-  fs.writeFileSync(agentScript, `const id = process.env.AGENT_ID || "";\nif (id === "slow-planner") {\n  await new Promise((resolve) => setTimeout(resolve, 1500));\n  console.log("REPORT: Planner stayed busy past the node stale threshold.");\n  console.log("@slow-worker: Continue after the planner completed a long task.");\n} else {\n  console.log("REPORT: Worker received the delegated room task after the long planner run.");\n  console.log("DONE");\n}\n`);
+  fs.writeFileSync(agentScript, `const id = process.env.AGENT_ID || "";\nif (id === "slow-planner") {\n  await new Promise((resolve) => setTimeout(resolve, 2600));\n  console.log("REPORT: Planner stayed busy past the node stale threshold.");\n  console.log("@slow-worker: Continue after the planner completed a long task.");\n} else {\n  console.log("REPORT: Worker received the delegated room task after the long planner run.");\n  console.log("DONE");\n}\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "stale-room-edge",
@@ -65,6 +65,7 @@ async function main() {
     pollTimeoutMs: 500,
     idleDelayMs: 50,
     defaultTimeoutMs: 10000,
+    runHeartbeatIntervalMs: 400,
     agents: [
       {
         id: "slow-planner",
@@ -117,6 +118,12 @@ async function main() {
     })
   });
 
+  await waitForRunStatus(gateway, token, room.id, "slow-planner", "running");
+  await delay(1200);
+  const busyAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });
+  assert(busyAgents.some((agent) => agent.id === "slow-planner" && agent.status === "online"), "busy planner went stale while running");
+  assert(busyAgents.some((agent) => agent.id === "slow-worker" && agent.status === "online"), "busy edge node hid peer agents while running");
+
   const completed = await waitForRoomComplete(gateway, token, room.id);
   assert(completed.status === "completed", "room did not complete");
   assert(completed.runs?.some((run) => run.agent_id === "slow-worker" && run.status === "completed"), "delegated worker run did not complete");
@@ -153,6 +160,16 @@ function start(command, args, env = {}) {
   }
   procs.push(child);
   return child;
+}
+
+async function waitForRunStatus(gateway, token, roomId, agentId, status, timeoutMs = 10000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const room = await requestJson(`${gateway}/rooms/${encodeURIComponent(roomId)}`, { headers: authHeaders(token) });
+    if (room.runs?.some((run) => run.agent_id === agentId && run.status === status)) return room;
+    await delay(200);
+  }
+  throw new Error(`Timed out waiting for ${agentId} run status ${status}`);
 }
 
 async function waitForAgents(gateway, token, agentIds, timeoutMs = 10000) {

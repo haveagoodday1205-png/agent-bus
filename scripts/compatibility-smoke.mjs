@@ -3,6 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { AgentBusClient } from "../sdk/js/agent-bus-sdk.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -37,6 +38,8 @@ async function main() {
   const centralConfig = path.join(tempDir, "central.config.json");
   const edgeConfig = path.join(tempDir, "edge.config.json");
   const helloAgent = path.join(root, "examples", "hello-agent", "hello-agent.mjs");
+  const adminClient = new AgentBusClient({ gatewayUrl: base, token });
+  const edgeClient = new AgentBusClient({ gatewayUrl: base, token: edgeToken });
 
   fs.writeFileSync(centralConfig, `${JSON.stringify({
     host: "127.0.0.1",
@@ -91,55 +94,43 @@ async function main() {
   assert(agent.node_id === "compat-hello-node", "hello-agent advertised the wrong node_id");
   assert(agent.capabilities?.includes("protocol-v1"), "hello-agent did not advertise protocol-v1 capability");
 
-  const manifest = await requestJson(`${base}/v1/agent-bus/manifest`, { headers: authHeaders(edgeToken) });
+  const manifest = await edgeClient.manifest();
   assert(manifest.protocol === "agent-bus.v1", "edge token could not read the manifest");
   assert(manifest.agents?.some((item) => item.id === "hello-agent"), "manifest did not include hello-agent");
 
-  const models = await requestJson(`${base}/v1/models`, { headers: authHeaders(edgeToken) });
+  const models = await edgeClient.models();
   assert(models.data?.some((item) => item.id === "agent:hello-agent"), "edge model list did not include agent:hello-agent");
   assert(!models.data?.some((item) => item.id === "agent-bus-default"), "edge model list exposed backend aliases");
 
-  const chat = await requestJson(`${base}/v1/chat/completions`, {
-    method: "POST",
-    headers: authJsonHeaders(edgeToken),
-    body: JSON.stringify({
-      model: "agent:hello-agent",
-      messages: [{ role: "user", content: "Compatibility chat request from Agent Bus smoke." }]
-    })
-  });
+  const chat = await edgeClient.agentChat("hello-agent", [
+    { role: "user", content: "Compatibility chat request from Agent Bus smoke." }
+  ]);
   const chatContent = chat.choices?.[0]?.message?.content || "";
   assert(chat.model === "agent:hello-agent", "agent-backed chat completion returned the wrong model");
   assert(chat.agent_bus?.agent_id === "hello-agent", "agent-backed chat completion omitted agent_bus metadata");
   assert(/REPORT: hello-agent received/.test(chatContent), "agent-backed chat completion did not route through hello-agent");
   assert(/BLACKBOARD: hello-agent message_source=file/.test(chatContent), "agent-backed chat completion did not pass task through AGENT_MESSAGE_FILE");
 
-  const response = await requestJson(`${base}/v1/responses`, {
-    method: "POST",
-    headers: authJsonHeaders(edgeToken),
-    body: JSON.stringify({
-      model: "agent:hello-agent",
-      input: "Compatibility Responses request from Agent Bus smoke."
-    })
-  });
+  const response = await edgeClient.agentResponse(
+    "hello-agent",
+    "Compatibility Responses request from Agent Bus smoke."
+  );
   assert(response.status === "completed", "agent-backed response did not complete");
   assert(response.agent_bus?.agent_id === "hello-agent", "agent-backed response omitted agent_bus metadata");
   assert(/REPORT: hello-agent received/.test(response.output_text || ""), "agent-backed response did not route through hello-agent");
   assert(/BLACKBOARD: hello-agent message_source=file/.test(response.output_text || ""), "agent-backed response did not pass task through AGENT_MESSAGE_FILE");
 
-  const room = await requestJson(`${base}/rooms`, {
-    method: "POST",
-    headers: authJsonHeaders(token),
-    body: JSON.stringify({
-      title: "Hello agent compatibility smoke",
-      goal: "Verify examples/hello-agent can register, receive a room task, emit REPORT, update BLACKBOARD, and finish with DONE.",
-      agents: ["hello-agent"],
-      wakeAgents: ["hello-agent"],
-      auto_rotate: false,
-      max_steps: 1
-    })
+  const room = await adminClient.createRoom({
+    title: "Hello agent compatibility smoke",
+    goal: "Verify examples/hello-agent can register, receive a room task, emit REPORT, update BLACKBOARD, and finish with DONE.",
+    agents: ["hello-agent"],
+    wakeAgents: ["hello-agent"],
+    auto_rotate: false,
+    max_steps: 1
   });
 
   const finalRoom = await waitForRoomComplete(base, token, room.id);
+  const eventBundle = await adminClient.exportRoomEvents(finalRoom.id);
   const run = finalRoom.runs?.find((item) => item.agent_id === "hello-agent");
   assert(run?.status === "completed", "hello-agent run did not complete");
   assert(finalRoom.status === "completed", "hello-agent room did not complete");
@@ -150,6 +141,7 @@ async function main() {
   assert(finalRoom.reports?.some((item) => /hello-agent received/.test(item.content || "")), "gateway did not capture hello-agent REPORT");
   assert(finalRoom.blackboard?.notes?.some((item) => /hello-agent message_source=file/.test(item.content || "")), "gateway did not capture hello-agent message_source BLACKBOARD");
   assert(finalRoom.blackboard?.notes?.some((item) => /hello-agent last_message_preview=/.test(item.content || "")), "gateway did not capture hello-agent BLACKBOARD");
+  assert(eventBundle.events?.some((event) => event.type === "run.completed"), "SDK event export did not include run.completed");
 
   if (!edge.killed) edge.kill("SIGTERM");
   if (!central.killed) central.kill("SIGTERM");
@@ -166,6 +158,8 @@ async function main() {
     room_status: finalRoom.status,
     run_id: run.id,
     agent_id: "hello-agent",
+    sdk: "js",
+    event_count: eventBundle.events?.length || 0,
     openai_compatible: ["chat.completions", "responses"],
     reports: finalRoom.reports?.length || 0,
     blackboard_notes: finalRoom.blackboard?.notes?.length || 0
@@ -301,10 +295,6 @@ async function requestJson(url, options = {}) {
 
 function authHeaders(token) {
   return { authorization: `Bearer ${token}` };
-}
-
-function authJsonHeaders(token) {
-  return { ...authHeaders(token), "content-type": "application/json" };
 }
 
 function assert(condition, message) {

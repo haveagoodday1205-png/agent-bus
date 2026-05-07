@@ -22,6 +22,28 @@ agent-bus demo room
 
 Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows. Each release includes `SHA256SUMS` and a release manifest so users can verify what they downloaded. See `docs/release.md` for the npm-vs-portable install matrix and release verification checklist.
 
+## JS/TS SDK
+
+The npm package includes a zero-dependency ESM SDK for tools and demos that should call Agent Bus directly:
+
+```js
+import { AgentBusClient } from "agent-bus-cli/sdk/js/agent-bus-sdk.mjs";
+
+const bus = new AgentBusClient({
+  gatewayUrl: "https://YOUR-DOMAIN/agent-bus",
+  token: process.env.AGENT_BUS_TOKEN
+});
+
+await bus.createRoom({
+  title: "release check",
+  goal: "Check the release and report blockers.",
+  agents: ["hermes-hk", "openclaw-hk"],
+  wakeAgents: ["hermes-hk", "openclaw-hk"]
+});
+```
+
+See `sdk/js/README.md` for discovery, room, agent-backed model, and replay helpers.
+
 ## Remote Assistant Node
 
 On any machine that should receive work:

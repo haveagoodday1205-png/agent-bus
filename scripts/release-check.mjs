@@ -12,6 +12,7 @@ const jsFiles = [
   "edge-node.mjs",
   "mock-openai-backend.mjs",
   "windows-openai-proxy.mjs",
+  "sdk/js/agent-bus-sdk.mjs",
   "scripts/demo-local.mjs",
   "scripts/demo-room.mjs",
   "scripts/compatibility-smoke.mjs",

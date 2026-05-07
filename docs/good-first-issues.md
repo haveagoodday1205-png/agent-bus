@@ -22,6 +22,7 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 - Add an `agent-bus init edge --preset <tool>` preset for a local agent runtime you already use.
 - Include a minimal `runCommand`, safe default capabilities, and a `doctor` hint if the binary is missing.
 - Verify with a fake or local command adapter before documenting live-provider setup.
+- Add a small SDK example app that uses `sdk/js/AgentBusClient` to create a room, send a message, export events, and replay them.
 
 ## CLI and setup UX
 

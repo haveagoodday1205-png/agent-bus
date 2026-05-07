@@ -23,6 +23,12 @@ Minimal adapter example:
 examples/hello-agent/
 ```
 
+Minimal JS/TS client SDK:
+
+```text
+sdk/js/
+```
+
 Offline verification:
 
 ```bash

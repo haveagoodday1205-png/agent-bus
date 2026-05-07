@@ -30,6 +30,8 @@ Start with `docs/remote-assistant-quickstart.md` for the first remote node, `doc
 
 New adapter authors can start with `examples/hello-agent/`; it is a no-model, no-secret reference adapter that reads `AGENT_MESSAGE_FILE` and emits `REPORT`, `BLACKBOARD`, and `DONE`.
 
+JS/TS tool authors can start with `sdk/js/`; it is a zero-dependency ESM client for discovery, rooms, `agent:<id>` Chat Completions/Responses calls, and room event replay fixtures.
+
 ## Quick Start
 
 Run the local smoke test:
@@ -148,6 +150,20 @@ agent-bus smoke --offline
 ```
 
 This uses the local Python gateway for room support and makes no model-provider calls.
+
+Use the SDK from a Node.js or TypeScript project:
+
+```js
+import { AgentBusClient } from "agent-bus-cli/sdk/js/agent-bus-sdk.mjs";
+
+const bus = new AgentBusClient({
+  gatewayUrl: "https://YOUR-DOMAIN/agent-bus",
+  token: process.env.AGENT_BUS_TOKEN
+});
+
+const agents = await bus.agents();
+const response = await bus.agentResponse("hermes-hk", "Summarize current room status.");
+```
 
 For a first-run AI-to-AI room walkthrough, run:
 

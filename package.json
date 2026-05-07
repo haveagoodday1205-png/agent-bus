@@ -86,6 +86,7 @@
     "console/**",
     "docs/**",
     "examples/**",
+    "sdk/**",
     "scripts/**",
     "CHANGELOG.md",
     "CONTRIBUTING.md",

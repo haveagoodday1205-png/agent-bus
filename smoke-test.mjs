@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -256,7 +257,7 @@ async function main() {
   assert(chat.choices?.[0]?.message?.content === "mock: hello smoke test", "chat completion did not route through mock backend");
 
   const envDumpScript = path.join(tempDir, "env-dump.mjs");
-  fs.writeFileSync(envDumpScript, `import fs from "node:fs";\nconst keys = ["AGENT_MESSAGE", "AGENT_MESSAGE_FILE", "AGENT_MESSAGE_BYTES", "AGENT_RUN_ID", "AGENT_THREAD_ID", "AGENT_ROOM_ID", "AGENT_CACHE_KEY", "AGENT_SESSION_ID", "AGENT_ID", "EDGE_NODE_ID"];\nconst env = Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]));\nconst file = env.AGENT_MESSAGE_FILE;\nconst fileText = file && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";\nconsole.log(JSON.stringify({ ...env, AGENT_MESSAGE_FILE_TEXT_LEN: fileText.length, AGENT_MESSAGE_FILE_TEXT_PREFIX: fileText.slice(0, 64) }));\n`);
+  fs.writeFileSync(envDumpScript, `import fs from "node:fs";\nconst keys = ["AGENT_MESSAGE", "AGENT_MESSAGE_FILE", "AGENT_MESSAGE_BYTES", "AGENT_RUN_ID", "AGENT_THREAD_ID", "AGENT_ROOM_ID", "AGENT_CACHE_SCOPE", "AGENT_CACHE_KEY", "AGENT_SESSION_ID", "AGENT_ID", "EDGE_NODE_ID"];\nconst env = Object.fromEntries(keys.map((key) => [key, process.env[key] || ""]));\nconst file = env.AGENT_MESSAGE_FILE;\nconst fileText = file && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";\nconsole.log(JSON.stringify({ ...env, AGENT_MESSAGE_FILE_TEXT_LEN: fileText.length, AGENT_MESSAGE_FILE_TEXT_PREFIX: fileText.slice(0, 64) }));\n`);
   const edgeConfig = path.join(tempDir, "edge-env.config.json");
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "env-smoke-node",
@@ -295,6 +296,7 @@ async function main() {
     body: JSON.stringify({
       model: "agent:env-agent",
       messages: [{ role: "user", content: "agent model smoke" }],
+      prompt_cache_key: "agent-bus-smoke-cache",
       timeout_seconds: 10
     })
   });
@@ -304,6 +306,9 @@ async function main() {
   assert(agentChatEnv.AGENT_ID === "env-agent", "agent-backed chat did not execute the target edge agent");
   assert(agentChatEnv.AGENT_THREAD_ID === agentChat.agent_bus.thread_id, "agent-backed chat did not set the run thread env");
   assert(agentChatEnv.AGENT_MESSAGE_FILE_TEXT_PREFIX.includes("Agent Bus"), "agent-backed chat did not pass a model-replacement prompt");
+  const requestCacheScope = `request-cache-${crypto.createHash("sha256").update("agent-bus-smoke-cache").digest("hex").slice(0, 16)}`;
+  assert(agentChatEnv.AGENT_CACHE_SCOPE === requestCacheScope, "agent-backed chat did not preserve explicit cache scope");
+  assert(agentChatEnv.AGENT_CACHE_KEY === `agent-bus-env-agent-${requestCacheScope}`, "agent-backed chat did not use explicit cache scope");
   const agentResponse = await requestJson("http://127.0.0.1:8788/v1/responses", {
     method: "POST",
     headers: {
@@ -313,6 +318,7 @@ async function main() {
     body: JSON.stringify({
       model: "agent:env-agent",
       input: "agent response smoke",
+      metadata: { agent_bus_cache_scope: "agent-bus-smoke-cache" },
       timeout_seconds: 10
     })
   });
@@ -321,6 +327,8 @@ async function main() {
   const agentResponseEnv = JSON.parse(agentResponse.output_text || "{}");
   assert(agentResponseEnv.AGENT_ID === "env-agent", "agent-backed response did not execute the target edge agent");
   assert(agentResponseEnv.AGENT_THREAD_ID === agentResponse.agent_bus.thread_id, "agent-backed response did not set the run thread env");
+  assert(agentResponseEnv.AGENT_CACHE_SCOPE === requestCacheScope, "agent-backed response did not preserve explicit cache scope");
+  assert(agentResponseEnv.AGENT_CACHE_KEY === agentChatEnv.AGENT_CACHE_KEY, "agent-backed response did not reuse the explicit cache key");
   assert(agentResponse.output?.[0]?.content?.[0]?.type === "output_text", "agent-backed response did not return Responses-style output content");
   const envThread = await requestJson("http://127.0.0.1:8788/threads", {
     method: "POST",
@@ -345,6 +353,7 @@ async function main() {
   assert(envOut.AGENT_RUN_ID === envRun.id, "edge env did not include AGENT_RUN_ID");
   assert(envOut.AGENT_THREAD_ID === envThread.id, "edge env did not include AGENT_THREAD_ID");
   assert(envOut.AGENT_ROOM_ID === "", "edge env should leave AGENT_ROOM_ID empty for normal threads");
+  assert(envOut.AGENT_CACHE_SCOPE === "", "edge env should leave AGENT_CACHE_SCOPE empty without an explicit cache scope");
   assert(envOut.AGENT_ID === "env-agent", "edge env did not include AGENT_ID");
   assert(envOut.EDGE_NODE_ID === "env-smoke-node", "edge env did not include EDGE_NODE_ID");
   assert(/^agent-bus-env-agent-thread-[a-f0-9]{16}$/.test(envOut.AGENT_CACHE_KEY), "edge env did not build a compact stable AGENT_CACHE_KEY");

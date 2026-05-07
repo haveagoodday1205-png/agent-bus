@@ -142,12 +142,13 @@ Edge commands receive task metadata in environment variables:
 - `AGENT_RUN_ID`
 - `AGENT_THREAD_ID`
 - `AGENT_ROOM_ID`
+- `AGENT_CACHE_SCOPE`
 - `AGENT_CACHE_KEY`
 - `AGENT_SESSION_ID`
 - `AGENT_ID`
 - `EDGE_NODE_ID`
 
-`AGENT_CACHE_KEY` and `AGENT_SESSION_ID` are stable for the same agent inside the same room or thread, which lets adapters such as OpenClaw pass a durable session id to model gateways that support prompt caching.
+`AGENT_CACHE_KEY` and `AGENT_SESSION_ID` are stable for the same agent inside the same room or thread, which lets adapters such as OpenClaw pass a durable session id to model gateways that support prompt caching. For direct `agent:<id>` model calls, pass `prompt_cache_key`, `metadata.agent_bus_cache_scope`, or `agent_bus.cache_scope` when separate requests should share a cache/session scope; otherwise each one-off request uses its generated thread id.
 
 Adapters should prefer `AGENT_MESSAGE_FILE` when it is set. Very large tasks may leave `AGENT_MESSAGE` empty so the edge process can avoid OS environment-size limits.
 

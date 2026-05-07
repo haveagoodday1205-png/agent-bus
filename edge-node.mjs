@@ -344,8 +344,9 @@ const MAX_ENV_MESSAGE_BYTES = 24 * 1024;
 function agentRuntimeEnv(config, agent, task, messageFile = "") {
   const threadId = String(task.thread_id || "");
   const roomId = String(task.room_id || "");
+  const cacheScope = String(task.cache_scope || "");
   const message = String(task.message || "");
-  const cacheKey = agentCacheKey(agent, task, roomId || threadId || task.run_id || "");
+  const cacheKey = agentCacheKey(agent, task, cacheScope || roomId || threadId || task.run_id || "");
   return {
     AGENT_MESSAGE: envSafeMessage(message),
     AGENT_MESSAGE_FILE: messageFile,
@@ -353,6 +354,7 @@ function agentRuntimeEnv(config, agent, task, messageFile = "") {
     AGENT_RUN_ID: task.run_id || "",
     AGENT_THREAD_ID: threadId,
     AGENT_ROOM_ID: roomId,
+    AGENT_CACHE_SCOPE: cacheScope,
     AGENT_CACHE_KEY: cacheKey,
     AGENT_SESSION_ID: cacheKey,
     AGENT_ID: agent.id,

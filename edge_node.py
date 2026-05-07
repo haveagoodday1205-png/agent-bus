@@ -282,8 +282,9 @@ MAX_ENV_MESSAGE_BYTES = 24 * 1024
 def agent_runtime_env(config, agent, task, message_file=""):
     thread_id = str(task.get("thread_id") or "")
     room_id = str(task.get("room_id") or "")
+    cache_scope = str(task.get("cache_scope") or "")
     message = str(task.get("message", ""))
-    cache_key = agent_cache_key(agent, task, room_id or thread_id or task.get("run_id") or "")
+    cache_key = agent_cache_key(agent, task, cache_scope or room_id or thread_id or task.get("run_id") or "")
     return {
         "AGENT_MESSAGE": env_safe_message(message),
         "AGENT_MESSAGE_FILE": message_file,
@@ -291,6 +292,7 @@ def agent_runtime_env(config, agent, task, message_file=""):
         "AGENT_RUN_ID": task.get("run_id", ""),
         "AGENT_THREAD_ID": thread_id,
         "AGENT_ROOM_ID": room_id,
+        "AGENT_CACHE_SCOPE": cache_scope,
         "AGENT_CACHE_KEY": cache_key,
         "AGENT_SESSION_ID": cache_key,
         "AGENT_ID": agent["id"],

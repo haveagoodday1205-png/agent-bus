@@ -247,12 +247,13 @@ Each edge node sends:
 - `AGENT_RUN_ID`: run id
 - `AGENT_THREAD_ID`: stable thread id when the task belongs to a thread
 - `AGENT_ROOM_ID`: stable room id when the task belongs to a room
+- `AGENT_CACHE_SCOPE`: explicit request cache scope, when supplied by an agent-backed model call
 - `AGENT_CACHE_KEY`: stable per-agent cache key based on the room or thread id
 - `AGENT_SESSION_ID`: same value as `AGENT_CACHE_KEY`, for CLIs that expose session ids
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
 
-For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, falls back to a prompt file when the final OpenClaw CLI argument would be too large, and backs up oversized Agent Bus session files before a run so stale OpenClaw history does not balloon later room turns.
+For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, falls back to a prompt file when the final OpenClaw CLI argument would be too large, and backs up oversized Agent Bus session files before a run so stale OpenClaw history does not balloon later room turns. Agent-backed `/v1/chat/completions` and `/v1/responses` calls can also pass `prompt_cache_key` or `metadata.agent_bus_cache_scope` to reuse the same derived session across otherwise separate requests.
 
 When using OpenClaw, prepare a dedicated Agent Bus agent/workspace before connecting the edge node:
 

@@ -20,7 +20,8 @@ const room = await bus.createRoom({
 
 const response = await bus.agentResponse(
   "hermes-hk",
-  "Summarize the latest room status."
+  "Summarize the latest room status.",
+  { metadata: { agent_bus_cache_scope: "release-check-room" } }
 );
 ```
 
@@ -31,5 +32,7 @@ The SDK intentionally stays small:
 - rooms: `rooms()`, `room(id)`, `createRoom()`, `messageRoom()`, `wakeRoom()`
 - OpenAI-compatible agent calls: `agentChat()`, `agentResponse()`
 - replay fixtures: `exportRoomEvents()`, `roomEventBundle()`, `replayRoomEvents()`
+
+Pass `prompt_cache_key`, `metadata.agent_bus_cache_scope`, or `agent_bus.cache_scope` in `agentChat()`/`agentResponse()` options when otherwise separate model-replacement calls should reuse the same Agent Bus session/cache scope.
 
 It requires Node.js 20+ or any runtime with `fetch`.

@@ -756,6 +756,7 @@ def create_agent_chat_completion(config, body, agent_id):
     if not chat_messages_have_content(messages):
         return openai_error("messages are required for agent-backed chat completions", "invalid_request_error", "messages"), 400
     prompt = chat_messages_to_agent_prompt(messages)
+    cache_scope = agent_model_cache_scope(body)
 
     thread = {
         "id": "thread_" + str(uuid.uuid4()),
@@ -771,6 +772,8 @@ def create_agent_chat_completion(config, body, agent_id):
         },
         "runs": [],
     }
+    if cache_scope:
+        thread["cache_scope"] = cache_scope
     STATE["threads"][thread["id"]] = thread
     write_snapshot(config, "threads", thread["id"], thread)
     run = create_run(config, thread, agent, prompt)
@@ -830,6 +833,7 @@ def create_agent_response(config, body, agent_id):
         return openai_error("input is required for agent-backed responses", "invalid_request_error", "input"), 400
 
     prompt = response_input_to_agent_prompt(input_value, body.get("instructions"))
+    cache_scope = agent_model_cache_scope(body)
     thread = {
         "id": "thread_" + str(uuid.uuid4()),
         "created_at": now(),
@@ -844,6 +848,8 @@ def create_agent_response(config, body, agent_id):
         },
         "runs": [],
     }
+    if cache_scope:
+        thread["cache_scope"] = cache_scope
     STATE["threads"][thread["id"]] = thread
     write_snapshot(config, "threads", thread["id"], thread)
     run = create_run(config, thread, agent, prompt)
@@ -900,6 +906,29 @@ def agent_response_payload(agent_id, agent, thread, run, content, body):
             "node_id": agent.get("node_id"),
         },
     }
+
+
+def agent_model_cache_scope(body):
+    value = explicit_cache_scope_value(body)
+    if not value:
+        return ""
+    digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:16]
+    return "request-cache-" + digest
+
+
+def explicit_cache_scope_value(body):
+    metadata = body.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("agent_bus_cache_scope", "cache_scope"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+    agent_bus = body.get("agent_bus")
+    if isinstance(agent_bus, dict):
+        value = str(agent_bus.get("cache_scope") or "").strip()
+        if value:
+            return value
+    return str(body.get("prompt_cache_key") or "").strip()
 
 
 def chat_messages_to_agent_prompt(messages):
@@ -1684,6 +1713,8 @@ def create_run(config, thread, agent, message, turn_index=None):
         "stderr": "",
         "events": [],
     }
+    if thread.get("cache_scope"):
+        run["cache_scope"] = thread["cache_scope"]
     if turn_index is not None:
         run["turn_index"] = turn_index
     thread.setdefault("runs", []).append(run)
@@ -1696,6 +1727,7 @@ def create_run(config, thread, agent, message, turn_index=None):
         "thread_id": thread["id"],
         "agent_id": agent["id"],
         "message": message,
+        **({"cache_scope": run["cache_scope"]} if run.get("cache_scope") else {}),
         "created_at": run["created_at"],
     })
     return run

@@ -855,6 +855,7 @@ async function createAgentChatCompletion(config, body, agentId) {
     return { payload: openAiError("messages are required for agent-backed chat completions", "invalid_request_error", "messages"), status: 400 };
   }
   const prompt = chatMessagesToAgentPrompt(body.messages);
+  const cacheScope = agentModelCacheScope(body);
 
   const thread = {
     id: `thread_${crypto.randomUUID()}`,
@@ -870,6 +871,7 @@ async function createAgentChatCompletion(config, body, agentId) {
     },
     runs: []
   };
+  if (cacheScope) thread.cache_scope = cacheScope;
   state.threads.set(thread.id, thread);
   writeSnapshot(config, "threads", thread.id, thread);
   const run = createAgentRun(config, thread, agent, prompt);
@@ -937,6 +939,7 @@ async function createAgentResponse(config, body, agentId) {
   }
 
   const prompt = responseInputToAgentPrompt(body.input, body.instructions);
+  const cacheScope = agentModelCacheScope(body);
   const thread = {
     id: `thread_${crypto.randomUUID()}`,
     created_at: new Date().toISOString(),
@@ -951,6 +954,7 @@ async function createAgentResponse(config, body, agentId) {
     },
     runs: []
   };
+  if (cacheScope) thread.cache_scope = cacheScope;
   state.threads.set(thread.id, thread);
   writeSnapshot(config, "threads", thread.id, thread);
   const run = createAgentRun(config, thread, agent, prompt);
@@ -1011,6 +1015,24 @@ function agentResponsePayload(agentId, agent, thread, run, content, body) {
       node_id: agent.node_id
     }
   };
+}
+
+function agentModelCacheScope(body = {}) {
+  const value = explicitCacheScopeValue(body);
+  if (!value) return "";
+  return `request-cache-${crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 16)}`;
+}
+
+function explicitCacheScopeValue(body = {}) {
+  if (body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)) {
+    const value = String(body.metadata.agent_bus_cache_scope || body.metadata.cache_scope || "").trim();
+    if (value) return value;
+  }
+  if (body.agent_bus && typeof body.agent_bus === "object" && !Array.isArray(body.agent_bus)) {
+    const value = String(body.agent_bus.cache_scope || "").trim();
+    if (value) return value;
+  }
+  return String(body.prompt_cache_key || "").trim();
 }
 
 function chatMessagesToAgentPrompt(messages) {
@@ -1249,6 +1271,7 @@ function createAgentRun(config, thread, agent, message) {
     stderr: "",
     events: []
   };
+  if (thread.cache_scope) run.cache_scope = thread.cache_scope;
   thread.runs.push(run);
   state.runs.set(run.id, run);
   writeSnapshot(config, "runs", run.id, run);
@@ -1259,6 +1282,7 @@ function createAgentRun(config, thread, agent, message) {
     thread_id: thread.id,
     agent_id: agent.id,
     message,
+    ...(run.cache_scope ? { cache_scope: run.cache_scope } : {}),
     created_at: run.created_at
   });
   return run;

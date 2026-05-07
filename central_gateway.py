@@ -250,7 +250,13 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if path == "/.well-known/agent-bus.json":
                 return self.json(agent_bus_well_known())
-            if path == "/console" or path.startswith("/console/"):
+            if path == "/console":
+                self.send_response(308)
+                self.send_header("location", self.path.rstrip("/") + "/")
+                self.send_header("cache-control", "no-store")
+                self.end_headers()
+                return
+            if path.startswith("/console/"):
                 return self.console_asset(path)
             if path == "/agents":
                 self.require_auth(("admin", "edge"))

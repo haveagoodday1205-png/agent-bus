@@ -1,5 +1,6 @@
 const state = {
   agents: [],
+  rooms: [],
   selectedAgents: new Set(),
   currentThreadId: null,
   currentThread: null,
@@ -20,8 +21,12 @@ const messages = {
     agentsLoaded: "loaded {count} agents",
     agentsLoadFailed: "Could not load agents: {message}",
     agentsLogFailed: "agents failed: {message}",
+    activeRooms: "Active Rooms",
+    activeRuns: "active runs",
+    activity: "Activity",
     autonomousRoom: "Autonomous Room",
     broadcast: "broadcast",
+    busy: "busy",
     capabilities: "Capabilities",
     chatPlaceholder: "Send a message through /v1/chat/completions",
     checking: "checking",
@@ -33,6 +38,8 @@ const messages = {
     createRoom: "Create Room",
     goal: "Goal",
     healthFailed: "health failed: {message}",
+    health: "Health",
+    idle: "idle",
     kind: "Kind",
     language: "Language",
     message: "Message",
@@ -50,16 +57,21 @@ const messages = {
     noThread: "No thread selected.",
     node: "Node",
     nodes: "Nodes",
+    onlineAgents: "Online",
     offline: "offline",
     online: "online",
     orchestrate: "orchestrate",
     completed: "completed",
     failed: "failed",
+    finishing: "finishing",
     running: "running",
     prompt: "Prompt",
     queued: "Queued",
     refresh: "Refresh",
     reload: "Reload",
+    reachable: "reachable",
+    recentRooms: "Recent Rooms",
+    reports: "reports",
     response: "Response",
     role: "Role",
     route: "Route",
@@ -71,8 +83,16 @@ const messages = {
     roomFailed: "room failed: {message}",
     roomGoalEmpty: "room goal is empty",
     roomGoalPlaceholder: "Describe the goal for the autonomous agent room",
+    roomMessage: "Room Message",
+    roomMessageEmpty: "room message is empty",
+    roomMessageFailed: "room message failed: {message}",
+    roomMessagePlaceholder: "Send a message into the selected room",
+    roomMessageSent: "room message sent",
     roomLoadFailed: "room load failed: {message}",
     roomTimeline: "Room Timeline",
+    pauseRoom: "Pause",
+    pauseRoomFailed: "pause failed: {message}",
+    paused: "paused",
     rounds: "Rounds",
     runTask: "Run Task",
     save: "Save",
@@ -80,6 +100,7 @@ const messages = {
     selectedAgents: "selected agents",
     send: "Send",
     stopPolling: "Stop Polling",
+    status: "Status",
     task: "Task",
     taskFailed: "task failed: {message}",
     taskMessageEmpty: "task message is empty",
@@ -97,6 +118,8 @@ const messages = {
     tokenSavedLog: "token saved; refreshing authorized data",
     tokenSaving: "Saved. Loading agents...",
     unknown: "unknown",
+    unreachable: "unreachable",
+    not_configured: "not configured",
     waiting: "waiting..."
     ,
     wake: "Wake",
@@ -111,8 +134,12 @@ const messages = {
     agentsLoaded: "已加载 {count} 个智能体",
     agentsLoadFailed: "无法加载智能体：{message}",
     agentsLogFailed: "智能体加载失败：{message}",
+    activeRooms: "活跃房间",
+    activeRuns: "活跃运行",
+    activity: "活动",
     autonomousRoom: "自主房间",
     broadcast: "广播给全部",
+    busy: "忙碌",
     capabilities: "能力",
     chatPlaceholder: "通过 /v1/chat/completions 发送消息",
     checking: "检查中",
@@ -124,6 +151,8 @@ const messages = {
     createRoom: "创建房间",
     goal: "目标",
     healthFailed: "健康检查失败：{message}",
+    health: "健康",
+    idle: "空闲",
     kind: "类型",
     language: "语言",
     message: "消息",
@@ -141,16 +170,21 @@ const messages = {
     noThread: "尚未选择线程。",
     node: "节点",
     nodes: "节点",
+    onlineAgents: "在线",
     offline: "离线",
     online: "在线",
     orchestrate: "自动编排",
     completed: "已完成",
     failed: "失败",
+    finishing: "收尾中",
     running: "运行中",
     prompt: "提示词",
     queued: "队列",
     refresh: "刷新",
     reload: "重新加载",
+    reachable: "可达",
+    recentRooms: "最近房间",
+    reports: "报告",
     response: "响应",
     role: "角色",
     route: "路由",
@@ -162,8 +196,16 @@ const messages = {
     roomFailed: "房间创建失败：{message}",
     roomGoalEmpty: "房间目标不能为空",
     roomGoalPlaceholder: "描述这个自主 agent 房间要完成的目标",
+    roomMessage: "房间消息",
+    roomMessageEmpty: "房间消息不能为空",
+    roomMessageFailed: "房间消息发送失败：{message}",
+    roomMessagePlaceholder: "向当前选中的房间发送消息",
+    roomMessageSent: "房间消息已发送",
     roomLoadFailed: "房间加载失败：{message}",
     roomTimeline: "房间时间线",
+    pauseRoom: "暂停",
+    pauseRoomFailed: "暂停失败：{message}",
+    paused: "已暂停",
     rounds: "轮数",
     runTask: "运行任务",
     save: "保存",
@@ -171,6 +213,7 @@ const messages = {
     selectedAgents: "选中的智能体",
     send: "发送",
     stopPolling: "停止轮询",
+    status: "状态",
     task: "任务",
     taskFailed: "任务失败：{message}",
     taskMessageEmpty: "任务消息不能为空",
@@ -188,6 +231,8 @@ const messages = {
     tokenSavedLog: "token 已保存，正在刷新授权数据",
     tokenSaving: "已保存，正在加载智能体...",
     unknown: "未知",
+    unreachable: "不可达",
+    not_configured: "未配置",
     waiting: "等待中...",
     wake: "唤醒",
     wakeAll: "全部选中",
@@ -213,7 +258,6 @@ document.querySelectorAll(".tab").forEach((tab) => {
   localStorage.setItem("agentBusLanguage", state.lang);
   applyLanguage();
   renderAgents();
-  if (state.currentThread) renderThread(state.currentThread);
 }));
 $("saveTokenButton").addEventListener("click", saveToken);
 $("tokenInput").addEventListener("keydown", (event) => {
@@ -224,6 +268,8 @@ $("loadAgentsButton").addEventListener("click", loadAgents);
 $("loadRoomsButton").addEventListener("click", loadRooms);
 $("roomForm").addEventListener("submit", createRoom);
 $("wakeRoomButton").addEventListener("click", wakeCurrentRoom);
+$("pauseRoomButton").addEventListener("click", pauseCurrentRoom);
+$("roomMessageForm").addEventListener("submit", sendRoomMessage);
 $("routeButton").addEventListener("click", routeTask);
 $("taskForm").addEventListener("submit", submitTask);
 $("taskMode").addEventListener("change", syncTaskMode);
@@ -246,6 +292,7 @@ function activateTab(name) {
 async function refreshAll() {
   await loadHealth();
   await loadAgents();
+  await loadRooms();
 }
 
 async function saveToken() {
@@ -272,6 +319,7 @@ async function loadHealth() {
     $("nodeCount").textContent = data.nodes ?? "-";
     $("agentCount").textContent = data.agents ?? "-";
     $("queuedCount").textContent = data.queued ?? "-";
+    if (!state.agents.length) $("onlineAgentCount").textContent = data.agents ?? "-";
   } catch (err) {
     setGatewayStatus("offline", "status failed");
     logEvent(t("healthFailed", { message: err.message }));
@@ -281,8 +329,15 @@ async function loadHealth() {
 async function loadAgents() {
   try {
     state.agents = await request("agents");
-    for (const agent of state.agents) state.selectedAgents.add(agent.id);
+    const knownIds = new Set(state.agents.map((agent) => agent.id));
+    for (const selected of [...state.selectedAgents]) {
+      if (!knownIds.has(selected)) state.selectedAgents.delete(selected);
+    }
+    if (!state.selectedAgents.size) {
+      for (const agent of state.agents) state.selectedAgents.add(agent.id);
+    }
     renderAgents();
+    updateDashboardStats();
     logEvent(t("agentsLoaded", { count: state.agents.length }));
   } catch (err) {
     renderAuthError(err);
@@ -297,11 +352,16 @@ function renderAgents() {
     return;
   }
   for (const agent of state.agents) {
+    const ping = agent.ping_status || "unknown";
+    const lastRun = agent.last_run_status || "";
+    const activity = agentActivity(agent);
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input type="checkbox" data-agent="${escapeHtml(agent.id)}" ${state.selectedAgents.has(agent.id) ? "checked" : ""}></td>
-      <td><div class="agent-name">${escapeHtml(agent.id)}</div><span class="status ${escapeHtml(agent.node_status || "")}">${escapeHtml(statusText(agent.node_status || "unknown"))}</span></td>
+      <td><div class="agent-name">${escapeHtml(agent.id)}</div><span class="status ${escapeHtml(agent.status || agent.node_status || "")}">${escapeHtml(statusText(agent.status || agent.node_status || "unknown"))}</span></td>
       <td>${escapeHtml(agent.node_id || "-")}</td>
+      <td><span class="status ${escapeHtml(ping)}">${escapeHtml(statusText(ping))}</span>${lastRun ? `<div class="muted">${escapeHtml(statusText(lastRun))}</div>` : ""}</td>
+      <td><span class="status ${escapeHtml(activity)}">${escapeHtml(statusText(activity))}</span></td>
       <td>${escapeHtml(agent.kind || "-")}</td>
       <td>${escapeHtml(agent.role || "-")}</td>
       <td>${(agent.capabilities || []).map((cap) => `<span class="pill">${escapeHtml(cap)}</span>`).join("")}</td>
@@ -318,7 +378,7 @@ function renderAgents() {
 function rowMessage(message) {
   const tr = document.createElement("tr");
   const td = document.createElement("td");
-  td.colSpan = 7;
+  td.colSpan = 9;
   td.className = "muted";
   td.textContent = message;
   tr.append(td);
@@ -382,13 +442,50 @@ function stopPolling() {
 async function loadRooms() {
   try {
     const rooms = await request("rooms");
-    logEvent(`rooms: ${rooms.map((room) => room.id).join(", ") || "-"}`);
+    state.rooms = [...rooms].sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
+    renderRooms();
+    updateDashboardStats();
     if (!state.currentRoomId && rooms[0]) {
-      state.currentRoomId = rooms[0].id;
-      await loadRoom(rooms[0].id);
+      state.currentRoomId = state.rooms[0].id;
+      await loadRoom(state.rooms[0].id);
     }
   } catch (err) {
     logEvent(t("roomLoadFailed", { message: err.message }));
+  }
+}
+
+function renderRooms() {
+  const list = $("roomList");
+  list.textContent = "";
+  $("roomListCount").textContent = String(state.rooms.length || "-");
+  if (!state.rooms.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = t("noRoom");
+    list.append(empty);
+    return;
+  }
+  for (const room of state.rooms.slice(0, 40)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `room-list-item ${room.id === state.currentRoomId ? "active" : ""}`;
+    const activeRuns = (room.runs || []).filter((run) => ["queued", "running"].includes(run.status)).length;
+    button.innerHTML = `
+      <div class="room-list-title">
+        <strong>${escapeHtml(room.title || room.id)}</strong>
+        <span class="status ${escapeHtml(room.status || "unknown")}">${escapeHtml(statusText(room.status || "unknown"))}</span>
+      </div>
+      <div class="room-list-meta">
+        <span>${escapeHtml((room.agents || []).join(", ") || "-")}</span>
+        <span>${escapeHtml(room.updated_at || room.created_at || "")}</span>
+      </div>
+      <div class="room-list-meta">
+        <span>${escapeHtml((room.reports || []).length)} ${escapeHtml(t("reports"))}</span>
+        <span>${escapeHtml(activeRuns)} ${escapeHtml(t("activeRuns"))}</span>
+      </div>
+    `;
+    button.addEventListener("click", () => loadRoom(room.id));
+    list.append(button);
   }
 }
 
@@ -406,6 +503,8 @@ async function createRoom(event) {
     };
     const room = await request("rooms", { method: "POST", body });
     state.currentRoomId = room.id;
+    state.rooms = [room, ...state.rooms.filter((item) => item.id !== room.id)];
+    renderRooms();
     renderRoom(room);
     startRoomPolling(room.id);
     logEvent(t("roomCreated", { id: room.id }));
@@ -418,10 +517,45 @@ async function wakeCurrentRoom() {
   if (!state.currentRoomId) return;
   try {
     const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/wake`, { method: "POST", body: {} });
+    upsertRoom(room);
     renderRoom(room);
     startRoomPolling(room.id);
   } catch (err) {
     logEvent(t("wakeRoomFailed", { message: err.message }));
+  }
+}
+
+async function pauseCurrentRoom() {
+  if (!state.currentRoomId) return;
+  try {
+    const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/pause`, {
+      method: "POST",
+      body: { reason: "Paused from Agent Bus Console." }
+    });
+    upsertRoom(room);
+    renderRoom(room);
+  } catch (err) {
+    logEvent(t("pauseRoomFailed", { message: err.message }));
+  }
+}
+
+async function sendRoomMessage(event) {
+  event.preventDefault();
+  if (!state.currentRoomId) return;
+  const message = $("roomMessage").value.trim();
+  if (!message) return logEvent(t("roomMessageEmpty"));
+  try {
+    const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/messages`, {
+      method: "POST",
+      body: { message, speaker: "user", wake: true }
+    });
+    $("roomMessage").value = "";
+    upsertRoom(room);
+    renderRoom(room);
+    startRoomPolling(room.id);
+    logEvent(t("roomMessageSent"));
+  } catch (err) {
+    logEvent(t("roomMessageFailed", { message: err.message }));
   }
 }
 
@@ -447,10 +581,22 @@ async function loadRoom(roomId) {
 function renderRoom(room) {
   state.currentRoom = room;
   state.currentRoomId = room.id;
+  upsertRoom(room);
   $("roomSummary").removeAttribute("data-i18n");
-  $("roomSummary").textContent = `${room.id} | ${room.status} | ${(room.agents || []).join(", ")} | ${room.autonomy?.steps || 0}/${room.autonomy?.max_steps || 0}`;
-  const messages = $("roomMessages");
-  messages.textContent = "";
+  $("roomSummary").innerHTML = `
+    <div class="summary-grid">
+      <div><span class="metric-label">ID</span><strong>${escapeHtml(room.id)}</strong></div>
+      <div><span class="metric-label">${escapeHtml(t("status"))}</span><strong class="status ${escapeHtml(room.status || "unknown")}">${escapeHtml(statusText(room.status || "unknown"))}</strong></div>
+      <div><span class="metric-label">${escapeHtml(t("agents"))}</span><strong>${escapeHtml((room.agents || []).length)}</strong></div>
+      <div><span class="metric-label">${escapeHtml(t("maxSteps"))}</span><strong>${escapeHtml(room.autonomy?.steps || 0)}/${escapeHtml(room.autonomy?.max_steps || 0)}</strong></div>
+    </div>
+  `;
+  $("pauseRoomButton").disabled = !room.id || ["paused", "completed"].includes(room.status);
+  $("wakeRoomButton").disabled = !room.id || room.status === "paused";
+  renderRooms();
+  updateDashboardStats();
+  const messageList = $("roomMessages");
+  messageList.textContent = "";
   for (const item of room.messages || []) {
     const node = document.createElement("div");
     node.className = `run-item conversation-item ${item.speaker === "user" ? "user" : ""}`;
@@ -461,10 +607,16 @@ function renderRoom(room) {
       </div>
       <pre class="output">${escapeHtml((item.content || "").trim())}</pre>
     `;
-    messages.append(node);
+    messageList.append(node);
   }
   const reports = $("roomReports");
   reports.textContent = "";
+  if ((room.reports || []).length) {
+    const title = document.createElement("div");
+    title.className = "subhead";
+    title.textContent = t("reports");
+    reports.append(title);
+  }
   for (const report of room.reports || []) {
     const node = document.createElement("div");
     node.className = "run-item";
@@ -477,6 +629,12 @@ function renderRoom(room) {
     `;
     reports.append(node);
   }
+}
+
+function upsertRoom(room) {
+  if (!room?.id) return;
+  state.rooms = [room, ...state.rooms.filter((item) => item.id !== room.id)]
+    .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
 }
 
 async function loadThread(threadId) {
@@ -631,6 +789,9 @@ function applyLanguage() {
   if (state.tokenStatusKey) setTokenStatus(state.tokenStatusKey, state.tokenStatusClass);
   const gatewayKey = $("gatewayStatus").dataset.statusKey;
   if (gatewayKey) $("gatewayStatus").textContent = t(gatewayKey);
+  renderRooms();
+  if (state.currentRoom) renderRoom(state.currentRoom);
+  if (state.currentThread) renderThread(state.currentThread);
 }
 
 function t(key, values = {}) {
@@ -642,7 +803,29 @@ function t(key, values = {}) {
 }
 
 function statusText(status) {
-  return t(status) || status;
+  const key = String(status || "unknown").replaceAll("-", "_");
+  return t(key) || status;
+}
+
+function agentActivity(agent) {
+  const activeRuns = agent.active_runs || [];
+  if (activeRuns.length || agent.current_run) return "busy";
+  const lastStatus = String(agent.last_run_status || "").toLowerCase();
+  if (["queued", "running"].includes(lastStatus)) return lastStatus;
+  return "idle";
+}
+
+function updateDashboardStats() {
+  if (state.agents.length) {
+    $("agentCount").textContent = state.agents.length;
+    $("onlineAgentCount").textContent = state.agents.filter((agent) => (agent.status || agent.node_status) === "online").length;
+  }
+  if (state.rooms.length) {
+    const activeRooms = state.rooms.filter((room) => ["active", "running", "finishing"].includes(String(room.status || "").toLowerCase())).length;
+    $("activeRoomCount").textContent = activeRooms;
+  } else {
+    $("activeRoomCount").textContent = "-";
+  }
 }
 
 function syncTaskMode() {

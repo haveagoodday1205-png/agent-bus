@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260506-rooms2" />
+    <link rel="stylesheet" href="./styles.css?v=20260507-console1" />
   </head>
   <body>
     <header class="topbar">
@@ -45,8 +45,16 @@
           <strong id="agentCount">-</strong>
         </div>
         <div>
+          <span class="metric-label" data-i18n="onlineAgents">Online</span>
+          <strong id="onlineAgentCount">-</strong>
+        </div>
+        <div>
           <span class="metric-label" data-i18n="queued">Queued</span>
           <strong id="queuedCount">-</strong>
+        </div>
+        <div>
+          <span class="metric-label" data-i18n="activeRooms">Active Rooms</span>
+          <strong id="activeRoomCount">-</strong>
         </div>
       </section>
 
@@ -70,6 +78,8 @@
                 <th></th>
                 <th data-i18n="agent">Agent</th>
                 <th data-i18n="node">Node</th>
+                <th data-i18n="health">Health</th>
+                <th data-i18n="activity">Activity</th>
                 <th data-i18n="kind">Kind</th>
                 <th data-i18n="role">Role</th>
                 <th data-i18n="capabilities">Capabilities</th>
@@ -82,7 +92,7 @@
       </section>
 
       <section id="roomsPanel" class="panel">
-        <div class="split">
+        <div class="rooms-grid">
           <form id="roomForm" class="tool-surface">
             <div class="section-head">
               <h2 data-i18n="autonomousRoom">Autonomous Room</h2>
@@ -107,12 +117,29 @@
               <button type="submit" data-i18n="createRoom">Create Room</button>
             </div>
           </form>
-          <div class="tool-surface">
+          <div class="tool-surface room-list-surface">
+            <div class="section-head">
+              <h2 data-i18n="recentRooms">Recent Rooms</h2>
+              <span id="roomListCount" class="muted">-</span>
+            </div>
+            <div id="roomList" class="room-list"></div>
+          </div>
+          <div class="tool-surface room-detail-surface">
             <div class="section-head">
               <h2 data-i18n="roomTimeline">Room Timeline</h2>
-              <button id="wakeRoomButton" type="button" data-i18n="wakeNext">Wake Next</button>
+              <div class="button-row">
+                <button id="wakeRoomButton" type="button" data-i18n="wakeNext">Wake Next</button>
+                <button id="pauseRoomButton" class="danger-button" type="button" data-i18n="pauseRoom">Pause</button>
+              </div>
             </div>
             <div id="roomSummary" class="muted" data-i18n="noRoom">No room selected.</div>
+            <form id="roomMessageForm" class="message-form">
+              <label>
+                <span data-i18n="roomMessage">Room Message</span>
+                <textarea id="roomMessage" rows="3" placeholder="Send a message into the selected room" data-i18n-placeholder="roomMessagePlaceholder"></textarea>
+              </label>
+              <button type="submit" data-i18n="send">Send</button>
+            </form>
             <div id="roomMessages" class="conversation-list"></div>
             <div id="roomReports" class="runs-list"></div>
           </div>
@@ -196,6 +223,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260506-rooms2"></script>
+    <script type="module" src="./app.js?v=20260507-console1"></script>
   </body>
 </html>

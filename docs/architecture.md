@@ -45,10 +45,11 @@ The central gateway exposes OpenAI-compatible endpoints:
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
+- `POST /v1/responses`
 
 Requests are authenticated with the gateway bearer token, then routed to a configured backend. Backends can be local services, remote model gateways, or any OpenAI-compatible API.
 
-The model plane can also expose online edge agents as virtual OpenAI-compatible models named `agent:<agent-id>`. For these requests, Central does not call a provider backend. It converts chat messages into an Agent Bus run, dispatches that run to the selected edge agent, waits for completion, and wraps the agent stdout/summary as a chat completion response. This is the edge-to-edge path: one machine can call Central and use another private edge as a model replacement without either edge accepting inbound traffic.
+The model plane can also expose online edge agents as virtual OpenAI-compatible models named `agent:<agent-id>`. For these requests, Central does not call a provider backend. It converts chat messages or Responses `input` into an Agent Bus run, dispatches that run to the selected edge agent, waits for completion, and wraps the agent stdout/summary as a chat completion or response object. This is the edge-to-edge path: one machine can call Central and use another private edge as a model replacement without either edge accepting inbound traffic.
 
 Admin tokens can use `agent:<id>` while `modelRouter.agentModels` is enabled. Scoped edge tokens can use only agent-backed models, and only when `modelRouter.allowEdgeAgentModels` is explicitly enabled on Central.
 

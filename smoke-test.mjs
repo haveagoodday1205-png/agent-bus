@@ -275,7 +275,7 @@ async function main() {
       runCommand: `${quoteCommandArg(node)} ${quoteCommandArg(envDumpScript)}`
     }]
   }, null, 2)}\n`);
-  let edge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
+  let edge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig]);
   await waitForAgent("env-agent", token);
   const agentModels = await requestJson("http://127.0.0.1:8788/v1/models", {
     headers: { authorization: `Bearer ${token}` }
@@ -304,10 +304,24 @@ async function main() {
   assert(agentChatEnv.AGENT_ID === "env-agent", "agent-backed chat did not execute the target edge agent");
   assert(agentChatEnv.AGENT_THREAD_ID === agentChat.agent_bus.thread_id, "agent-backed chat did not set the run thread env");
   assert(agentChatEnv.AGENT_MESSAGE_FILE_TEXT_PREFIX.includes("Agent Bus"), "agent-backed chat did not pass a model-replacement prompt");
-  if (!edge.killed) edge.kill("SIGTERM");
-
-  edge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
-  await waitForAgent("env-agent", token);
+  const agentResponse = await requestJson("http://127.0.0.1:8788/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${paired.token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "agent:env-agent",
+      input: "agent response smoke",
+      timeout_seconds: 10
+    })
+  });
+  assert(agentResponse.model === "agent:env-agent", "agent-backed response returned the wrong model");
+  assert(agentResponse.agent_bus?.agent_id === "env-agent", "agent-backed response did not include Agent Bus metadata");
+  const agentResponseEnv = JSON.parse(agentResponse.output_text || "{}");
+  assert(agentResponseEnv.AGENT_ID === "env-agent", "agent-backed response did not execute the target edge agent");
+  assert(agentResponseEnv.AGENT_THREAD_ID === agentResponse.agent_bus.thread_id, "agent-backed response did not set the run thread env");
+  assert(agentResponse.output?.[0]?.content?.[0]?.type === "output_text", "agent-backed response did not return Responses-style output content");
   const envThread = await requestJson("http://127.0.0.1:8788/threads", {
     method: "POST",
     headers: {
@@ -335,10 +349,7 @@ async function main() {
   assert(envOut.EDGE_NODE_ID === "env-smoke-node", "edge env did not include EDGE_NODE_ID");
   assert(/^agent-bus-env-agent-thread-[a-f0-9]{16}$/.test(envOut.AGENT_CACHE_KEY), "edge env did not build a compact stable AGENT_CACHE_KEY");
   assert(envOut.AGENT_SESSION_ID === envOut.AGENT_CACHE_KEY, "edge env did not mirror cache key as session id");
-  if (!edge.killed) edge.kill("SIGTERM");
 
-  const largeEdge = start(node, ["edge-node.mjs", "connect", "--config", edgeConfig, "--once"]);
-  await waitForAgent("env-agent", token);
   const largeMessage = `large-message-${"x".repeat(50000)}`;
   const largeThread = await requestJson("http://127.0.0.1:8788/threads", {
     method: "POST",
@@ -359,7 +370,7 @@ async function main() {
   assert(largeOut.AGENT_MESSAGE_BYTES === String(Buffer.byteLength(largeMessage, "utf8")), "large edge env did not report AGENT_MESSAGE_BYTES");
   assert(largeOut.AGENT_MESSAGE_FILE_TEXT_LEN === largeMessage.length, "large edge message file did not contain the full task text");
   assert(largeOut.AGENT_MESSAGE_FILE_TEXT_PREFIX === largeMessage.slice(0, 64), "large edge message file prefix was wrong");
-  if (!largeEdge.killed) largeEdge.kill("SIGTERM");
+  if (!edge.killed) edge.kill("SIGTERM");
 
   const proxy = start(node, ["windows-openai-proxy.mjs"], {
     AGENT_BUS_UPSTREAM: "http://127.0.0.1:8788",

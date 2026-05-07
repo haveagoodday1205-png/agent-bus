@@ -324,6 +324,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/v1/chat/completions":
                 self.require_auth(chat_completion_scopes(self.config, body))
                 return self.proxy_chat_completions(body)
+            if path == "/v1/responses":
+                self.require_auth(responses_scopes(self.config, body))
+                return self.proxy_responses(body)
             self.require_auth(("admin",))
             if path == "/route":
                 selection = select_agents(body.get("message", ""), body)
@@ -405,6 +408,56 @@ class Handler(BaseHTTPRequestHandler):
         proxied["model"] = routed_model
         data = json.dumps(proxied, ensure_ascii=False).encode("utf-8")
         req = Request(join_url(backend["baseUrl"], "/chat/completions"), data=data, method="POST")
+        req.add_header("content-type", "application/json")
+        req.add_header("accept", "text/event-stream" if body.get("stream") else "application/json")
+        api_key = backend_api_key(backend)
+        if api_key:
+            req.add_header("authorization", "Bearer " + api_key)
+        elif backend.get("passClientAuthorization"):
+            auth = self.headers.get("authorization")
+            if auth:
+                req.add_header("authorization", auth)
+        try:
+            with urlopen(req, timeout=int(backend.get("timeoutSeconds", 600))) as res:
+                content_type = res.headers.get("content-type", "application/json")
+                self.send_response(res.status)
+                self.send_header("content-type", content_type)
+                self.send_header("cache-control", "no-store")
+                self.send_header("x-agent-bus-backend", backend["id"])
+                self.end_headers()
+                while True:
+                    chunk = res.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+        except HTTPError as exc:
+            payload = exc.read()
+            self.send_response(exc.code)
+            self.send_header("content-type", exc.headers.get("content-type", "application/json"))
+            self.send_header("cache-control", "no-store")
+            self.send_header("x-agent-bus-backend", backend["id"])
+            self.end_headers()
+            self.wfile.write(payload or json.dumps({"error": {"message": str(exc)}}).encode("utf-8"))
+        except Exception as exc:
+            self.json({
+                "error": {
+                    "message": str(exc),
+                    "type": "agent_bus_upstream_error",
+                    "backend": backend.get("id", "backend"),
+                }
+            }, 502)
+
+    def proxy_responses(self, body):
+        agent_id = agent_model_id(body.get("model"))
+        if agent_id:
+            payload, status = create_agent_response(self.config, body, agent_id)
+            return self.json(payload, status)
+        backend, routed_model = select_model_backend(self.config, body.get("model"))
+        proxied = dict(body)
+        proxied["model"] = routed_model
+        data = json.dumps(proxied, ensure_ascii=False).encode("utf-8")
+        req = Request(join_url(backend["baseUrl"], "/responses"), data=data, method="POST")
         req.add_header("content-type", "application/json")
         req.add_header("accept", "text/event-stream" if body.get("stream") else "application/json")
         api_key = backend_api_key(backend)
@@ -585,6 +638,7 @@ def agent_bus_manifest(config):
             "room_wake": "POST /rooms/{room_id}/wake",
             "models": "GET /v1/models",
             "chat_completions": "POST /v1/chat/completions",
+            "responses": "POST /v1/responses",
             "pair_create": "POST /pair-codes",
             "pair_join": "POST /edge/pair",
             "edge_tokens": "GET /edge/tokens, POST /edge/tokens, POST /edge/tokens/revoke",
@@ -660,6 +714,12 @@ def openai_models(config, agent_only=False):
 
 
 def chat_completion_scopes(config, body):
+    if agent_model_id(body.get("model")) and allow_edge_agent_models(config):
+        return ("admin", "edge")
+    return ("admin",)
+
+
+def responses_scopes(config, body):
     if agent_model_id(body.get("model")) and allow_edge_agent_models(config):
         return ("admin", "edge")
     return ("admin",)
@@ -757,6 +817,91 @@ def create_agent_chat_completion(config, body, agent_id):
     }, 200
 
 
+def create_agent_response(config, body, agent_id):
+    if not agent_models_enabled(config):
+        return openai_error("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), 503
+    if body.get("stream"):
+        return openai_error("agent-backed responses do not support stream=true yet", "unsupported_feature", "stream"), 400
+    agent = next((item for item in public_agents() if item["id"] == agent_id), None)
+    if not agent:
+        return openai_error("agent model is not online: agent:" + agent_id, "agent_bus_agent_not_online", "model"), 404
+    input_value = body.get("input")
+    if not response_input_has_content(input_value):
+        return openai_error("input is required for agent-backed responses", "invalid_request_error", "input"), 400
+
+    prompt = response_input_to_agent_prompt(input_value, body.get("instructions"))
+    thread = {
+        "id": "thread_" + str(uuid.uuid4()),
+        "created_at": now(),
+        "source": "responses.agent",
+        "mode": "agent-model",
+        "message": prompt,
+        "model": "agent:" + agent_id,
+        "selection": {
+            "reason": "OpenAI-compatible Responses request routed to an Agent Bus edge agent.",
+            "matched": ["agent-model", "responses"],
+            "agents": [agent["id"]],
+        },
+        "runs": [],
+    }
+    STATE["threads"][thread["id"]] = thread
+    write_snapshot(config, "threads", thread["id"], thread)
+    run = create_run(config, thread, agent, prompt)
+    write_snapshot(config, "threads", thread["id"], thread)
+    append_jsonl(config, "threads.jsonl", thread)
+
+    timeout_seconds = agent_model_timeout_seconds(config, body)
+    final_run = wait_for_run_terminal(config, run["id"], timeout_seconds)
+    if (final_run.get("status") or "").lower() != "completed":
+        message = final_run.get("stderr") or final_run.get("summary") or final_run.get("stdout") or "agent response run did not complete"
+        status = 504 if (final_run.get("status") or "").lower() not in TERMINAL_RUN_STATUSES else 502
+        error = openai_error(trim(message), "agent_bus_agent_run_failed", "model")
+        error["error"]["run_id"] = run["id"]
+        error["error"]["thread_id"] = thread["id"]
+        error["error"]["agent_id"] = agent_id
+        error["error"]["status"] = final_run.get("status", "timeout")
+        return error, status
+
+    content = (final_run.get("stdout") or final_run.get("summary") or "").strip()
+    return agent_response_payload(agent_id, agent, thread, run, content, body), 200
+
+
+def agent_response_payload(agent_id, agent, thread, run, content, body):
+    response_id = "resp_agentbus_" + run["id"].replace("run_", "")
+    output_id = "msg_agentbus_" + run["id"].replace("run_", "")
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "model": "agent:" + agent_id,
+        "output": [{
+            "id": output_id,
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "text": content,
+                "annotations": [],
+            }],
+        }],
+        "output_text": content,
+        "metadata": body.get("metadata") if isinstance(body.get("metadata"), dict) else {},
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        },
+        "agent_bus": {
+            "thread_id": thread["id"],
+            "run_id": run["id"],
+            "agent_id": agent_id,
+            "node_id": agent.get("node_id"),
+        },
+    }
+
+
 def chat_messages_to_agent_prompt(messages):
     lines = [
         "You are being invoked through Agent Bus as an OpenAI-compatible chat completion model.",
@@ -804,6 +949,42 @@ def chat_message_content_to_text(content):
                 parts.append(str(part))
         return "\n".join(item for item in parts if item)
     return str(content or "")
+
+
+def response_input_has_content(input_value):
+    return bool(response_input_to_text(input_value).strip())
+
+
+def response_input_to_agent_prompt(input_value, instructions=None):
+    lines = [
+        "You are being invoked through Agent Bus as an OpenAI-compatible Responses API model.",
+        "Return the assistant response for the user input. Be direct and useful.",
+    ]
+    if instructions:
+        lines.extend(["", "Instructions:", str(instructions).strip()])
+    lines.extend(["", "Input:", response_input_to_text(input_value), "", "Assistant:"])
+    return "\n".join(lines).strip()
+
+
+def response_input_to_text(input_value):
+    if isinstance(input_value, str):
+        return input_value
+    if isinstance(input_value, list):
+        parts = []
+        for item in input_value:
+            if isinstance(item, dict):
+                item_type = str(item.get("type") or "")
+                role = str(item.get("role") or "").strip()
+                content = item.get("content")
+                text = chat_message_content_to_text(content) if content is not None else chat_message_content_to_text([item])
+                if text:
+                    parts.append((f"[{role or item_type}]\n" if (role or item_type) else "") + text)
+            elif item is not None:
+                parts.append(str(item))
+        return "\n\n".join(part for part in parts if part)
+    if isinstance(input_value, dict):
+        return response_input_to_text([input_value])
+    return str(input_value or "")
 
 
 def agent_model_timeout_seconds(config, body):

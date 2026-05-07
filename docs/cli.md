@@ -157,7 +157,7 @@ agent-bus connect --config edge.config.json
 
 The join command writes the gateway URL and a scoped edge token into the local config file, but it does not print the token. Codes are single-use and expire automatically. With `--auto`, it also detects local AI tools and registers each one as an agent.
 
-The scoped edge token can register, poll, report run events, and read discovery metadata. It cannot create pair codes, create threads, wake rooms, or call real OpenAI-compatible model backends. If Central has `modelRouter.allowEdgeAgentModels` enabled, an edge token can call only `agent:<agent-id>` virtual models so one edge can dispatch work to another edge through Central.
+The scoped edge token can register, poll, report run events, and read discovery metadata. It cannot create pair codes, create threads, wake rooms, or call real OpenAI-compatible model backends. If Central has `modelRouter.allowEdgeAgentModels` enabled, an edge token can call only `agent:<agent-id>` virtual models through `/v1/chat/completions` or `/v1/responses` so one edge can dispatch work to another edge through Central.
 
 ## Central Gateway
 
@@ -185,9 +185,14 @@ curl -s https://YOUR-DOMAIN/agent-bus/v1/chat/completions \
   -H "authorization: Bearer $AGENT_BUS_TOKEN" \
   -H "content-type: application/json" \
   -d '{"model":"agent:openclaw-hk","messages":[{"role":"user","content":"Run a quick status check and report back."}]}'
+
+curl -s https://YOUR-DOMAIN/agent-bus/v1/responses \
+  -H "authorization: Bearer $AGENT_BUS_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"model":"agent:hermes-hk","input":"Check the room state and return the next action."}'
 ```
 
-Central creates a normal Agent Bus run for the target edge agent and returns the completed stdout as an OpenAI-style assistant message.
+Central creates a normal Agent Bus run for the target edge agent and returns the completed stdout as an OpenAI-style assistant message or Responses `output_text`.
 
 ## Query Commands
 

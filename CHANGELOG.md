@@ -6,6 +6,7 @@
 
 - Adds `agent:<agent-id>` virtual models to the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints.
 - Routes agent-backed chat completions through normal Agent Bus runs, waits for the target edge agent, and returns an OpenAI-style assistant message with run metadata.
+- Adds `/v1/responses` for agent-backed Responses API calls and best-effort forwarding to backend `/responses` endpoints.
 - Adds `modelRouter.allowEdgeAgentModels` so scoped edge tokens can be explicitly allowed to dispatch only agent-backed model calls without gaining access to real backend model routers.
 
 ## 0.5.5 - Compact room session keys

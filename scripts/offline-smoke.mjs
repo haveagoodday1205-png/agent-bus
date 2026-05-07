@@ -109,6 +109,19 @@ async function main() {
   assert(agentChat.model === "agent:offline-agent", "agent-backed chat completion returned the wrong model");
   assert(agentChat.agent_bus?.agent_id === "offline-agent", "agent-backed chat completion did not include Agent Bus run metadata");
   assert(/offline smoke run completed/.test(agentChat.choices?.[0]?.message?.content || ""), "agent-backed chat completion did not return agent stdout");
+  const agentResponse = await requestJson(`${base}/v1/responses`, {
+    method: "POST",
+    headers: authJsonHeaders(edgeToken),
+    body: JSON.stringify({
+      model: "agent:offline-agent",
+      input: "agent responses replacement smoke",
+      timeout_seconds: 10
+    })
+  });
+  assert(agentResponse.model === "agent:offline-agent", "agent-backed response returned the wrong model");
+  assert(agentResponse.agent_bus?.agent_id === "offline-agent", "agent-backed response did not include Agent Bus run metadata");
+  assert(/offline smoke run completed/.test(agentResponse.output_text || ""), "agent-backed response did not return agent output_text");
+  assert(agentResponse.output?.[0]?.content?.[0]?.type === "output_text", "agent-backed response did not return Responses-style output content");
 
   const room = await requestJson(`${base}/rooms`, {
     method: "POST",

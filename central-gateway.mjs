@@ -331,6 +331,11 @@ async function serve(config) {
         requireAuth(req, config, chatCompletionScopes(config, body));
         return proxyChatCompletions(config, req, res, body);
       }
+      if (req.method === "POST" && url.pathname === "/v1/responses") {
+        const body = await readJson(req);
+        requireAuth(req, config, responsesScopes(config, body));
+        return proxyResponses(config, req, res, body);
+      }
       requireAuth(req, config, ["admin"]);
       if (req.method === "POST" && url.pathname === "/route") {
         const body = await readJson(req);
@@ -631,6 +636,7 @@ function agentBusManifest(config) {
       threads: "POST /threads",
       models: "GET /v1/models",
       chat_completions: "POST /v1/chat/completions",
+      responses: "POST /v1/responses",
       pair_create: "POST /pair-codes",
       pair_join: "POST /edge/pair",
       edge_tokens: "GET /edge/tokens, POST /edge/tokens, POST /edge/tokens/revoke"
@@ -756,7 +762,66 @@ async function proxyChatCompletions(config, req, res, body) {
   res.end();
 }
 
+async function proxyResponses(config, req, res, body) {
+  const agentId = agentModelId(body.model);
+  if (agentId) {
+    const { payload, status } = await createAgentResponse(config, body, agentId);
+    return sendJson(res, payload, status);
+  }
+  const { backend, routedModel } = selectModelBackend(config, body.model);
+  const proxied = { ...body, model: routedModel };
+  const headers = {
+    "content-type": "application/json",
+    "accept": body.stream ? "text/event-stream" : "application/json"
+  };
+  const apiKey = backendApiKey(backend);
+  if (apiKey) {
+    headers.authorization = `Bearer ${apiKey}`;
+  } else if (backend.passClientAuthorization && req.headers.authorization) {
+    headers.authorization = req.headers.authorization;
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(joinUrl(backend.baseUrl, "/responses"), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(proxied),
+      signal: AbortSignal.timeout(Number(backend.timeoutSeconds || 600) * 1000)
+    });
+  } catch (err) {
+    return sendJson(res, {
+      error: {
+        message: err.message || String(err),
+        type: "agent_bus_upstream_error",
+        backend: backend.id || "backend"
+      }
+    }, 502);
+  }
+
+  res.writeHead(upstream.status, {
+    "content-type": upstream.headers.get("content-type") || "application/json",
+    "cache-control": "no-store",
+    "x-agent-bus-backend": backend.id || "backend"
+  });
+  if (!upstream.body) {
+    res.end();
+    return;
+  }
+  const reader = upstream.body.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    res.write(Buffer.from(value));
+  }
+  res.end();
+}
+
 function chatCompletionScopes(config, body) {
+  return agentModelId(body.model) && allowEdgeAgentModels(config) ? ["admin", "edge"] : ["admin"];
+}
+
+function responsesScopes(config, body) {
   return agentModelId(body.model) && allowEdgeAgentModels(config) ? ["admin", "edge"] : ["admin"];
 }
 
@@ -856,6 +921,98 @@ async function createAgentChatCompletion(config, body, agentId) {
   };
 }
 
+async function createAgentResponse(config, body, agentId) {
+  if (!agentModelsEnabled(config)) {
+    return { payload: openAiError("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), status: 503 };
+  }
+  if (body.stream) {
+    return { payload: openAiError("agent-backed responses do not support stream=true yet", "unsupported_feature", "stream"), status: 400 };
+  }
+  const agent = publicAgents().find((item) => item.id === agentId);
+  if (!agent) {
+    return { payload: openAiError(`agent model is not online: agent:${agentId}`, "agent_bus_agent_not_online", "model"), status: 404 };
+  }
+  if (!responseInputHasContent(body.input)) {
+    return { payload: openAiError("input is required for agent-backed responses", "invalid_request_error", "input"), status: 400 };
+  }
+
+  const prompt = responseInputToAgentPrompt(body.input, body.instructions);
+  const thread = {
+    id: `thread_${crypto.randomUUID()}`,
+    created_at: new Date().toISOString(),
+    source: "responses.agent",
+    mode: "agent-model",
+    message: prompt,
+    model: `agent:${agentId}`,
+    selection: {
+      reason: "OpenAI-compatible Responses request routed to an Agent Bus edge agent.",
+      matched: ["agent-model", "responses"],
+      agents: [agent.id]
+    },
+    runs: []
+  };
+  state.threads.set(thread.id, thread);
+  writeSnapshot(config, "threads", thread.id, thread);
+  const run = createAgentRun(config, thread, agent, prompt);
+  writeSnapshot(config, "threads", thread.id, thread);
+  appendJsonl(config, "threads.jsonl", thread);
+
+  const finalRun = await waitForRunTerminal(config, run.id, agentModelTimeoutSeconds(config, body));
+  if (String(finalRun.status || "").toLowerCase() !== "completed") {
+    const message = finalRun.stderr || finalRun.summary || finalRun.stdout || "agent response run did not complete";
+    const status = TERMINAL_RUN_STATUSES.has(String(finalRun.status || "").toLowerCase()) ? 502 : 504;
+    const payload = openAiError(trimOutput(message), "agent_bus_agent_run_failed", "model");
+    Object.assign(payload.error, {
+      run_id: run.id,
+      thread_id: thread.id,
+      agent_id: agentId,
+      status: finalRun.status || "timeout"
+    });
+    return { payload, status };
+  }
+
+  const content = String(finalRun.stdout || finalRun.summary || "").trim();
+  return {
+    status: 200,
+    payload: agentResponsePayload(agentId, agent, thread, run, content, body)
+  };
+}
+
+function agentResponsePayload(agentId, agent, thread, run, content, body) {
+  const suffix = run.id.replace(/^run_/, "");
+  return {
+    id: `resp_agentbus_${suffix}`,
+    object: "response",
+    created_at: Math.floor(Date.now() / 1000),
+    status: "completed",
+    model: `agent:${agentId}`,
+    output: [{
+      id: `msg_agentbus_${suffix}`,
+      type: "message",
+      status: "completed",
+      role: "assistant",
+      content: [{
+        type: "output_text",
+        text: content,
+        annotations: []
+      }]
+    }],
+    output_text: content,
+    metadata: body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata) ? body.metadata : {},
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0
+    },
+    agent_bus: {
+      thread_id: thread.id,
+      run_id: run.id,
+      agent_id: agentId,
+      node_id: agent.node_id
+    }
+  };
+}
+
 function chatMessagesToAgentPrompt(messages) {
   const lines = [
     "You are being invoked through Agent Bus as an OpenAI-compatible chat completion model.",
@@ -894,6 +1051,38 @@ function chatMessageContentToText(content) {
     }).filter(Boolean).join("\n");
   }
   return String(content || "");
+}
+
+function responseInputHasContent(input) {
+  return Boolean(responseInputToText(input).trim());
+}
+
+function responseInputToAgentPrompt(input, instructions = "") {
+  const lines = [
+    "You are being invoked through Agent Bus as an OpenAI-compatible Responses API model.",
+    "Return the assistant response for the user input. Be direct and useful."
+  ];
+  if (instructions) lines.push("", "Instructions:", String(instructions).trim());
+  lines.push("", "Input:", responseInputToText(input), "", "Assistant:");
+  return lines.join("\n").trim();
+}
+
+function responseInputToText(input) {
+  if (typeof input === "string") return input;
+  if (Array.isArray(input)) {
+    return input.map((item) => {
+      if (item && typeof item === "object") {
+        const type = String(item.type || "");
+        const role = String(item.role || "").trim();
+        const content = Object.hasOwn(item, "content") ? item.content : [item];
+        const text = chatMessageContentToText(content);
+        return text ? `${role || type ? `[${role || type}]\n` : ""}${text}` : "";
+      }
+      return item == null ? "" : String(item);
+    }).filter(Boolean).join("\n\n");
+  }
+  if (input && typeof input === "object") return responseInputToText([input]);
+  return String(input || "");
 }
 
 function agentModelTimeoutSeconds(config, body) {

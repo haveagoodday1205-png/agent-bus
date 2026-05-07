@@ -104,6 +104,10 @@ async function main() {
     await runScript("scripts/offline-smoke.mjs", stripCliOnlyArgs(argv.slice(1)));
     return;
   }
+  if (command === "demo") {
+    await demo(argv.slice(1));
+    return;
+  }
   if (command === "pair") {
     await pair(argv.slice(1));
     return;
@@ -164,6 +168,8 @@ Usage:
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json [--json]
   agent-bus smoke --offline
+  agent-bus demo room
+  agent-bus demo local
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
   agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --auto --service auto
@@ -190,6 +196,18 @@ Environment:
   AGENT_BUS_GATEWAY_URL  default gateway URL for query/connect commands
   AGENT_BUS_TOKEN        bearer token for protected gateway queries
 `);
+}
+
+function demo(args) {
+  const target = args[0] || "room";
+  const extra = stripCliOnlyArgs(args.slice(1));
+  if (target === "room" || target === "ai-to-ai") {
+    return runScript("scripts/demo-room.mjs", extra);
+  }
+  if (target === "local" || target === "pairing" || target === "remote-assistant") {
+    return runScript("scripts/demo-local.mjs", extra);
+  }
+  throw new Error("Usage: agent-bus demo room|local");
 }
 
 function service(args) {

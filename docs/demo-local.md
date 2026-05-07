@@ -2,9 +2,10 @@
 
 ## Pairing and task demo
 
-Run:
+Run from the installed CLI or from a checkout:
 
 ```bash
+agent-bus demo local
 npm run demo:local
 npm run demo:remote-assistant
 ```
@@ -20,9 +21,10 @@ It shows the core Agent Bus loop on localhost:
 
 ## AI-to-AI room demo
 
-Run:
+Run from the installed CLI or from a checkout:
 
 ```bash
+agent-bus demo room
 npm run demo:room
 ```
 

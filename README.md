@@ -35,15 +35,16 @@ Run the local smoke test:
 npm run smoke
 ```
 
-Run a local demo:
+Run a local demo from the installed CLI or checkout:
 
 ```bash
-# Pair a local edge and send a normal task.
-npm run demo:local
-npm run demo:remote-assistant
-
 # Show AI-to-AI room delegation and export a share-safe report.
+agent-bus demo room
 npm run demo:room
+
+# Pair a local edge and send a normal task.
+agent-bus demo local
+npm run demo:remote-assistant
 ```
 
 Install the CLI from npm or from a checkout:

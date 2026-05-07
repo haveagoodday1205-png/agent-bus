@@ -9,7 +9,16 @@ npm install -g .
 agent-bus --help
 ```
 
-For a first two-machine setup, start with `docs/remote-assistant-quickstart.md`.
+Install from npm:
+
+```bash
+npm install -g agent-bus-cli
+agent-bus --help
+agent-bus smoke --offline
+agent-bus demo room
+```
+
+`agent-bus demo room` is the fastest no-secret/no-model-call public demo: it starts temporary local services, wakes two fake room agents, and writes a reports-only Markdown export in the current directory. For a first two-machine setup, start with `docs/remote-assistant-quickstart.md`.
 
 Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows. Each release includes `SHA256SUMS` and a release manifest so users can verify what they downloaded. See `docs/release.md` for the npm-vs-portable install matrix and release verification checklist.
 

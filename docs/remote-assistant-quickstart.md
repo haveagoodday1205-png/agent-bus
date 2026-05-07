@@ -131,11 +131,14 @@ Reports-only exports omit full prompts and messages by default.
 
 ## Local Demo
 
-From a contributor checkout, the same story can be tested without any external machine or model quota:
+The same story can be tested without any external machine or model quota from the installed CLI or a checkout:
 
 ```bash
+agent-bus demo local
+agent-bus demo room
+# checkout aliases:
 npm run demo:remote-assistant
 npm run demo:room
 ```
 
-`demo:remote-assistant` starts a local gateway, creates a pair code, joins a local echo edge, sends a task, and prints the remote assistant result. `demo:room` starts two fake local agents, exercises `@agent-id`, `REPORT`, `BLACKBOARD`, and `DONE`, then writes a reports-only Markdown file.
+`agent-bus demo local` starts a local gateway, creates a pair code, joins a local echo edge, sends a task, and prints the remote assistant result. `agent-bus demo room` starts two fake local agents, exercises `@agent-id`, `REPORT`, `BLACKBOARD`, and `DONE`, then writes a reports-only Markdown file.

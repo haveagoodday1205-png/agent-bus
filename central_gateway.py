@@ -1261,6 +1261,14 @@ def poll_node(config, body, timeout_ms):
     return {"type": "idle"}
 
 
+def touch_node_seen(node_id):
+    node = STATE["nodes"].get(node_id)
+    if not node:
+        return
+    node["last_seen_at"] = now()
+    node["status"] = "online"
+
+
 def merge_agent_updates(node_id, current, updates):
     by_id = {agent.get("id"): dict(agent) for agent in current if agent.get("id")}
     for update in normalize_agents(node_id, updates):
@@ -1274,6 +1282,7 @@ def record_event(config, body):
     run = STATE["runs"].get(body.get("run_id")) or read_snapshot(config, "runs", body.get("run_id"))
     if not run:
         return
+    touch_node_seen(body.get("node_id") or run.get("node_id"))
     event = {"at": now(), "node_id": body.get("node_id") or run.get("node_id"), **(body.get("event") or {})}
     if event.get("type") == "run.started":
         run["status"] = "running"
@@ -1295,6 +1304,7 @@ def complete_run(config, body):
         err = Exception("unknown run_id")
         err.status_code = 404
         raise err
+    touch_node_seen(body.get("node_id") or run.get("node_id"))
     result = body.get("result") or {}
     exit_code = result.get("exit_code")
     run["status"] = result.get("status") or ("completed" if exit_code == 0 else "failed")

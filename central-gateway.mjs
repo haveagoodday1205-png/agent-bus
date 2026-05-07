@@ -271,6 +271,10 @@ async function serve(config) {
         requireAuth(req, config, ["admin", "edge"]);
         return sendJson(res, publicAgents());
       }
+      if (req.method === "GET" && url.pathname === "/nodes") {
+        requireAuth(req, config, ["admin", "edge"]);
+        return sendJson(res, publicNodes());
+      }
       if (req.method === "GET" && (url.pathname === "/manifest" || url.pathname === "/v1/agent-bus/manifest")) {
         requireAuth(req, config, ["admin", "edge"]);
         return sendJson(res, agentBusManifest(config));
@@ -553,6 +557,13 @@ function publicNode(node) {
   };
 }
 
+function publicNodes() {
+  return [...state.nodes.values()]
+    .filter((node) => node.status === "online")
+    .map((node) => publicNode(node))
+    .sort((a, b) => String(a.node_id || "").localeCompare(String(b.node_id || "")));
+}
+
 function publicAgents() {
   return [...state.nodes.values()]
     .filter((node) => node.status === "online")
@@ -595,6 +606,7 @@ function agentBusManifest(config) {
     endpoints: {
       health: "GET /health",
       manifest: "GET /v1/agent-bus/manifest",
+      nodes: "GET /nodes",
       agents: "GET /agents",
       route: "POST /route",
       threads: "POST /threads",

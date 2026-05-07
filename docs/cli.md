@@ -96,7 +96,7 @@ agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ***
 agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token *** --json
 ```
 
-Human output includes operator labels for node freshness (`online/fresh`, `stale`, or `unknown`), activity (`running`, `queued`, `busy/room-active`, or `idle`), ping reachability (`reachable`, `unreachable`, `unhealthy`, `not configured`, or `unknown`), and last-run health (`ok`, `failed`, `running`, or `unknown`). By default, status hydrates up to 25 active room details so an agent is marked `running` or `queued` only when it has an actual non-terminal run; pass `--room-detail-limit N` to tune that, or `--no-room-details` for the older lightweight summary-only behavior. JSON output preserves the raw fields and also includes derived `freshness`, `activity`, `active_runs`, `current_run`, `ping_label`, and `last_run_health` fields.
+Human output includes operator labels for node freshness (`online/fresh`, `stale`, or `unknown`), node agent membership, agent activity (`running`, `queued`, `busy/room-active`, or `idle`), ping reachability (`reachable`, `unreachable`, `unhealthy`, `not configured`, or `unknown`), and last-run health (`ok`, `failed`, `running`, or `unknown`). By default, status hydrates up to 25 active room details so an agent is marked `running` or `queued` only when it has an actual non-terminal run; pass `--room-detail-limit N` to tune that, or `--no-room-details` for the older lightweight summary-only behavior. JSON output preserves the raw fields and also includes derived node `freshness`, agent `freshness`, `activity`, `active_runs`, `current_run`, `ping_label`, and `last_run_health` fields.
 
 Edge commands receive task metadata in environment variables:
 
@@ -170,6 +170,7 @@ The admin API can list, create, and revoke scoped edge tokens with `GET /edge/to
 ```bash
 agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
 agent-bus manifest --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus nodes --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus agents --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus health --gateway https://YOUR-DOMAIN/agent-bus
 ```

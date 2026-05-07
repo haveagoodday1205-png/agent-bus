@@ -255,6 +255,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/agents":
                 self.require_auth(("admin", "edge"))
                 return self.json(public_agents())
+            if path == "/nodes":
+                self.require_auth(("admin", "edge"))
+                return self.json(public_nodes())
             if path in ("/manifest", "/v1/agent-bus/manifest"):
                 self.require_auth(("admin", "edge"))
                 return self.json(agent_bus_manifest(self.config))
@@ -531,6 +534,7 @@ def agent_bus_manifest(config):
         "endpoints": {
             "health": "GET /health",
             "manifest": "GET /v1/agent-bus/manifest",
+            "nodes": "GET /nodes",
             "agents": "GET /agents",
             "route": "POST /route",
             "threads": "POST /threads",

@@ -115,9 +115,12 @@ async function main() {
   assert(cliRoom.id === finalRoom.id, "CLI room show did not return the expected room");
   const cliRooms = await runCliJson(["room", "list", "--gateway", base, "--token", token]);
   assert(Array.isArray(cliRooms) && cliRooms.some((item) => item.id === finalRoom.id), "CLI room list did not include the smoke room");
+  const cliNodes = await runCliJson(["nodes", "--gateway", base, "--token", token]);
+  assert(Array.isArray(cliNodes) && cliNodes.some((item) => item.node_id === "offline-smoke-node"), "CLI nodes did not include the smoke node");
   const cliStatus = await runCliJson(["status", "--json", "--gateway", base, "--token", token]);
   assert(cliStatus.ok === true, "CLI status did not report ok=true");
   assert(cliStatus.summary?.online_agents === 1, "CLI status did not count the online smoke agent");
+  assert(cliStatus.nodes?.some((item) => item.id === "offline-smoke-node" && item.freshness?.startsWith("online/fresh")), "CLI status did not include node freshness");
   assert(cliStatus.rooms?.some((item) => item.id === finalRoom.id), "CLI status did not include the smoke room");
   const statusAgent = cliStatus.agents?.find((item) => item.id === "offline-agent");
   assert(statusAgent?.freshness?.startsWith("online/fresh"), "CLI status JSON did not include derived freshness label");

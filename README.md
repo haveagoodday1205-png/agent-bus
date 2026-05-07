@@ -85,10 +85,11 @@ agent-bus connect --config edge.config.json
 Check live reachability and room activity from the operator machine:
 
 ```bash
+agent-bus nodes --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ...
 ```
 
-`status` uses non-inference ping URLs for model/service reachability and hydrates active room runs so `running` and `queued` mean a real Agent Bus run is currently in flight.
+`nodes` shows edge-machine presence. `status` combines node freshness, non-inference ping URLs for model/service reachability, and active room runs so `running` and `queued` mean a real Agent Bus run is currently in flight.
 
 Or use a one-time pairing code so the new machine never needs the central token pasted into chat:
 

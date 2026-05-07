@@ -132,6 +132,10 @@ async function main() {
     await getJson("/agents", { auth: true });
     return;
   }
+  if (command === "nodes") {
+    await getJson("/nodes", { auth: true });
+    return;
+  }
   if (command === "room" || command === "rooms") {
     await room(argv.slice(1));
     return;
@@ -178,6 +182,7 @@ Usage:
 Gateway queries:
   agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
   agent-bus manifest --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus nodes --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus agents --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus health --gateway https://YOUR-DOMAIN/agent-bus
 
@@ -1296,17 +1301,19 @@ async function status(args) {
   const health = await gatewayJson("/health", { auth: false, args });
   let agents = [];
   let rooms = [];
+  let nodes = [];
   let authWarning = "";
 
   if (token) {
     agents = await gatewayJson("/agents", { auth: true, args });
+    nodes = await optionalGatewayJson("/nodes", { auth: true, args }, []);
     rooms = await gatewayJson("/rooms", { auth: true, args });
     rooms = await hydrateStatusRooms(rooms, args);
   } else {
-    authWarning = "Pass --token or AGENT_BUS_TOKEN to include agents and rooms.";
+    authWarning = "Pass --token or AGENT_BUS_TOKEN to include agents, nodes, and rooms.";
   }
 
-  const result = summarizeStatus({ health, agents, rooms, authWarning });
+  const result = summarizeStatus({ health, agents, rooms, nodes, authWarning });
   if (jsonOut) {
     printJson(result);
     return;
@@ -1314,9 +1321,10 @@ async function status(args) {
   printStatus(result);
 }
 
-function summarizeStatus({ health, agents, rooms, authWarning }) {
+function summarizeStatus({ health, agents, rooms, nodes, authWarning }) {
   const agentList = Array.isArray(agents) ? agents : [];
   const roomList = Array.isArray(rooms) ? rooms : [];
+  const nodeList = Array.isArray(nodes) ? nodes : [];
   const onlineAgents = agentList.filter((agent) => agent.status === "online");
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
   const activeRooms = roomList.filter(isActiveRoom);
@@ -1340,6 +1348,13 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
       rooms: roomList.length,
       active_rooms: activeRooms.length
     },
+    nodes: nodeList.map((node) => ({
+      id: node.node_id || node.id || "unknown",
+      status: node.status || "unknown",
+      last_seen_at: node.last_seen_at || null,
+      freshness: statusFreshness(node.status, node.last_seen_at || null),
+      agents: Array.isArray(node.agents) ? node.agents.map((agent) => typeof agent === "string" ? agent : agent.id).filter(Boolean) : []
+    })),
     agents: agentList.map((agent) => {
       const pingStatus = agent.ping_status || agent.health?.ping_status || "unknown";
       const lastRunStatus = agent.last_run_status || agent.health?.last_run_status || null;
@@ -1480,6 +1495,12 @@ function printStatus(result) {
   console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, queued ${s.queued}`);
   if (result.warnings?.length) {
     for (const warning of result.warnings) console.log(`Warning: ${warning}`);
+  }
+  if (result.nodes?.length) {
+    console.log("\nNodes:");
+    for (const node of result.nodes) {
+      console.log(`- ${node.id}: ${node.freshness}, agents=${node.agents.join(",") || "-"}`);
+    }
   }
   if (result.agents.length) {
     console.log("\nAgents:");
@@ -1691,6 +1712,14 @@ async function gatewayJson(pathname, options = {}) {
     throw new Error(text || `${res.status} ${res.statusText}`);
   }
   return parseJsonText(text);
+}
+
+async function optionalGatewayJson(pathname, options = {}, fallback = null) {
+  try {
+    return await gatewayJson(pathname, options);
+  } catch {
+    return fallback;
+  }
 }
 
 function parseJsonText(text) {

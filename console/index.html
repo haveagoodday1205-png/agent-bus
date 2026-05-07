@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260507-console2" />
+    <link rel="stylesheet" href="./styles.css?v=20260507-console3" />
   </head>
   <body>
     <header class="topbar">
@@ -59,14 +59,48 @@
       </section>
 
       <nav class="tabs" aria-label="Console sections">
-        <button class="tab active" type="button" data-tab="agents" data-i18n="agents">Agents</button>
+        <button class="tab active" type="button" data-tab="overview" data-i18n="overview">Overview</button>
+        <button class="tab" type="button" data-tab="agents" data-i18n="agents">Agents</button>
         <button class="tab" type="button" data-tab="rooms" data-i18n="rooms">Rooms</button>
         <button class="tab" type="button" data-tab="tasks" data-i18n="tasks">Tasks</button>
         <button class="tab" type="button" data-tab="models" data-i18n="models">Models</button>
+        <button class="tab" type="button" data-tab="traces" data-i18n="traces">Traces</button>
         <button class="tab" type="button" data-tab="events" data-i18n="events">Events</button>
       </nav>
 
-      <section id="agentsPanel" class="panel active">
+      <section id="overviewPanel" class="panel active">
+        <div class="overview-grid">
+          <div class="tool-surface">
+            <div class="section-head">
+              <h2 data-i18n="quickstart">Quickstart</h2>
+              <button id="copyStatusCommandButton" type="button" data-i18n="copyStatus">Copy Status</button>
+            </div>
+            <div id="quickstartList" class="check-list"></div>
+            <pre id="quickstartCommands" class="compact-output" tabindex="0"></pre>
+          </div>
+          <div class="tool-surface">
+            <div class="section-head">
+              <h2 data-i18n="nodes">Nodes</h2>
+              <button id="loadNodesButton" type="button" data-i18n="reload">Reload</button>
+            </div>
+            <div class="compact-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th data-i18n="node">Node</th>
+                    <th data-i18n="status">Status</th>
+                    <th data-i18n="agents">Agents</th>
+                    <th data-i18n="seen">Seen</th>
+                  </tr>
+                </thead>
+                <tbody id="nodesTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="agentsPanel" class="panel">
         <div class="section-head">
           <h2 data-i18n="agents">Agents</h2>
           <button id="loadAgentsButton" type="button" data-i18n="reload">Reload</button>
@@ -128,6 +162,8 @@
             <div class="section-head">
               <h2 data-i18n="roomTimeline">Room Timeline</h2>
               <div class="button-row">
+                <button id="roomTraceButton" type="button" data-i18n="trace">Trace</button>
+                <button id="exportRoomButton" type="button" data-i18n="exportSummary">Export Summary</button>
                 <button id="wakeRoomButton" type="button" data-i18n="wakeNext">Wake Next</button>
                 <button id="pauseRoomButton" class="danger-button" type="button" data-i18n="pauseRoom">Pause</button>
               </div>
@@ -232,6 +268,38 @@
         </div>
       </section>
 
+      <section id="tracesPanel" class="panel">
+        <div class="split">
+          <form id="traceForm" class="tool-surface">
+            <div class="section-head">
+              <h2 data-i18n="trace">Trace</h2>
+              <button id="exportTraceButton" type="button" data-i18n="exportJson">Export JSON</button>
+            </div>
+            <label>
+              <span data-i18n="traceId">Trace ID</span>
+              <input id="traceInput" placeholder="trace_xxx" data-i18n-placeholder="tracePlaceholder" />
+            </label>
+            <div class="form-row trace-row">
+              <label>
+                <span data-i18n="format">Format</span>
+                <select id="traceFormat">
+                  <option value="human" data-i18n="human">Human</option>
+                  <option value="json">JSON</option>
+                </select>
+              </label>
+              <button type="submit" data-i18n="showTrace">Show Trace</button>
+            </div>
+          </form>
+          <div class="tool-surface">
+            <div class="section-head">
+              <h2 data-i18n="traceOutput">Trace Output</h2>
+              <button id="clearTraceButton" type="button" data-i18n="clear">Clear</button>
+            </div>
+            <pre id="traceOutput" class="output"></pre>
+          </div>
+        </div>
+      </section>
+
       <section id="eventsPanel" class="panel">
         <div class="section-head">
           <h2 data-i18n="events">Events</h2>
@@ -241,6 +309,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260507-console2"></script>
+    <script type="module" src="./app.js?v=20260507-console3"></script>
   </body>
 </html>

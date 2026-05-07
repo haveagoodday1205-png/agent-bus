@@ -1,4 +1,6 @@
 const state = {
+  health: null,
+  nodes: [],
   agents: [],
   models: [],
   rooms: [],
@@ -7,6 +9,7 @@ const state = {
   currentThread: null,
   currentRoomId: null,
   currentRoom: null,
+  currentTrace: null,
   roomPolling: null,
   polling: null,
   lang: localStorage.getItem("agentBusLanguage") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"),
@@ -36,7 +39,13 @@ const messages = {
     chatCompletions: "Chat Completions",
     checking: "checking",
     clear: "Clear",
+    copied: "copied",
+    copyStatus: "Copy Status",
     events: "Events",
+    exportJson: "Export JSON",
+    exportSummary: "Export Summary",
+    exported: "exported",
+    format: "Format",
     gateway: "Gateway",
     groupChat: "group chat",
     groupNeedsAgents: "group chat needs at least two selected agents",
@@ -44,6 +53,7 @@ const messages = {
     goal: "Goal",
     healthFailed: "health failed: {message}",
     health: "Health",
+    human: "Human",
     idle: "idle",
     kind: "Kind",
     language: "Language",
@@ -56,13 +66,19 @@ const messages = {
     modelRouter: "Model Router",
     models: "Models",
     maxSteps: "Max Steps (0 = unlimited)",
+    modelsCheck: "Model router",
     modelsLoaded: "loaded {count} models",
+    nodesLoaded: "loaded {count} nodes",
+    nodesLoadFailed: "nodes failed: {message}",
+    noNodes: "No registered nodes.",
+    noTrace: "No trace loaded.",
     noAgents: "No registered agents.",
     noRoom: "No room selected.",
     noThread: "No thread selected.",
     node: "Node",
     nodes: "Nodes",
     onlineAgents: "Online",
+    overview: "Overview",
     offline: "offline",
     online: "online",
     orchestrate: "orchestrate",
@@ -72,6 +88,7 @@ const messages = {
     running: "running",
     prompt: "Prompt",
     queued: "Queued",
+    quickstart: "Quickstart",
     refresh: "Refresh",
     reload: "Reload",
     reachable: "reachable",
@@ -105,8 +122,10 @@ const messages = {
     seen: "Seen",
     selectedAgents: "selected agents",
     send: "Send",
+    showTrace: "Show Trace",
     stopPolling: "Stop Polling",
     status: "Status",
+    statusCommand: "Status command",
     task: "Task",
     taskFailed: "task failed: {message}",
     taskMessageEmpty: "task message is empty",
@@ -124,6 +143,13 @@ const messages = {
     tokenSavedLog: "token saved; refreshing authorized data",
     tokenSaving: "Saved. Loading agents...",
     timeoutSeconds: "Timeout (s)",
+    trace: "Trace",
+    traceFailed: "trace failed: {message}",
+    traceId: "Trace ID",
+    traceLoaded: "trace loaded: {id}",
+    traceOutput: "Trace Output",
+    tracePlaceholder: "Paste trace id, or open a room with trace_id",
+    traces: "Traces",
     unknown: "unknown",
     unreachable: "unreachable",
     not_configured: "not configured",
@@ -155,7 +181,13 @@ const messages = {
     chatCompletions: "Chat Completions",
     checking: "检查中",
     clear: "清空",
+    copied: "已复制",
+    copyStatus: "复制状态命令",
     events: "事件",
+    exportJson: "导出 JSON",
+    exportSummary: "导出摘要",
+    exported: "已导出",
+    format: "格式",
     gateway: "网关",
     groupChat: "群聊",
     groupNeedsAgents: "群聊至少需要选择两个智能体",
@@ -163,6 +195,7 @@ const messages = {
     goal: "目标",
     healthFailed: "健康检查失败：{message}",
     health: "健康",
+    human: "人类可读",
     idle: "空闲",
     kind: "类型",
     language: "语言",
@@ -175,13 +208,19 @@ const messages = {
     modelRouter: "模型路由",
     models: "模型",
     maxSteps: "最大步数（0 = 不限制）",
+    modelsCheck: "模型路由",
     modelsLoaded: "已加载 {count} 个模型",
+    nodesLoaded: "已加载 {count} 个节点",
+    nodesLoadFailed: "节点加载失败：{message}",
+    noNodes: "没有已注册的节点。",
+    noTrace: "尚未加载 trace。",
     noAgents: "没有已注册的智能体。",
     noRoom: "尚未选择房间。",
     noThread: "尚未选择线程。",
     node: "节点",
     nodes: "节点",
     onlineAgents: "在线",
+    overview: "概览",
     offline: "离线",
     online: "在线",
     orchestrate: "自动编排",
@@ -191,6 +230,7 @@ const messages = {
     running: "运行中",
     prompt: "提示词",
     queued: "队列",
+    quickstart: "快速状态",
     refresh: "刷新",
     reload: "重新加载",
     reachable: "可达",
@@ -224,8 +264,10 @@ const messages = {
     seen: "最近在线",
     selectedAgents: "选中的智能体",
     send: "发送",
+    showTrace: "查看 Trace",
     stopPolling: "停止轮询",
     status: "状态",
+    statusCommand: "状态命令",
     task: "任务",
     taskFailed: "任务失败：{message}",
     taskMessageEmpty: "任务消息不能为空",
@@ -243,6 +285,13 @@ const messages = {
     tokenSavedLog: "token 已保存，正在刷新授权数据",
     tokenSaving: "已保存，正在加载智能体...",
     timeoutSeconds: "超时（秒）",
+    trace: "Trace",
+    traceFailed: "trace 加载失败：{message}",
+    traceId: "Trace ID",
+    traceLoaded: "trace 已加载：{id}",
+    traceOutput: "Trace 输出",
+    tracePlaceholder: "粘贴 trace id，或从房间 trace_id 打开",
+    traces: "Trace",
     unknown: "未知",
     unreachable: "不可达",
     not_configured: "未配置",
@@ -277,9 +326,13 @@ $("tokenInput").addEventListener("keydown", (event) => {
   if (event.key === "Enter") saveToken();
 });
 $("refreshButton").addEventListener("click", refreshAll);
+$("copyStatusCommandButton").addEventListener("click", copyStatusCommand);
+$("loadNodesButton").addEventListener("click", loadNodes);
 $("loadAgentsButton").addEventListener("click", loadAgents);
 $("loadRoomsButton").addEventListener("click", loadRooms);
 $("roomForm").addEventListener("submit", createRoom);
+$("roomTraceButton").addEventListener("click", openCurrentRoomTrace);
+$("exportRoomButton").addEventListener("click", exportCurrentRoomSummary);
 $("wakeRoomButton").addEventListener("click", wakeCurrentRoom);
 $("pauseRoomButton").addEventListener("click", pauseCurrentRoom);
 $("roomMessageForm").addEventListener("submit", sendRoomMessage);
@@ -290,6 +343,15 @@ $("stopPollingButton").addEventListener("click", stopPolling);
 $("loadModelsButton").addEventListener("click", loadModels);
 $("chatForm").addEventListener("submit", sendChat);
 $("clearModelOutputButton").addEventListener("click", () => { $("modelOutput").textContent = ""; });
+$("traceForm").addEventListener("submit", lookupTrace);
+$("traceFormat").addEventListener("change", () => {
+  if (state.currentTrace) renderTrace(state.currentTrace);
+});
+$("exportTraceButton").addEventListener("click", exportCurrentTrace);
+$("clearTraceButton").addEventListener("click", () => {
+  state.currentTrace = null;
+  $("traceOutput").textContent = "";
+});
 $("clearEventsButton").addEventListener("click", () => { $("eventLog").textContent = ""; });
 
 refreshAll();
@@ -304,8 +366,10 @@ function activateTab(name) {
 
 async function refreshAll() {
   await loadHealth();
+  await loadNodes();
   await loadAgents();
   await loadRooms();
+  await loadModels({ silent: true });
 }
 
 async function saveToken() {
@@ -328,14 +392,32 @@ async function saveToken() {
 async function loadHealth() {
   try {
     const data = await request("health", { auth: false });
+    state.health = data;
     setGatewayStatus(data.ok ? "online" : "unknown", data.ok ? "status online" : "status");
     $("nodeCount").textContent = data.nodes ?? "-";
     $("agentCount").textContent = data.agents ?? "-";
     $("queuedCount").textContent = data.queued ?? "-";
     if (!state.agents.length) $("onlineAgentCount").textContent = data.agents ?? "-";
+    renderOverview();
   } catch (err) {
+    state.health = null;
     setGatewayStatus("offline", "status failed");
+    renderOverview();
     logEvent(t("healthFailed", { message: err.message }));
+  }
+}
+
+async function loadNodes() {
+  try {
+    state.nodes = await request("nodes");
+    renderNodes();
+    updateDashboardStats();
+    logEvent(t("nodesLoaded", { count: state.nodes.length }));
+  } catch (err) {
+    state.nodes = [];
+    renderNodes();
+    renderOverview();
+    logEvent(t("nodesLoadFailed", { message: err.message }));
   }
 }
 
@@ -351,9 +433,11 @@ async function loadAgents() {
     }
     renderAgents();
     updateDashboardStats();
+    renderOverview();
     logEvent(t("agentsLoaded", { count: state.agents.length }));
   } catch (err) {
     renderAuthError(err);
+    renderOverview();
   }
 }
 
@@ -396,6 +480,122 @@ function rowMessage(message) {
   td.textContent = message;
   tr.append(td);
   return tr;
+}
+
+function renderNodes() {
+  const tbody = $("nodesTable");
+  tbody.textContent = "";
+  if (!state.nodes.length) {
+    const tr = rowMessage(t("noNodes"));
+    tr.firstElementChild.colSpan = 4;
+    tbody.append(tr);
+    return;
+  }
+  for (const node of state.nodes) {
+    const id = node.id || node.node_id || "-";
+    const status = node.status || node.node_status || "unknown";
+    const agents = (node.agents || []).map((agent) => typeof agent === "string" ? agent : agent.id).filter(Boolean);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><div class="agent-name">${escapeHtml(id)}</div></td>
+      <td><span class="status ${escapeHtml(status)}">${escapeHtml(statusText(status))}</span></td>
+      <td>${agents.map((agent) => `<span class="pill">${escapeHtml(agent)}</span>`).join("") || "-"}</td>
+      <td>${escapeHtml(node.last_seen_at || node.node_last_seen_at || "-")}</td>
+    `;
+    tbody.append(tr);
+  }
+}
+
+function renderOverview() {
+  const checks = quickstartChecks();
+  const list = $("quickstartList");
+  list.textContent = "";
+  for (const item of checks) {
+    const row = document.createElement("div");
+    row.className = "check-row";
+    row.innerHTML = `
+      <span class="status ${item.ok ? "online" : item.warn ? "paused" : "unknown"}">${escapeHtml(item.ok ? "OK" : item.warn ? "WAIT" : "--")}</span>
+      <strong>${escapeHtml(item.label)}</strong>
+      <span>${escapeHtml(item.detail)}</span>
+    `;
+    list.append(row);
+  }
+  $("quickstartCommands").textContent = quickstartCommandText();
+}
+
+function quickstartChecks() {
+  const token = currentToken();
+  const onlineNodes = state.nodes.filter((node) => String(node.status || node.node_status || "").toLowerCase() === "online");
+  const onlineAgents = state.agents.filter((agent) => String(agent.status || agent.node_status || "").toLowerCase() === "online");
+  const activeRooms = state.rooms.filter((room) => ["active", "running", "finishing"].includes(String(room.status || "").toLowerCase()));
+  return [
+    {
+      label: t("gateway"),
+      ok: Boolean(state.health?.ok),
+      detail: state.health ? `${state.health.nodes ?? 0}/${state.health.registered_nodes ?? state.health.nodes ?? 0} ${t("nodes")}` : t("offline")
+    },
+    {
+      label: t("token"),
+      ok: Boolean(token),
+      warn: !token,
+      detail: token ? t("tokenSaved") : t("tokenRequiredShort")
+    },
+    {
+      label: t("nodes"),
+      ok: onlineNodes.length > 0,
+      warn: state.nodes.length > 0,
+      detail: `${onlineNodes.length}/${state.nodes.length || state.health?.registered_nodes || 0} ${t("online")}`
+    },
+    {
+      label: t("agents"),
+      ok: onlineAgents.length > 0,
+      warn: state.agents.length > 0,
+      detail: `${onlineAgents.length}/${state.agents.length || state.health?.registered_agents || 0} ${t("onlineAgents")}`
+    },
+    {
+      label: t("rooms"),
+      ok: activeRooms.length > 0 || state.rooms.length > 0,
+      warn: state.rooms.length > 0,
+      detail: `${activeRooms.length} ${t("activeRooms")} / ${state.rooms.length} ${t("rooms")}`
+    },
+    {
+      label: t("modelsCheck"),
+      ok: state.models.length > 0,
+      warn: !state.models.length,
+      detail: `${state.models.length} ${t("models")}`
+    }
+  ];
+}
+
+function quickstartCommandText() {
+  const gateway = apiBase.href.replace(/\/$/, "");
+  const agents = [...state.selectedAgents].join(",") || "agent-id";
+  const lines = [
+    `${t("statusCommand")}:`,
+    `agent-bus status --gateway ${gateway} --token ***`,
+    "",
+    "Room:",
+    `agent-bus room create --gateway ${gateway} --token *** --agents ${agents} --goal "Check current Agent Bus status and report next action."`
+  ];
+  if (state.currentRoom?.trace_id) {
+    lines.push("", "Trace:", `agent-bus trace show ${state.currentRoom.trace_id} --gateway ${gateway} --token ***`);
+  }
+  return lines.join("\n");
+}
+
+async function copyStatusCommand() {
+  const command = quickstartCommandText().split("\n").find((line) => line.startsWith("agent-bus status"));
+  if (!command) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      $("quickstartCommands").focus();
+    }
+  } catch {
+    $("quickstartCommands").focus();
+  }
+  logEvent(t("copied"));
 }
 
 async function routeTask() {
@@ -458,12 +658,14 @@ async function loadRooms() {
     state.rooms = [...rooms].sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
     renderRooms();
     updateDashboardStats();
+    renderOverview();
     if (!state.currentRoomId && rooms[0]) {
       state.currentRoomId = state.rooms[0].id;
       await loadRoom(state.rooms[0].id);
     }
   } catch (err) {
     logEvent(t("roomLoadFailed", { message: err.message }));
+    renderOverview();
   }
 }
 
@@ -482,7 +684,7 @@ function renderRooms() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `room-list-item ${room.id === state.currentRoomId ? "active" : ""}`;
-    const activeRuns = (room.runs || []).filter((run) => ["queued", "running"].includes(run.status)).length;
+    const activeRuns = roomActiveRunCount(room);
     button.innerHTML = `
       <div class="room-list-title">
         <strong>${escapeHtml(room.title || room.id)}</strong>
@@ -493,7 +695,7 @@ function renderRooms() {
         <span>${escapeHtml(room.updated_at || room.created_at || "")}</span>
       </div>
       <div class="room-list-meta">
-        <span>${escapeHtml((room.reports || []).length)} ${escapeHtml(t("reports"))}</span>
+        <span>${escapeHtml(roomReportCount(room))} ${escapeHtml(t("reports"))}</span>
         <span>${escapeHtml(activeRuns)} ${escapeHtml(t("activeRuns"))}</span>
       </div>
     `;
@@ -602,10 +804,15 @@ function renderRoom(room) {
       <div><span class="metric-label">${escapeHtml(t("status"))}</span><strong class="status ${escapeHtml(room.status || "unknown")}">${escapeHtml(statusText(room.status || "unknown"))}</strong></div>
       <div><span class="metric-label">${escapeHtml(t("agents"))}</span><strong>${escapeHtml((room.agents || []).length)}</strong></div>
       <div><span class="metric-label">${escapeHtml(t("maxSteps"))}</span><strong>${escapeHtml(room.autonomy?.steps || 0)}/${escapeHtml(room.autonomy?.max_steps || 0)}</strong></div>
+      <div><span class="metric-label">${escapeHtml(t("message"))}</span><strong>${escapeHtml(roomMessageCount(room))}</strong></div>
+      <div><span class="metric-label">${escapeHtml(t("reports"))}</span><strong>${escapeHtml(roomReportCount(room))}</strong></div>
+      <div><span class="metric-label">${escapeHtml(t("trace"))}</span><strong>${escapeHtml(room.trace_id || "-")}</strong></div>
     </div>
   `;
   $("pauseRoomButton").disabled = !room.id || ["paused", "completed"].includes(room.status);
   $("wakeRoomButton").disabled = !room.id || room.status === "paused";
+  $("roomTraceButton").disabled = !room.trace_id;
+  $("exportRoomButton").disabled = !room.id;
   renderRooms();
   updateDashboardStats();
   const messageList = $("roomMessages");
@@ -642,6 +849,58 @@ function renderRoom(room) {
     `;
     reports.append(node);
   }
+  const notes = room.blackboard?.notes || [];
+  if (notes.length) {
+    const title = document.createElement("div");
+    title.className = "subhead";
+    title.textContent = "BLACKBOARD";
+    reports.append(title);
+  }
+  for (const note of notes) {
+    const node = document.createElement("div");
+    node.className = "run-item";
+    node.innerHTML = `
+      <div class="run-head">
+        <strong>${escapeHtml(note.speaker || "blackboard")}</strong>
+        <span class="muted">${escapeHtml(note.at || "")}</span>
+      </div>
+      <pre class="output">${escapeHtml((note.content || "").trim())}</pre>
+    `;
+    reports.append(node);
+  }
+  if ((room.runs || []).length) {
+    const title = document.createElement("div");
+    title.className = "subhead";
+    title.textContent = "RUNS";
+    reports.append(title);
+  }
+  for (const run of room.runs || []) {
+    const output = (run.stdout || run.summary || run.stderr || "").trim();
+    const node = document.createElement("div");
+    node.className = "run-item";
+    node.innerHTML = `
+      <div class="run-head">
+        <div><strong>${escapeHtml(run.agent_id || "-")}</strong> <span class="muted">${escapeHtml(run.node_id || run.id || "")}</span></div>
+        <span class="status ${escapeHtml(run.status || "unknown")}">${escapeHtml(statusText(run.status || "unknown"))}</span>
+      </div>
+      <pre class="output">${escapeHtml(output)}</pre>
+    `;
+    reports.append(node);
+  }
+  renderOverview();
+}
+
+async function openCurrentRoomTrace() {
+  if (!state.currentRoom?.trace_id) return;
+  $("traceInput").value = state.currentRoom.trace_id;
+  activateTab("traces");
+  await lookupTrace();
+}
+
+function exportCurrentRoomSummary() {
+  if (!state.currentRoom?.id) return;
+  downloadJson(`${state.currentRoom.id}-summary.json`, roomExportSummary(state.currentRoom));
+  logEvent(t("exported"));
 }
 
 function upsertRoom(room) {
@@ -702,15 +961,20 @@ function renderConversation(thread) {
   }
 }
 
-async function loadModels() {
+async function loadModels(options = {}) {
   try {
     const data = await request("v1/models");
     state.models = data.data || [];
     renderModelOptions();
-    $("modelOutput").textContent = JSON.stringify(data, null, 2);
-    logEvent(t("modelsLoaded", { count: data.data?.length || 0 }));
+    if (!options.silent) {
+      $("modelOutput").textContent = JSON.stringify(data, null, 2);
+      logEvent(t("modelsLoaded", { count: data.data?.length || 0 }));
+    }
+    renderOverview();
   } catch (err) {
-    $("modelOutput").textContent = err.message;
+    state.models = [];
+    if (!options.silent) $("modelOutput").textContent = err.message;
+    renderOverview();
   }
 }
 
@@ -745,6 +1009,69 @@ async function sendChat(event) {
   }
 }
 
+async function lookupTrace(event) {
+  if (event) event.preventDefault();
+  const traceId = $("traceInput").value.trim();
+  if (!traceId) {
+    $("traceOutput").textContent = t("noTrace");
+    return;
+  }
+  try {
+    const data = await request(`traces/${encodeURIComponent(traceId)}`);
+    state.currentTrace = data;
+    renderTrace(data);
+    logEvent(t("traceLoaded", { id: traceId }));
+  } catch (err) {
+    $("traceOutput").textContent = err.message;
+    logEvent(t("traceFailed", { message: err.message }));
+  }
+}
+
+function renderTrace(trace) {
+  if ($("traceFormat").value === "json") {
+    $("traceOutput").textContent = JSON.stringify(trace, null, 2);
+    return;
+  }
+  const summary = trace.summary || {};
+  const lines = [
+    `Trace ${trace.trace_id || $("traceInput").value.trim()}`,
+    `${t("rooms")}: ${summary.rooms || 0} | ${t("tasks")}: ${summary.threads || 0} | ${t("activeRuns")}: ${summary.runs || 0}`,
+    `${t("agents")}: ${(summary.agents || []).join(", ") || "-"}`,
+    `${t("nodes")}: ${(summary.nodes || []).join(", ") || "-"}`,
+    ""
+  ];
+  if (trace.rooms?.length) {
+    lines.push(`${t("rooms")}:`);
+    for (const room of trace.rooms) {
+      lines.push(`- ${room.id}: ${statusText(room.status || "unknown")} | ${(room.agents || []).join(", ") || "-"} | ${room.updated_at || "-"}`);
+    }
+    lines.push("");
+  }
+  if (trace.runs?.length) {
+    lines.push("Runs:");
+    for (const run of trace.runs) {
+      lines.push(`- ${run.id}: ${statusText(run.status || "unknown")} | ${run.agent_id || "-"} | ${run.node_id || "-"} | ${run.room_id || run.thread_id || "-"}`);
+    }
+    lines.push("");
+  }
+  if (trace.events?.length) {
+    lines.push(`${t("events")}:`);
+    for (const event of trace.events.slice(-30)) {
+      lines.push(`- ${event.at || ""} ${event.type || event.event || "event"} ${event.agent_id || ""} ${event.run_id || ""}`.trim());
+    }
+  }
+  $("traceOutput").textContent = lines.join("\n");
+}
+
+function exportCurrentTrace() {
+  if (!state.currentTrace) {
+    $("traceOutput").textContent = t("noTrace");
+    return;
+  }
+  downloadJson(`${state.currentTrace.trace_id || "trace"}.json`, state.currentTrace);
+  logEvent(t("exported"));
+}
+
 function modelRequestBody({ endpoint, model, prompt, cacheScope, timeoutSeconds }) {
   const timeout = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? { timeout_seconds: timeoutSeconds } : {};
   if (endpoint === "responses") {
@@ -767,7 +1094,7 @@ async function request(path, options = {}) {
   const url = new URL(path, apiBase);
   const headers = { ...(options.headers || {}) };
   if (options.auth !== false) {
-    const token = normalizeToken($("tokenInput").value || sessionStorage.getItem("agentBusToken") || "");
+    const token = currentToken();
     if (token) headers.authorization = `Bearer ${token}`;
   }
   let body;
@@ -804,8 +1131,24 @@ function logEvent(message) {
   $("eventLog").textContent = `${line}\n${$("eventLog").textContent}`.slice(0, 20000);
 }
 
+function currentToken() {
+  return normalizeToken($("tokenInput").value || sessionStorage.getItem("agentBusToken") || "");
+}
+
 function normalizeToken(value) {
   return String(value || "").trim().replace(/^Bearer\s+/i, "").trim();
+}
+
+function downloadJson(filename, value) {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function setTokenStatus(key, className = "") {
@@ -833,9 +1176,12 @@ function applyLanguage() {
   if (state.tokenStatusKey) setTokenStatus(state.tokenStatusKey, state.tokenStatusClass);
   const gatewayKey = $("gatewayStatus").dataset.statusKey;
   if (gatewayKey) $("gatewayStatus").textContent = t(gatewayKey);
+  renderNodes();
+  renderOverview();
   renderRooms();
   if (state.currentRoom) renderRoom(state.currentRoom);
   if (state.currentThread) renderThread(state.currentThread);
+  if (state.currentTrace) renderTrace(state.currentTrace);
 }
 
 function t(key, values = {}) {
@@ -859,7 +1205,61 @@ function agentActivity(agent) {
   return "idle";
 }
 
+function roomReportCount(room) {
+  if (Array.isArray(room.reports)) return room.reports.length;
+  if (Number.isFinite(room.report_count)) return room.report_count;
+  if (Number.isFinite(room.reports)) return room.reports;
+  return 0;
+}
+
+function roomMessageCount(room) {
+  if (Array.isArray(room.messages)) return room.messages.length;
+  if (Number.isFinite(room.message_count)) return room.message_count;
+  if (Number.isFinite(room.messages)) return room.messages;
+  return 0;
+}
+
+function roomActiveRunCount(room) {
+  if (Array.isArray(room.active_runs)) return room.active_runs.length;
+  if (!Array.isArray(room.runs)) return 0;
+  return room.runs.filter((run) => ["queued", "running"].includes(String(run.status || "").toLowerCase())).length;
+}
+
+function roomExportSummary(room) {
+  return {
+    id: room.id,
+    trace_id: room.trace_id,
+    title: room.title,
+    goal: room.goal,
+    status: room.status,
+    created_at: room.created_at,
+    updated_at: room.updated_at,
+    agents: room.agents || [],
+    reports: room.reports || [],
+    blackboard: {
+      notes: room.blackboard?.notes || [],
+      next_actions: room.blackboard?.next_actions || [],
+      open_questions: room.blackboard?.open_questions || []
+    },
+    runs: (room.runs || []).map((run) => ({
+      id: run.id,
+      trace_id: run.trace_id,
+      agent_id: run.agent_id,
+      node_id: run.node_id,
+      status: run.status,
+      created_at: run.created_at,
+      started_at: run.started_at,
+      completed_at: run.completed_at,
+      exit_code: run.exit_code
+    }))
+  };
+}
+
 function updateDashboardStats() {
+  if (state.nodes.length) {
+    const onlineNodes = state.nodes.filter((node) => String(node.status || node.node_status || "").toLowerCase() === "online").length;
+    $("nodeCount").textContent = `${onlineNodes}/${state.nodes.length}`;
+  }
   if (state.agents.length) {
     $("agentCount").textContent = state.agents.length;
     $("onlineAgentCount").textContent = state.agents.filter((agent) => (agent.status || agent.node_status) === "online").length;
@@ -870,6 +1270,7 @@ function updateDashboardStats() {
   } else {
     $("activeRoomCount").textContent = "-";
   }
+  renderOverview();
 }
 
 function syncTaskMode() {

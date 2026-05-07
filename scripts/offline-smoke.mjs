@@ -184,6 +184,23 @@ async function main() {
   const summaryJson = await runCliJson(["room", "export", finalRoom.id, "--format", "json", "--reports-only", "--gateway", base, "--token", token]);
   assert(summaryJson.id === finalRoom.id, "CLI room export --reports-only json wrote the wrong room");
   assert(!Object.hasOwn(summaryJson, "messages"), "CLI room export --reports-only json included full messages");
+  const eventBundle = await runCliJson(["room", "export", finalRoom.id, "--format", "events", "--gateway", base, "--token", token]);
+  assert(eventBundle.object === "agent_bus.room_event_bundle", "CLI room export --format events did not return an event bundle");
+  assert(eventBundle.room?.id === finalRoom.id, "event bundle has the wrong room id");
+  assert(eventBundle.events?.some((event) => event.type === "room.created"), "event bundle did not include room.created");
+  assert(eventBundle.events?.some((event) => event.type === "run.completed"), "event bundle did not include run.completed");
+  assert(eventBundle.events?.some((event) => event.type === "room.report.added"), "event bundle did not include room.report.added");
+  assert(!JSON.stringify(eventBundle).includes("sk-test-secret-000000000000000000"), "event bundle did not redact token-like content");
+  const eventBundlePath = path.join(tempDir, "room-events.json");
+  await runCliText(["room", "export", finalRoom.id, "--format", "events", "--out", eventBundlePath, "--gateway", base, "--token", token]);
+  const replayJson = await runCliJson(["room", "replay", "--in", eventBundlePath]);
+  assert(replayJson.object === "agent_bus.room_replay", "CLI room replay did not return a replay summary");
+  assert(replayJson.room?.id === finalRoom.id, "CLI room replay returned the wrong room id");
+  assert(replayJson.counts?.completed_runs >= 1, "CLI room replay did not count completed runs");
+  assert(replayJson.counts?.reports >= 1, "CLI room replay did not count reports");
+  const replayMarkdown = await runCliText(["room", "replay", "--in", eventBundlePath, "--format", "markdown"]);
+  assert(replayMarkdown.includes("# Agent Bus Room Replay:"), "CLI room replay --format markdown did not render a title");
+  assert(replayMarkdown.includes("offline smoke run completed"), "CLI room replay markdown did not include report content");
 
   if (!edge.killed) edge.kill("SIGTERM");
   await waitForExit(edge);
@@ -231,6 +248,7 @@ async function main() {
     run_id: run.id,
     reports: finalRoom.reports?.length || 0,
     blackboard_notes: finalRoom.blackboard?.notes?.length || 0,
+    event_count: eventBundle.events?.length || 0,
     export_bytes: Buffer.byteLength(cliExport)
   };
 

@@ -181,6 +181,8 @@ Usage:
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
+  agent-bus room export room_xxx --format events --out room-events.json
+  agent-bus room replay --in room-events.json --format markdown
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
@@ -1131,11 +1133,28 @@ async function room(args) {
     let text = "";
     if (format === "json") {
       text = `${JSON.stringify(reportsOnly ? roomExportSummary(exportData) : exportData, null, 2)}\n`;
+    } else if (format === "events" || format === "event-bundle" || format === "replay") {
+      text = `${JSON.stringify(roomEventBundle(exportData, { reportsOnly }), null, 2)}\n`;
     } else if (format === "markdown" || format === "md") {
       text = formatRoomMarkdown(exportData, { reportsOnly });
     } else {
-      throw new Error("room export --format must be markdown or json.");
+      throw new Error("room export --format must be markdown, json, or events.");
     }
+    if (out) {
+      fs.writeFileSync(path.resolve(out), text);
+      return;
+    }
+    process.stdout.write(text);
+    return;
+  }
+  if (action === "replay") {
+    const input = optionValue(args, "--in") || optionValue(args, "--input") || requiredPositional(args, 1, "event bundle path");
+    const format = optionValue(args, "--format") || (args.includes("--markdown") ? "markdown" : "json");
+    const summary = replayRoomEvents(readJsonFile(input));
+    const text = format === "markdown" || format === "md"
+      ? formatRoomReplayMarkdown(summary)
+      : `${JSON.stringify(summary, null, 2)}\n`;
+    const out = optionValue(args, "--out") || optionValue(args, "-o") || "";
     if (out) {
       fs.writeFileSync(path.resolve(out), text);
       return;
@@ -1193,7 +1212,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|export|create|wake|pause|message [options]");
+  throw new Error("Usage: agent-bus room list|show|export|replay|create|wake|pause|message [options]");
 }
 
 function redactRoomExport(value) {
@@ -1247,6 +1266,275 @@ function roomExportSummary(room) {
       completed_at: run.completed_at
     }))
   };
+}
+
+function roomEventBundle(room, options = {}) {
+  const events = [];
+  const roomId = room.id || "";
+  const reportsOnly = options.reportsOnly === true;
+  const add = (type, at, actor, payload = {}, extra = {}) => {
+    events.push({
+      type,
+      at: at || room.updated_at || room.created_at || new Date(0).toISOString(),
+      actor: actor || "system",
+      room_id: roomId,
+      ...extra,
+      payload
+    });
+  };
+
+  add("room.created", room.created_at, "system", {
+    title: room.title || "",
+    goal: room.goal || "",
+    status: room.status || "unknown",
+    agents: room.agents || []
+  });
+
+  if (!reportsOnly) {
+    for (const [index, message] of (room.messages || []).entries()) {
+      add("room.message.added", message.at, message.speaker || message.role || "unknown", {
+        index,
+        role: message.role || "",
+        speaker: message.speaker || "",
+        content: message.content || ""
+      });
+    }
+  }
+
+  for (const run of room.runs || []) {
+    add("run.queued", run.created_at, run.agent_id || "system", {
+      agent_id: run.agent_id || "",
+      node_id: run.node_id || "",
+      kind: run.kind || "",
+      role: run.role || ""
+    }, { run_id: run.id || "" });
+    if (run.started_at) {
+      add("run.started", run.started_at, run.agent_id || "system", {
+        agent_id: run.agent_id || "",
+        node_id: run.node_id || ""
+      }, { run_id: run.id || "" });
+    }
+    if (!reportsOnly) {
+      for (const [index, event] of (run.events || []).entries()) {
+        if (!event?.text && !event?.stream) continue;
+        add("run.output", event.at || run.started_at || run.created_at, run.agent_id || "system", {
+          index,
+          stream: event.stream || "",
+          text: event.text || ""
+        }, { run_id: run.id || "" });
+      }
+    }
+    if (isTerminalRunStatus(run.status)) {
+      add(run.status === "completed" ? "run.completed" : "run.failed", run.completed_at || room.updated_at, run.agent_id || "system", {
+        agent_id: run.agent_id || "",
+        status: run.status || "unknown",
+        exit_code: run.exit_code ?? null,
+        stdout_bytes: Buffer.byteLength(run.stdout || "", "utf8"),
+        stderr_bytes: Buffer.byteLength(run.stderr || "", "utf8")
+      }, { run_id: run.id || "" });
+    }
+  }
+
+  for (const [index, report] of (room.reports || room.blackboard?.reports || []).entries()) {
+    add("room.report.added", report.at, report.speaker || report.agent_id || "unknown", {
+      index,
+      content: report.content || ""
+    });
+  }
+
+  for (const [index, note] of (room.blackboard?.notes || []).entries()) {
+    add("room.blackboard.updated", note.at, note.speaker || note.agent_id || "unknown", {
+      index,
+      content: note.content || ""
+    });
+  }
+
+  if (room.status) {
+    add("room.status.changed", room.updated_at || room.completed_at, "system", {
+      status: room.status
+    });
+  }
+
+  const sorted = events
+    .map((event, index) => ({ ...event, _index: index }))
+    .sort((left, right) => String(left.at).localeCompare(String(right.at)) || left._index - right._index)
+    .map((event, index) => {
+      const { _index, ...clean } = event;
+      return { id: `${roomId || "room"}:event:${String(index + 1).padStart(4, "0")}`, ...clean };
+    });
+
+  return {
+    object: "agent_bus.room_event_bundle",
+    protocol: "agent-bus.v1",
+    generated_at: new Date().toISOString(),
+    source: "room.snapshot",
+    reports_only: reportsOnly,
+    room: {
+      id: roomId,
+      title: room.title || "",
+      status: room.status || "unknown",
+      agents: room.agents || [],
+      created_at: room.created_at || "",
+      updated_at: room.updated_at || ""
+    },
+    counts: countRoomEvents(sorted),
+    events: sorted
+  };
+}
+
+function replayRoomEvents(bundle) {
+  if (!bundle || typeof bundle !== "object" || !Array.isArray(bundle.events)) {
+    throw new Error("room replay requires a JSON event bundle with an events array.");
+  }
+  const summary = {
+    object: "agent_bus.room_replay",
+    protocol: bundle.protocol || "agent-bus.v1",
+    replayed_at: new Date().toISOString(),
+    source: bundle.object || "unknown",
+    room: {
+      id: bundle.room?.id || "",
+      title: bundle.room?.title || "",
+      status: bundle.room?.status || "unknown",
+      agents: bundle.room?.agents || []
+    },
+    counts: {
+      events: 0,
+      messages: 0,
+      reports: 0,
+      blackboard_updates: 0,
+      runs: 0,
+      completed_runs: 0,
+      failed_runs: 0,
+      output_events: 0,
+      output_bytes: 0
+    },
+    runs: [],
+    reports: [],
+    blackboard: []
+  };
+  const runs = new Map();
+  for (const event of bundle.events) {
+    summary.counts.events += 1;
+    if (event.type === "room.created") {
+      summary.room.id ||= event.room_id || "";
+      summary.room.title ||= event.payload?.title || "";
+      summary.room.status = event.payload?.status || summary.room.status;
+      summary.room.agents = event.payload?.agents || summary.room.agents;
+    } else if (event.type === "room.status.changed") {
+      summary.room.status = event.payload?.status || summary.room.status;
+    } else if (event.type === "room.message.added") {
+      summary.counts.messages += 1;
+    } else if (event.type === "room.report.added") {
+      summary.counts.reports += 1;
+      summary.reports.push({
+        at: event.at,
+        speaker: event.actor,
+        content: event.payload?.content || ""
+      });
+    } else if (event.type === "room.blackboard.updated") {
+      summary.counts.blackboard_updates += 1;
+      summary.blackboard.push({
+        at: event.at,
+        speaker: event.actor,
+        content: event.payload?.content || ""
+      });
+    } else if (event.type === "run.queued") {
+      const run = ensureReplayRun(runs, event);
+      run.status = "queued";
+      run.created_at = event.at;
+      run.agent_id = event.payload?.agent_id || event.actor || run.agent_id;
+    } else if (event.type === "run.started") {
+      const run = ensureReplayRun(runs, event);
+      run.status = "running";
+      run.started_at = event.at;
+    } else if (event.type === "run.output") {
+      const run = ensureReplayRun(runs, event);
+      const bytes = Buffer.byteLength(event.payload?.text || "", "utf8");
+      run.output_events += 1;
+      run.output_bytes += bytes;
+      summary.counts.output_events += 1;
+      summary.counts.output_bytes += bytes;
+    } else if (event.type === "run.completed" || event.type === "run.failed") {
+      const run = ensureReplayRun(runs, event);
+      run.status = event.payload?.status || (event.type === "run.completed" ? "completed" : "failed");
+      run.completed_at = event.at;
+      run.exit_code = event.payload?.exit_code ?? null;
+      if (event.type === "run.completed") summary.counts.completed_runs += 1;
+      if (event.type === "run.failed") summary.counts.failed_runs += 1;
+    }
+  }
+  summary.runs = [...runs.values()].sort((left, right) => String(left.created_at || "").localeCompare(String(right.created_at || "")));
+  summary.counts.runs = summary.runs.length;
+  return summary;
+}
+
+function ensureReplayRun(runs, event) {
+  const runId = event.run_id || "run_unknown";
+  if (!runs.has(runId)) {
+    runs.set(runId, {
+      id: runId,
+      agent_id: event.payload?.agent_id || event.actor || "",
+      status: "unknown",
+      created_at: "",
+      started_at: "",
+      completed_at: "",
+      exit_code: null,
+      output_events: 0,
+      output_bytes: 0
+    });
+  }
+  return runs.get(runId);
+}
+
+function countRoomEvents(events) {
+  const counts = { events: events.length };
+  for (const event of events) {
+    counts[event.type] = (counts[event.type] || 0) + 1;
+  }
+  return counts;
+}
+
+function isTerminalRunStatus(status) {
+  return ["completed", "failed", "error", "cancelled", "canceled", "skipped"].includes(String(status || "").toLowerCase());
+}
+
+function formatRoomReplayMarkdown(summary) {
+  const lines = [];
+  lines.push(`# Agent Bus Room Replay: ${summary.room.title || summary.room.id || "untitled"}`);
+  lines.push("");
+  lines.push(`- room: \`${summary.room.id || "-"}\``);
+  lines.push(`- status: \`${summary.room.status || "unknown"}\``);
+  lines.push(`- agents: ${formatInlineList(summary.room.agents)}`);
+  lines.push(`- events: ${summary.counts.events}`);
+  lines.push(`- runs: ${summary.counts.completed_runs}/${summary.counts.runs} completed`);
+  lines.push(`- reports: ${summary.counts.reports}`);
+  lines.push(`- blackboard updates: ${summary.counts.blackboard_updates}`);
+  lines.push("");
+  if (summary.reports.length) {
+    lines.push("## Reports");
+    lines.push("");
+    for (const report of summary.reports) {
+      lines.push(`- ${report.at || "-"} ${report.speaker || "unknown"}: ${report.content || ""}`);
+    }
+    lines.push("");
+  }
+  if (summary.blackboard.length) {
+    lines.push("## Blackboard");
+    lines.push("");
+    for (const note of summary.blackboard) {
+      lines.push(`- ${note.at || "-"} ${note.speaker || "unknown"}: ${note.content || ""}`);
+    }
+    lines.push("");
+  }
+  if (summary.runs.length) {
+    lines.push("## Runs");
+    lines.push("");
+    for (const run of summary.runs) {
+      lines.push(`- ${run.id}: ${run.agent_id || "-"} ${run.status || "unknown"} output_events=${run.output_events}`);
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function formatRoomMarkdown(room, options = {}) {
@@ -1722,6 +2010,11 @@ function readJsonObjectIfExists(file) {
   const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   if (!isPlainObject(parsed)) throw new Error(`${file} must contain a JSON object`);
   return parsed;
+}
+
+function readJsonFile(file) {
+  const resolved = path.resolve(file);
+  return JSON.parse(fs.readFileSync(resolved, "utf8"));
 }
 
 function isPlainObject(value) {

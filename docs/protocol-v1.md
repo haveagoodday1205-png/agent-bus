@@ -220,6 +220,15 @@ Future hardening:
 - signed run receipts
 - exportable replay bundles
 
+Current implementation note:
+
+```bash
+agent-bus room export room_xxx --format events --out room-events.json
+agent-bus room replay --in room-events.json --format markdown
+```
+
+This creates a redacted `agent_bus.room_event_bundle` from a room snapshot and replays it offline into a deterministic summary. It is a compatibility bridge toward a fully append-only room event store.
+
 ## Trust And Permissions
 
 Default stance: agents are untrusted.

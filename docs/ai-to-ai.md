@@ -135,6 +135,7 @@ Agents should prefer concrete outcomes over commentary. A useful room turn usual
 4. Adapters write stdout/stderr events and a final summary back to the gateway.
 5. The gateway parses room directives into follow-up messages, reports, blackboard updates, reminders, or completion requests.
 6. Operators can inspect durable JSON/JSONL run records to audit what happened.
+7. Operators can export a redacted room event bundle with `agent-bus room export ROOM_ID --format events` and replay it offline with `agent-bus room replay --in room-events.json`.
 
 This lifecycle keeps the protocol understandable: Agent Bus moves messages, metadata, and run records; the local edge machine decides which tools and permissions an adapter actually has.
 

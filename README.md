@@ -318,6 +318,8 @@ agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room export room_xxx --format markdown --out room.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room export room_xxx --reports-only --out room-summary.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room export room_xxx --format json --out room.json --no-redact --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room export room_xxx --format events --out room-events.json --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room replay --in room-events.json --format markdown
 agent-bus room message room_xxx --message "New context" --agents openclaw-hk
 agent-bus room wake room_xxx --agents hermes-hk --reason "Continue from the latest report."
 ```
@@ -333,6 +335,8 @@ DONE
 ```
 
 `DONE` requests completion; the room waits for all queued and running work to finish before becoming completed.
+
+For demos, debugging, and future SDK compatibility work, `room export --format events` creates a redacted room event bundle from the room snapshot, and `room replay --in` rebuilds a deterministic offline summary from that bundle.
 
 ## OpenAI-Compatible Model Router
 

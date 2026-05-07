@@ -119,6 +119,14 @@ agent-bus connect --config edge.config.json
 
 For the full two-machine path, see [Remote Assistant Quickstart](docs/remote-assistant-quickstart.md).
 
+If setup fails, generate a redacted support bundle before opening an issue:
+
+```bash
+agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
+```
+
+It includes versions, config shape, gateway reachability, agents/nodes/models visibility, and local probe status without printing tokens, hosts, or private paths by default.
+
 Check live reachability and room activity from the operator machine:
 
 ```bash
@@ -147,8 +155,8 @@ For the full trust-boundary map covering the admin token, pair code, scoped edge
 Run a central gateway:
 
 ```bash
-agent-bus init central --out central.config.json
-# edit token and modelRouter backends
+agent-bus setup central --gateway https://YOUR-DOMAIN/agent-bus --out central.config.json --service auto
+# edit modelRouter backends if needed
 agent-bus serve --runtime python --config central.config.json
 ```
 

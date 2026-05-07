@@ -32,6 +32,12 @@ body:
     validations:
       required: true
   - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics bundle
+      description: If possible, run `agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json` and paste the redacted summary or attach the reviewed file. Do not include private hosts/paths unless this is a private support channel.
+      render: json
+  - type: textarea
     id: logs
     attributes:
       label: Logs

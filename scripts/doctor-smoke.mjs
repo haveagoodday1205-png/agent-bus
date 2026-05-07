@@ -107,6 +107,36 @@ async function main() {
     requiredWarnings: ["gateway rooms"]
   });
 
+  step("Verifying diagnostics bundle redaction");
+  const bundlePath = path.join(tempDir, "diagnostics.json");
+  await runDoctor(["--config", edgeConfig, "--json", "--bundle", bundlePath]);
+  const bundle = JSON.parse(fs.readFileSync(bundlePath, "utf8"));
+  const bundleText = JSON.stringify(bundle);
+  assert(bundle.schema === "agent_bus.diagnostics.v1", "diagnostics bundle has the wrong schema");
+  assert(bundle.doctor?.counts?.pass >= 1, "diagnostics bundle omitted doctor counts");
+  assert(!bundleText.includes(token), "diagnostics bundle leaked the admin token");
+  assert(!bundleText.includes(edgeToken), "diagnostics bundle leaked the edge token");
+  assert(!bundleText.includes(gateway), "diagnostics bundle leaked the raw gateway URL");
+  assert(bundleText.includes("[REDACTED"), "diagnostics bundle did not include redaction markers");
+
+  step("Verifying edge token model-router boundaries");
+  const realBackendDenied = await requestStatus(`${gateway}/v1/chat/completions`, {
+    method: "POST",
+    headers: authJsonHeaders(edgeToken),
+    body: JSON.stringify({
+      model: "agent-bus-default",
+      messages: [{ role: "user", content: "should be denied before backend routing" }]
+    })
+  });
+  assert(realBackendDenied === 401, `edge token could call a real backend model: ${realBackendDenied}`);
+
+  step("Verifying setup central dry-run path");
+  const setupCentralConfig = path.join(tempDir, "setup-central.config.json");
+  await runCli(["setup", "central", "--out", setupCentralConfig, "--gateway", gateway, "--token", "sk-setup-central-smoke-token-000000", "--service", "none"]);
+  const setupConfig = JSON.parse(fs.readFileSync(setupCentralConfig, "utf8"));
+  assert(setupConfig.token === "sk-setup-central-smoke-token-000000", "setup central did not write the configured token");
+  assert(setupConfig.modelRouter?.enabled === true, "setup central did not keep the model router enabled by default");
+
   if (!edge.killed) edge.kill("SIGTERM");
   if (!central.killed) central.kill("SIGTERM");
   await Promise.all([waitForExit(edge), waitForExit(central)]);
@@ -117,7 +147,9 @@ async function main() {
     gateway,
     agents: ["doctor-echo"],
     admin_counts: adminDoctor.counts,
-    edge_counts: edgeDoctor.counts
+    edge_counts: edgeDoctor.counts,
+    diagnostics_bundle: path.basename(bundlePath),
+    edge_backend_denied: realBackendDenied
   };
 
   if (jsonOut) {
@@ -176,6 +208,34 @@ function runDoctor(args, timeoutMs = 20000) {
       } catch (err) {
         reject(new Error(`doctor did not return JSON: ${err.message}\n${stdout}`));
       }
+    });
+  });
+}
+
+function runCli(args, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(node, [path.join(root, "agent-bus.mjs"), ...args], {
+      cwd: root,
+      env: { ...process.env },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`agent-bus ${args.join(" ")} timed out\n${stderr || stdout}`));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error(`agent-bus ${args.join(" ")} exited with ${code}\n${stderr || stdout}`));
+      resolve({ stdout, stderr });
     });
   });
 }
@@ -246,6 +306,16 @@ async function requestJson(url, options = {}) {
   const text = await res.text();
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
   return text.trim() ? JSON.parse(text) : {};
+}
+
+async function requestStatus(url, options = {}) {
+  const res = await fetch(url, options);
+  await res.arrayBuffer();
+  return res.status;
+}
+
+function authJsonHeaders(token) {
+  return { authorization: `Bearer ${token}`, "content-type": "application/json" };
 }
 
 function findPython() {

@@ -32,7 +32,7 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 - Improve one `agent-bus doctor` warning so it gives an exact next command.
 - Add `--json` output to a CLI path that is useful for scripts.
 - Improve error messages for missing gateway URL, token, config path, or unsupported platform.
-- Add one command that prints a redacted "ready to paste into an issue" diagnostics bundle.
+- Improve the diagnostics bundle with one more platform-specific check, redaction test, or issue-template example.
 
 ## Rooms and exports
 

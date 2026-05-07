@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -100,6 +101,10 @@ async function main() {
     await doctor(argv.slice(1));
     return;
   }
+  if (command === "diagnostics" || command === "diag") {
+    await diagnostics(argv.slice(1));
+    return;
+  }
   if (command === "smoke") {
     await runScript("scripts/offline-smoke.mjs", stripCliOnlyArgs(argv.slice(1)));
     return;
@@ -171,6 +176,7 @@ Usage:
   agent-bus serve --config central.config.json [--runtime node|python]
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json [--json]
+  agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
   agent-bus smoke --offline
   agent-bus demo
   agent-bus demo room
@@ -180,6 +186,7 @@ Usage:
   agent-bus demo local
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
+  agent-bus setup central --gateway https://YOUR-DOMAIN/agent-bus --out central.config.json --service auto
   agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --auto --service auto
   agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
@@ -359,8 +366,12 @@ sc.exe start ${options.name}
 
 async function setup(args) {
   const target = args[0] || "edge";
+  if (target === "central") {
+    await setupCentral(args.slice(1));
+    return;
+  }
   if (target !== "edge") {
-    throw new Error("Usage: agent-bus setup edge [--gateway url] [--code pair-code] [--auto|--preset name] [--service auto|systemd|launchd|windows]");
+    throw new Error("Usage: agent-bus setup central|edge [options]");
   }
 
   const out = optionValue(args, "--out") || "edge.config.json";
@@ -412,6 +423,64 @@ async function setup(args) {
   console.log(`Next: agent-bus connect --config ${out}`);
 }
 
+async function setupCentral(args) {
+  const out = optionValue(args, "--out") || "central.config.json";
+  const force = args.includes("--force");
+  if (fs.existsSync(out) && !force) {
+    throw new Error(`Refusing to overwrite ${out}; pass --force to replace it.`);
+  }
+
+  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "https://YOUR-DOMAIN/agent-bus";
+  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || randomToken("abt_admin");
+  const config = centralTemplate();
+  config.token = token;
+  config.host = optionValue(args, "--host") || config.host;
+  config.port = positiveIntegerOption(optionValue(args, "--port"), config.port, 65535);
+  config.dataDir = optionValue(args, "--data-dir") || config.dataDir;
+  if (args.includes("--allow-edge-agent-models")) {
+    config.modelRouter.allowEdgeAgentModels = true;
+  }
+  if (args.includes("--no-model-router")) {
+    config.modelRouter.enabled = false;
+    config.modelRouter.backends = [];
+  }
+
+  fs.writeFileSync(out, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  console.log("Agent Bus central setup");
+  console.log(`Step 1/3: wrote ${out}`);
+  if (!optionValue(args, "--token") && !process.env.AGENT_BUS_TOKEN) {
+    console.log("         generated a long admin token and stored it only in the config file");
+  }
+
+  const serviceTarget = resolveSetupServiceTarget(optionValue(args, "--service") || "");
+  if (serviceTarget) {
+    const serviceOut = optionValue(args, "--service-out") || defaultServiceOut(serviceTarget, "central");
+    const cwd = optionValue(args, "--cwd") || path.dirname(path.resolve(out));
+    const agentBusPath = optionValue(args, "--agent-bus-path") || defaultAgentBusPath();
+    const content = serviceTarget === "systemd"
+      ? systemdService({ mode: "central", configPath: out, name: optionValue(args, "--name") || "agent-bus-central", cwd, gateway, dataDir: config.dataDir, tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath })
+      : serviceTarget === "launchd"
+        ? launchdService({ mode: "central", configPath: out, name: optionValue(args, "--name") || "agent-bus-central", cwd, gateway, dataDir: config.dataDir, tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath })
+        : windowsService({ mode: "central", configPath: out, name: optionValue(args, "--name") || "agent-bus-central", cwd, gateway, dataDir: config.dataDir, tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath });
+    fs.writeFileSync(serviceOut, content);
+    console.log(`Step 2/3: wrote ${serviceTarget} service template to ${serviceOut}`);
+    console.log(serviceInstallHint(serviceTarget, serviceOut));
+  } else {
+    console.log("Step 2/3: service template skipped; pass --service auto to generate one");
+  }
+
+  const preset = optionValue(args, "--preset") || "codex";
+  edgeTemplate(preset);
+  console.log("Step 3/3: first edge pairing command");
+  console.log(`  agent-bus pair create --gateway ${gateway} --token <admin token from ${out}> --preset ${preset}`);
+  console.log("Then run the returned setup edge command on the edge machine.");
+  console.log(`Start local central now: agent-bus serve --runtime python --config ${out}`);
+}
+
+function randomToken(prefix) {
+  return `${prefix}_${crypto.randomBytes(32).toString("base64url")}`;
+}
+
 async function writePairedEdgeConfig({ args, gateway, code, out, force, preset, auto, nodeId }) {
   const joinArgs = ["--gateway", gateway || "http://127.0.0.1:8788", "--code", code, "--out", out, "--node-id", nodeId];
   if (force) joinArgs.push("--force");
@@ -454,7 +523,7 @@ function defaultAgentBusPath() {
 }
 
 function serviceInstallHint(target, file) {
-  if (target === "systemd") return `Install hint: sudo cp ${file} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now agent-bus-edge`;
+  if (target === "systemd") return `Install hint: sudo cp ${file} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ${path.basename(file)}`;
   if (target === "launchd") return `Install hint: cp ${file} ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/${path.basename(file)}`;
   return `Install hint: review ${file}, then run it from an elevated PowerShell prompt.`;
 }
@@ -462,9 +531,10 @@ function serviceInstallHint(target, file) {
 function serviceCommandParts(mode, configPath, agentBusPath = "", cwd = "") {
   const action = mode === "central" ? "serve" : "connect";
   const resolvedConfig = resolveServicePath(configPath, cwd);
-  if (agentBusPath) return [agentBusPath, action, "--config", resolvedConfig];
+  const modeArgs = mode === "central" ? ["--runtime", "python"] : [];
+  if (agentBusPath) return [agentBusPath, action, "--config", resolvedConfig, ...modeArgs];
   const cliPath = process.argv[1] && fs.existsSync(process.argv[1]) ? process.argv[1] : path.join(__dirname, "agent-bus.mjs");
-  return [process.execPath, cliPath, action, "--config", resolvedConfig];
+  return [process.execPath, cliPath, action, "--config", resolvedConfig, ...modeArgs];
 }
 
 function resolveServicePath(value, cwd) {
@@ -494,14 +564,58 @@ function escapeXml(value) {
 }
 
 async function doctor(args) {
+  const context = await collectDoctorContext(args);
+  const bundleOut = optionValue(args, "--bundle") || optionValue(args, "--diagnostics");
+  const jsonOut = args.includes("--json");
+  if (bundleOut) {
+    writeDiagnosticsBundle(context, bundleOut, {
+      includeHosts: args.includes("--include-hosts"),
+      includePaths: args.includes("--include-paths")
+    });
+  }
+  printDoctorResult(context.checks, jsonOut);
+  if (context.checks.some((item) => item.status === "fail")) {
+    process.exitCode = 1;
+  }
+}
+
+async function diagnostics(args) {
+  const action = args[0] || "bundle";
+  if (action !== "bundle") {
+    throw new Error("Usage: agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json");
+  }
+  const bundleArgs = args.slice(1);
+  const out = optionValue(bundleArgs, "--out") || optionValue(bundleArgs, "-o") || "agent-bus-diagnostics.json";
+  const context = await collectDoctorContext(bundleArgs);
+  const bundle = createDiagnosticsBundle(context, {
+    includeHosts: bundleArgs.includes("--include-hosts"),
+    includePaths: bundleArgs.includes("--include-paths")
+  });
+  if (out === "-") {
+    printJson(bundle);
+  } else {
+    fs.writeFileSync(out, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
+    if (bundleArgs.includes("--json")) {
+      printJson({ ok: true, out, counts: bundle.doctor.counts });
+    } else {
+      console.log(`Wrote ${out}`);
+      console.log("Review before sharing. Secrets, hosts, and private paths are redacted by default.");
+    }
+  }
+  if (context.checks.some((item) => item.status === "fail")) {
+    process.exitCode = 1;
+  }
+}
+
+async function collectDoctorContext(args) {
   const configPath = optionValue(args, "--config") || "edge.config.json";
   const gatewayArg = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL;
   const tokenArg = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN;
-  const jsonOut = args.includes("--json");
   const checks = [];
   let config = null;
 
   addCheck(checks, "pass", "Node.js runtime", process.version);
+  addCheck(checks, "pass", "Agent Bus version", readPackageVersion());
 
   try {
     config = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -509,9 +623,14 @@ async function doctor(args) {
     addCheck(checks, "pass", "Read edge config", configPath);
   } catch (err) {
     addCheck(checks, "fail", "Read edge config", err.message);
-    printDoctorResult(checks, jsonOut);
-    process.exitCode = 1;
-    return;
+    return {
+      configPath,
+      config: null,
+      gatewayUrl: gatewayArg || "",
+      tokenPresent: Boolean(tokenArg),
+      configDir: path.dirname(path.resolve(configPath)),
+      checks
+    };
   }
 
   const gatewayUrl = gatewayArg || config.gatewayUrl || "http://127.0.0.1:8788";
@@ -523,10 +642,14 @@ async function doctor(args) {
   await checkGateway(checks, gatewayUrl, token, config);
   await checkLocalProbe(checks, configPath);
 
-  printDoctorResult(checks, jsonOut);
-  if (checks.some((item) => item.status === "fail")) {
-    process.exitCode = 1;
-  }
+  return {
+    configPath,
+    config,
+    gatewayUrl,
+    tokenPresent: Boolean(token && !isPlaceholder(token)),
+    configDir,
+    checks
+  };
 }
 
 async function detect(args) {
@@ -1083,6 +1206,107 @@ function doctorResult(checks) {
   };
 }
 
+function writeDiagnosticsBundle(context, out, options = {}) {
+  const bundle = createDiagnosticsBundle(context, options);
+  if (out === "-") {
+    printJson(bundle);
+    return;
+  }
+  fs.writeFileSync(out, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
+}
+
+function createDiagnosticsBundle(context, options = {}) {
+  const config = isPlainObject(context.config) ? context.config : null;
+  const bundle = {
+    schema: "agent_bus.diagnostics.v1",
+    generated_at: new Date().toISOString(),
+    package: {
+      name: "agent-bus-cli",
+      version: readPackageVersion()
+    },
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      release: os.release()
+    },
+    command: {
+      cwd: process.cwd(),
+      config_path: context.configPath
+    },
+    config: config ? diagnosticsConfigSummary(config, context.gatewayUrl, context.tokenPresent) : {
+      readable: false
+    },
+    doctor: doctorResult(context.checks || []),
+    sharing_note: "This bundle is redacted for public issue triage. Review it before sharing."
+  };
+  return redactDiagnosticsValue(bundle, {
+    redactHosts: !options.includeHosts,
+    redactPaths: !options.includePaths
+  });
+}
+
+function diagnosticsConfigSummary(config, gatewayUrl, tokenPresent) {
+  return {
+    readable: true,
+    nodeId: config.nodeId || "",
+    gatewayUrl: gatewayUrl || config.gatewayUrl || "",
+    token: tokenPresent ? "configured" : "missing_or_placeholder",
+    tokenScope: config.tokenScope || config.token_scope || "",
+    pollTimeoutMs: config.pollTimeoutMs,
+    idleDelayMs: config.idleDelayMs,
+    defaultTimeoutMs: config.defaultTimeoutMs,
+    agents: Array.isArray(config.agents)
+      ? config.agents.map((agent) => ({
+        id: agent?.id || "",
+        kind: agent?.kind || "",
+        role: agent?.role || "",
+        enabled: agent?.enabled !== false,
+        adapter: agent?.adapter || "command",
+        capabilities: Array.isArray(agent?.capabilities) ? agent.capabilities : [],
+        command: agent?.runCommand ? configuredExecutable(agent.runCommand) || "configured" : "",
+        hasRunCommand: Boolean(agent?.runCommand),
+        cwd: agent?.cwd || "",
+        pingUrl: agent?.pingUrl || agent?.healthUrl || agent?.modelUrl || ""
+      }))
+      : []
+  };
+}
+
+function redactDiagnosticsValue(value, options = {}, key = "") {
+  if (isSensitiveExportKey(key)) return "[REDACTED]";
+  if (typeof value === "string") return redactDiagnosticsText(value, options);
+  if (Array.isArray(value)) return value.map((item) => redactDiagnosticsValue(item, options));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([itemKey, item]) => [itemKey, redactDiagnosticsValue(item, options, itemKey)]));
+  }
+  return value;
+}
+
+function redactDiagnosticsText(value, options = {}) {
+  let text = redactExportText(value);
+  if (options.redactHosts !== false) {
+    text = text.replace(/\bhttps?:\/\/[^\s"',)]+/gi, (match) => redactUrlForSharing(match));
+  }
+  if (options.redactPaths !== false) {
+    text = text
+      .replace(/\b[A-Za-z]:\\(?:[^\\\s"',}]+\\)*[^\\\s"',}]*/g, "[REDACTED_PATH]")
+      .replace(/(?:^|[\s"'(])\/(?:Users|home|root)\/[^\s"',)}]+/g, (match) => `${match[0].trim() ? match[0] : ""}[REDACTED_PATH]`);
+  }
+  return text;
+}
+
+function redactUrlForSharing(value) {
+  try {
+    const url = new URL(value);
+    const pathValue = url.pathname && url.pathname !== "/" ? url.pathname : "";
+    const query = url.search ? "?[REDACTED_QUERY]" : "";
+    return `${url.protocol}//[REDACTED_HOST]${pathValue}${query}`;
+  } catch {
+    return "[REDACTED_URL]";
+  }
+}
+
 function printDoctor(checks) {
   for (const item of checks) {
     const mark = item.status === "pass" ? "OK" : item.status === "warn" ? "WARN" : "FAIL";
@@ -1594,7 +1818,9 @@ function redactExportText(value) {
   return String(value)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer [REDACTED]")
     .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_API_KEY]")
+    .replace(/\b(abt_edge_[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_EDGE_TOKEN]")
     .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,})\b/g, "[REDACTED_TOKEN]")
+    .replace(/\b(npm_[A-Za-z0-9]{20,})\b/g, "[REDACTED_TOKEN]")
     .replace(/\b((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)(["']?)[^\s"',}]+/gi, "$1$2[REDACTED]")
     .replace(/:\/\/([^:/@\s]+):([^/@\s]+)@/g, "://[REDACTED]@");
 }

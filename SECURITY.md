@@ -8,7 +8,7 @@ Agent Bus can execute commands through edge adapters and can proxy model API tra
 - Set a long random `AGENT_BUS_TOKEN`; never commit it.
 - Treat `AGENT_BUS_TOKEN` as an admin token. It can create pair codes, create threads, wake rooms, and use the model router.
 - Prefer `agent-bus pair create/join` for remote nodes. Pairing gives the node a scoped edge token instead of the admin token.
-- Edge tokens can register, poll, report runs, and read discovery metadata. They cannot call admin endpoints or `/v1/chat/completions`.
+- Edge tokens can register, poll, report runs, and read discovery metadata. By default, they cannot call `/v1/chat/completions` or `/v1/responses`. If `modelRouter.allowEdgeAgentModels` is explicitly set to `true`, scoped edge tokens may call only `agent:<agent-id>` virtual models through those endpoints; they still cannot call real backend aliases.
 - Revoke edge tokens from the admin plane with `POST /edge/tokens/revoke` if a node is decommissioned or a config may have leaked.
 - Keep edge nodes outbound-only. Do not expose edge processes to the public internet.
 - Use least-privilege service users for edge adapters.
@@ -31,6 +31,10 @@ For an operator-oriented diagram and token/capability matrix, see `docs/trust-bo
 ## Token Storage
 
 Pairing stores only SHA-256 hashes of generated edge tokens in `data/central/edge_tokens.json`. The raw edge token is returned once to the joining node and should be kept in that node's local config or secret store. `GET /edge/tokens` returns metadata only, never raw tokens or token hashes.
+
+## Support Bundles
+
+Use `agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json` before opening a public issue. The bundle redacts tokens, provider keys, hostnames, and private paths by default, but you should still review it before sharing because runtime status can reveal deployment shape.
 
 ## Command Adapter Risk
 

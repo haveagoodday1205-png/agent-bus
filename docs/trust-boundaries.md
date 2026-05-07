@@ -89,6 +89,16 @@ Use the two views for different decisions:
 8. Keep `modelRouter.allowEdgeAgentModels` disabled until you intentionally want edge-to-edge dispatch through `model: "agent:<id>"`.
 9. Share only reviewed artifacts, preferably `agent-bus room export ROOM_ID --reports-only`.
 
+## Public Issue Diagnostics
+
+When reporting setup trouble, prefer a redacted support bundle:
+
+```bash
+agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
+```
+
+The bundle includes Agent Bus and runtime versions, redacted config shape, doctor checks, shallow gateway status, agent/node/model visibility, and local probe status. Tokens, provider keys, hosts, and private paths are redacted by default. Use `--include-hosts` or `--include-paths` only for private support channels.
+
 ## Adapter Execution Scope Checklist
 
 Before enabling a command adapter, answer these questions:

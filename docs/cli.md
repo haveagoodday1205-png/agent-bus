@@ -120,6 +120,18 @@ agent-bus setup edge \
 
 Without `--code`, pass `--token` or `AGENT_BUS_TOKEN` for a trusted manual config. `--service auto` chooses systemd on Linux, launchd on macOS, and Windows Service Control commands on Windows. It writes a template only; review and install it using your normal OS service workflow.
 
+On the central/operator machine, use `setup central` to write a central config, generate an optional service template, and print the first pairing command:
+
+```bash
+agent-bus setup central \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --out central.config.json \
+  --service auto
+agent-bus serve --runtime python --config central.config.json
+```
+
+The command generates a long admin token when `--token`/`AGENT_BUS_TOKEN` is not supplied and stores it only in `central.config.json`; it does not print the token. Use the printed `pair create` shape with the admin token from your secret store or config file.
+
 Run a zero-quota offline smoke test:
 
 ```bash
@@ -297,6 +309,8 @@ This runs the edge health checks locally. URL ping checks do not run model infer
 ```bash
 agent-bus doctor --config edge.config.json
 agent-bus doctor --config edge.config.json --json
+agent-bus doctor --config edge.config.json --bundle diagnostics.json
+agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
 ```
 
 Use `--json` for automation/CI. It prints `{ ok, counts, checks }` and keeps the same exit-code behavior as the human output.
@@ -328,6 +342,8 @@ Doctor is intentionally shallow and quota-safe: URL pings use cheap reachability
 - local edge health probe
 
 It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation. For example, `/rooms` may warn with an edge token because room listing is an operator/admin endpoint, while `/v1/models` may warn with an edge token unless the gateway has edge agent models enabled.
+
+`diagnostics bundle` writes a redacted support artifact for GitHub issues or maintainer triage. By default it redacts bearer tokens, provider keys, scoped edge tokens, hostnames, and private paths. Use `--include-hosts` or `--include-paths` only in private support channels where those details are safe to share.
 
 ## Docker
 

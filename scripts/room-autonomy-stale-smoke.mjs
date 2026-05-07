@@ -119,6 +119,14 @@ async function main() {
   });
 
   await waitForRunStatus(gateway, token, room.id, "slow-planner", "running");
+  const runningStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token]);
+  const plannerStatus = runningStatus.agents?.find((agent) => agent.id === "slow-planner");
+  const workerStatus = runningStatus.agents?.find((agent) => agent.id === "slow-worker");
+  assert(runningStatus.summary?.busy_agents === 1, "CLI status should count only the running planner as busy");
+  assert(plannerStatus?.activity === "running", "CLI status did not mark the planner as running");
+  assert(plannerStatus?.active_runs?.some((run) => run.status === "running"), "CLI status did not include the active planner run");
+  assert(workerStatus?.activity === "idle", "CLI status marked the idle peer as busy");
+  assert(runningStatus.rooms?.some((item) => item.id === room.id && item.active_runs?.length), "CLI status did not expose active room runs");
   await delay(2200);
   const busyAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });
   assert(busyAgents.some((agent) => agent.id === "slow-planner" && agent.status === "online"), "busy planner went stale while running");
@@ -215,6 +223,47 @@ async function requestJson(url, options = {}) {
   const text = await res.text();
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
   return text.trim() ? JSON.parse(text) : {};
+}
+
+function runCliJson(args, timeoutMs = 10000) {
+  return runCliText(args, timeoutMs).then((stdout) => {
+    try {
+      return JSON.parse(stdout);
+    } catch (err) {
+      throw new Error(`CLI did not return JSON: ${stdout || err.message}`);
+    }
+  });
+}
+
+function runCliText(args, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
+      cwd: root,
+      env: { ...process.env, AGENT_BUS_GATEWAY_URL: "", AGENT_BUS_TOKEN: "" },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`CLI timed out: agent-bus ${args.join(" ")}`));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`CLI exited with ${code}: ${stderr || stdout}`));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
 }
 
 function authHeaders(token) {

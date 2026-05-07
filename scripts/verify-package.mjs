@@ -29,6 +29,7 @@ try {
     "edge-node.mjs",
     "edge_node.py",
     "scripts/offline-smoke.mjs",
+    "scripts/npm-install-smoke.mjs",
     "scripts/make-portable-release.mjs",
     "scripts/release-check.mjs",
     "docs/cli.md",

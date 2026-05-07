@@ -17,6 +17,7 @@ const jsFiles = [
   "scripts/room-autonomy-stale-smoke.mjs",
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
+  "scripts/npm-install-smoke.mjs",
   "scripts/verify-package.mjs",
   "scripts/verify-portable-release.mjs",
   "scripts/release-check.mjs",

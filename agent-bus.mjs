@@ -173,7 +173,7 @@ Usage:
   agent-bus room export room_xxx --format json --out room.json --no-redact
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
-  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details]
 
 Gateway queries:
   agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
@@ -1301,6 +1301,7 @@ async function status(args) {
   if (token) {
     agents = await gatewayJson("/agents", { auth: true, args });
     rooms = await gatewayJson("/rooms", { auth: true, args });
+    rooms = await hydrateStatusRooms(rooms, args);
   } else {
     authWarning = "Pass --token or AGENT_BUS_TOKEN to include agents and rooms.";
   }
@@ -1318,8 +1319,12 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
   const roomList = Array.isArray(rooms) ? rooms : [];
   const onlineAgents = agentList.filter((agent) => agent.status === "online");
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
-  const activeRooms = roomList.filter((room) => room.status === "active" || room.status === "running");
-  const activeAgentIds = new Set(activeRooms.flatMap((room) => Array.isArray(room.agents) ? room.agents : []));
+  const activeRooms = roomList.filter(isActiveRoom);
+  const activeRunsByAgent = activeRoomRunsByAgent(activeRooms);
+  const fallbackBusyAgentIds = new Set(activeRooms
+    .filter((room) => !Array.isArray(room.runs))
+    .flatMap((room) => Array.isArray(room.agents) ? room.agents : []));
+  const busyAgentIds = new Set([...activeRunsByAgent.keys(), ...fallbackBusyAgentIds]);
   return {
     ok: Boolean(health?.ok),
     health,
@@ -1331,7 +1336,7 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
       queued: health?.queued ?? 0,
       online_agents: onlineAgents.length,
       reachable_agents: reachableAgents.length,
-      busy_agents: agentList.filter((agent) => activeAgentIds.has(agent.id)).length,
+      busy_agents: agentList.filter((agent) => busyAgentIds.has(agent.id)).length,
       rooms: roomList.length,
       active_rooms: activeRooms.length
     },
@@ -1339,10 +1344,15 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
       const pingStatus = agent.ping_status || agent.health?.ping_status || "unknown";
       const lastRunStatus = agent.last_run_status || agent.health?.last_run_status || null;
       const lastSeenAt = agent.last_seen_at || agent.node_last_seen_at || null;
-      const activeRoomIds = activeRooms
-        .filter((room) => Array.isArray(room.agents) && room.agents.includes(agent.id))
-        .map((room) => room.id)
-        .filter(Boolean);
+      const activeRuns = activeRunsByAgent.get(agent.id) || [];
+      const activeRoomIds = unique([
+        ...activeRuns.map((run) => run.room_id).filter(Boolean),
+        ...activeRooms
+          .filter((room) => !Array.isArray(room.runs) && Array.isArray(room.agents) && room.agents.includes(agent.id))
+          .map((room) => room.id)
+          .filter(Boolean)
+      ]);
+      const latestRun = activeRuns[0] || null;
       return {
         id: agent.id,
         status: agent.status || "unknown",
@@ -1350,8 +1360,10 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
         last_run_status: lastRunStatus,
         last_seen_at: lastSeenAt,
         freshness: statusFreshness(agent.status, lastSeenAt),
-        activity: activeRoomIds.length ? "busy/running" : "idle",
+        activity: agentActivity(activeRuns, activeRoomIds),
         active_rooms: activeRoomIds,
+        active_runs: activeRuns,
+        current_run: latestRun?.id || null,
         ping_label: pingLabel(pingStatus),
         last_run_health: lastRunHealth(lastRunStatus)
       };
@@ -1362,10 +1374,76 @@ function summarizeStatus({ health, agents, rooms, authWarning }) {
       agents: room.agents || [],
       updated_at: room.updated_at,
       reports: room.report_count ?? null,
-      messages: room.message_count ?? null
+      messages: room.message_count ?? null,
+      active_runs: activeRunsForRoom(room)
+        .map((run) => run.id)
     })),
     warnings: authWarning ? [authWarning] : []
   };
+}
+
+async function hydrateStatusRooms(rooms, args) {
+  if (!Array.isArray(rooms) || args.includes("--no-room-details")) return rooms;
+  const limit = positiveIntegerOption(optionValue(args, "--room-detail-limit"), 8, 50);
+  const active = rooms.filter(isActiveRoom).filter((room) => room.id).slice(0, limit);
+  if (!active.length) return rooms;
+  const details = new Map();
+  for (const room of active) {
+    try {
+      const detail = await gatewayJson(`/rooms/${pathPart(room.id)}`, { auth: true, args });
+      details.set(room.id, detail);
+    } catch {
+      // Status should remain useful even if an old gateway cannot hydrate room details.
+    }
+  }
+  if (!details.size) return rooms;
+  return rooms.map((room) => details.has(room.id) ? { ...room, ...details.get(room.id) } : room);
+}
+
+function isActiveRoom(room) {
+  return ["active", "running", "finishing"].includes(String(room?.status || "").toLowerCase());
+}
+
+const STATUS_TERMINAL_RUNS = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped"]);
+
+function activeRunsForRoom(room) {
+  const roomId = room?.id || "";
+  return (Array.isArray(room?.runs) ? room.runs : [])
+    .filter((run) => !STATUS_TERMINAL_RUNS.has(String(run.status || "queued").toLowerCase()))
+    .map((run) => ({
+      id: run.id,
+      room_id: run.room_id || roomId,
+      agent_id: run.agent_id,
+      status: run.status || "queued",
+      created_at: run.created_at || null,
+      started_at: run.started_at || null
+    }));
+}
+
+function activeRoomRunsByAgent(rooms) {
+  const byAgent = new Map();
+  for (const room of rooms) {
+    for (const run of activeRunsForRoom(room)) {
+      if (!run.agent_id) continue;
+      const list = byAgent.get(run.agent_id) || [];
+      list.push(run);
+      byAgent.set(run.agent_id, list);
+    }
+  }
+  for (const list of byAgent.values()) {
+    list.sort((a, b) => Date.parse(b.started_at || b.created_at || 0) - Date.parse(a.started_at || a.created_at || 0));
+  }
+  return byAgent;
+}
+
+function agentActivity(activeRuns, activeRoomIds) {
+  if (activeRuns.some((run) => String(run.status || "").toLowerCase() === "running")) return "running";
+  if (activeRuns.some((run) => String(run.status || "").toLowerCase() === "queued")) return "queued";
+  return activeRoomIds.length ? "busy/room-active" : "idle";
+}
+
+function unique(values) {
+  return Array.from(new Set(values));
 }
 
 function statusFreshness(status, lastSeenAt) {
@@ -1408,13 +1486,15 @@ function printStatus(result) {
     for (const agent of result.agents) {
       const seen = agent.last_seen_at ? ` seen=${agent.last_seen_at}` : " seen=unknown";
       const active = agent.active_rooms?.length ? ` rooms=${agent.active_rooms.join(",")}` : "";
-      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${seen}${active}`);
+      const run = agent.current_run ? ` run=${agent.current_run}` : "";
+      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${seen}${active}${run}`);
     }
   }
   if (result.rooms.length) {
     console.log("\nRecent rooms:");
     for (const room of result.rooms) {
-      console.log(`- ${room.id}: ${room.status}, agents=${room.agents.join(",") || "-"}, updated=${room.updated_at || "-"}`);
+      const activeRuns = room.active_runs?.length ? ` active_runs=${room.active_runs.join(",")}` : "";
+      console.log(`- ${room.id}: ${room.status}, agents=${room.agents.join(",") || "-"}, updated=${room.updated_at || "-"}${activeRuns}`);
     }
   }
 }

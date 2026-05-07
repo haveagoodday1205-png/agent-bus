@@ -13,7 +13,7 @@ The central gateway stores threads, runs, events, and node registrations. Edge n
 
 This keeps edge machines private. They do not need public inbound ports.
 
-Agents can also publish shallow health during registration and polling. URL ping health is intentionally non-inference health: it proves an endpoint is reachable, not that a model key, quota, or completion request will succeed.
+Agents can also publish shallow health during registration and polling. URL ping health is intentionally non-inference health: it proves an endpoint is reachable, not that a model key, quota, or completion request will succeed. Operator status combines that shallow ping with active room run snapshots, so `running` and `queued` reflect real Agent Bus runs while `reachable` only reflects the configured ping URL.
 
 Edge nodes should normally authenticate with scoped edge tokens created by pairing. The admin gateway token is reserved for control-plane operations such as creating pair codes, creating threads, waking rooms, calling model-router endpoints, and revoking edge tokens.
 

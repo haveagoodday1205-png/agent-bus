@@ -122,6 +122,8 @@ async function main() {
   const statusAgent = cliStatus.agents?.find((item) => item.id === "offline-agent");
   assert(statusAgent?.freshness?.startsWith("online/fresh"), "CLI status JSON did not include derived freshness label");
   assert(statusAgent?.activity === "idle", "CLI status JSON did not include derived idle activity label");
+  assert(Array.isArray(statusAgent?.active_runs) && statusAgent.active_runs.length === 0, "CLI status JSON should expose no active runs after completion");
+  assert(statusAgent?.current_run === null, "CLI status JSON should expose current_run=null after completion");
   assert(statusAgent?.ping_label === "not configured", "CLI status JSON did not include derived ping label");
   assert(statusAgent?.last_run_health === "ok", "CLI status JSON did not include derived last-run health");
   const cliStatusText = await runCliText(["status", "--gateway", base, "--token", token]);

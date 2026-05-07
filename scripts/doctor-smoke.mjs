@@ -1,0 +1,353 @@
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+
+const root = path.resolve(import.meta.dirname, "..");
+const node = process.execPath;
+const jsonOut = process.argv.includes("--json");
+const procs = [];
+const childLogs = new WeakMap();
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-doctor-smoke-"));
+
+main().catch((err) => {
+  if (jsonOut) {
+    console.log(JSON.stringify({ ok: false, error: err.message || String(err) }, null, 2));
+  } else {
+    console.error(err.stack || err.message || String(err));
+  }
+  process.exitCode = 1;
+}).finally(() => {
+  for (const child of procs.reverse()) {
+    if (!child.killed) child.kill("SIGTERM");
+  }
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+async function main() {
+  const python = findPython();
+  if (!python) throw new Error("doctor smoke requires Python 3.10+ for room endpoint coverage.");
+
+  const port = await freePort();
+  const gateway = `http://127.0.0.1:${port}`;
+  const token = "sk-doctor-smoke-token-000000";
+  const edgeToken = "abt_edge_doctor_smoke_token_000000";
+  const centralConfig = path.join(tempDir, "central.config.json");
+  const edgeConfig = path.join(tempDir, "edge.config.json");
+
+  fs.writeFileSync(centralConfig, `${JSON.stringify({
+    host: "127.0.0.1",
+    port,
+    dataDir: path.join(tempDir, "data"),
+    token,
+    defaults: {
+      mode: "orchestrate",
+      pollTimeoutMs: 1000
+    },
+    edgeTokens: [edgeToken],
+    modelRouter: {
+      enabled: true,
+      agentModels: true,
+      allowEdgeAgentModels: true,
+      backends: [{
+        id: "doctor-mock",
+        enabled: true,
+        baseUrl: "http://127.0.0.1:1/v1",
+        models: ["doctor-backend-model"],
+        modelAliases: {
+          "agent-bus-default": "doctor-backend-model"
+        }
+      }]
+    }
+  }, null, 2)}\n`);
+
+  fs.writeFileSync(edgeConfig, `${JSON.stringify({
+    nodeId: "doctor-edge",
+    gatewayUrl: gateway,
+    token: edgeToken,
+    tokenScope: "edge",
+    pollTimeoutMs: 1000,
+    idleDelayMs: 100,
+    defaultTimeoutMs: 15000,
+    agents: [{
+      id: "doctor-echo",
+      kind: "echo",
+      role: "diagnostic",
+      enabled: true,
+      adapter: "echo",
+      capabilities: ["doctor", "no-quota"]
+    }]
+  }, null, 2)}\n`);
+
+  step("Starting private gateway");
+  const central = start(python, [path.join(root, "central_gateway.py")], {
+    AGENT_BUS_CONFIG: centralConfig,
+    AGENT_BUS_TOKEN: token,
+    AGENT_BUS_HOST: "127.0.0.1",
+    AGENT_BUS_PORT: String(port),
+    AGENT_BUS_DATA_DIR: path.join(tempDir, "data")
+  });
+  await waitForJson(`${gateway}/health`, 30000, central);
+
+  step("Starting echo edge");
+  const edge = start(node, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig]);
+  await waitForAgent(gateway, token, "doctor-echo");
+
+  step("Running admin doctor");
+  const adminDoctor = await runDoctor(["--config", edgeConfig, "--token", token, "--json"]);
+  assertDoctor(adminDoctor, {
+    requiredPasses: ["gateway agents", "gateway nodes", "gateway models", "gateway rooms", "configured agents online"]
+  });
+
+  step("Running edge-scope doctor");
+  const edgeDoctor = await runDoctor(["--config", edgeConfig, "--json"]);
+  assertDoctor(edgeDoctor, {
+    requiredPasses: ["gateway agents", "gateway nodes", "gateway models"],
+    requiredWarnings: ["gateway rooms"]
+  });
+
+  if (!edge.killed) edge.kill("SIGTERM");
+  if (!central.killed) central.kill("SIGTERM");
+  await Promise.all([waitForExit(edge), waitForExit(central)]);
+
+  const result = {
+    ok: true,
+    quota: "no_model_calls",
+    gateway,
+    agents: ["doctor-echo"],
+    admin_counts: adminDoctor.counts,
+    edge_counts: edgeDoctor.counts
+  };
+
+  if (jsonOut) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log("doctor smoke ok");
+    console.log(`Gateway: ${gateway}`);
+    console.log(`Admin doctor: ${JSON.stringify(adminDoctor.counts)}`);
+    console.log(`Edge doctor: ${JSON.stringify(edgeDoctor.counts)}`);
+  }
+}
+
+function assertDoctor(result, { requiredPasses = [], requiredWarnings = [] } = {}) {
+  if (!result.ok) {
+    throw new Error(`doctor returned failures: ${JSON.stringify(result.counts)}\n${JSON.stringify(result.checks, null, 2)}`);
+  }
+  for (const name of requiredPasses) {
+    const check = result.checks.find((item) => item.name === name);
+    if (!check || check.status !== "pass") {
+      throw new Error(`expected passing doctor check ${name}, got ${check ? JSON.stringify(check) : "missing"}`);
+    }
+  }
+  for (const name of requiredWarnings) {
+    const check = result.checks.find((item) => item.name === name);
+    if (!check || check.status !== "warn") {
+      throw new Error(`expected warning doctor check ${name}, got ${check ? JSON.stringify(check) : "missing"}`);
+    }
+  }
+}
+
+function runDoctor(args, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(node, [path.join(root, "agent-bus.mjs"), "doctor", ...args], {
+      cwd: root,
+      env: { ...process.env },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`agent-bus doctor timed out\n${stderr || stdout}`));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error(`agent-bus doctor exited with ${code}\n${stderr || stdout}`));
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (err) {
+        reject(new Error(`doctor did not return JSON: ${err.message}\n${stdout}`));
+      }
+    });
+  });
+}
+
+function start(command, commandArgs, env = {}) {
+  const child = spawn(command, commandArgs, {
+    cwd: root,
+    env: { ...process.env, ...env },
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const logs = { command, args: commandArgs, stdout: "", stderr: "", error: "", exit: null };
+  childLogs.set(child, logs);
+  child.stdout.on("data", (chunk) => {
+    appendLog(logs, "stdout", chunk);
+    if (!jsonOut && /listening|connected/.test(chunk.toString())) process.stdout.write(`  ${chunk}`);
+  });
+  child.stderr.on("data", (chunk) => {
+    appendLog(logs, "stderr", chunk);
+    if (!jsonOut) process.stderr.write(chunk);
+  });
+  child.on("error", (err) => {
+    logs.error = err.message || String(err);
+  });
+  child.on("exit", (code, signal) => {
+    logs.exit = { code, signal };
+  });
+  procs.push(child);
+  return child;
+}
+
+async function waitForAgent(gateway, token, agentId, timeoutMs = 10000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const agents = await requestJson(`${gateway}/agents`, {
+        headers: { authorization: `Bearer ${token}` }
+      });
+      if (agents.some((agent) => agent.id === agentId && agent.status === "online")) return;
+    } catch {
+      // Retry until the edge registers.
+    }
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${agentId}\n${formatChildDiagnostics(procs[procs.length - 1])}`);
+}
+
+async function waitForJson(url, timeoutMs = 10000, child = null) {
+  const started = Date.now();
+  let lastError = null;
+  while (Date.now() - started < timeoutMs) {
+    if (child && childFailed(child)) {
+      throw new Error(`Process exited before ${url} became ready.\n${formatChildDiagnostics(child)}`);
+    }
+    try {
+      return await requestJson(url);
+    } catch (err) {
+      lastError = err;
+      await delay(250);
+    }
+  }
+  const diagnostics = child ? `\n${formatChildDiagnostics(child)}` : "";
+  throw new Error(`Timed out waiting for ${url}: ${lastError?.message || "no response"}${diagnostics}`);
+}
+
+async function requestJson(url, options = {}) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  return text.trim() ? JSON.parse(text) : {};
+}
+
+function findPython() {
+  const candidates = [
+    process.env.AGENT_BUS_PYTHON,
+    process.env.PYTHON,
+    ...commonBundledPythonPaths(),
+    process.platform === "win32" ? "python.exe" : "python3",
+    "python3",
+    "python"
+  ].filter(Boolean);
+  for (const candidate of unique(candidates)) {
+    const result = spawnSync(candidate, ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"], {
+      cwd: root,
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    if (!result.error && result.status === 0) return candidate;
+  }
+  return "";
+}
+
+function commonBundledPythonPaths() {
+  const home = os.homedir();
+  const roots = [
+    path.join(home, ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "python"),
+    path.join(home, ".codex", "runtimes", "codex-primary-runtime", "dependencies", "python")
+  ];
+  const names = process.platform === "win32"
+    ? ["python.exe"]
+    : ["bin/python3", "bin/python", "python3", "python"];
+  return roots.flatMap((rootDir) => names.map((name) => path.join(rootDir, name)));
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+function step(message) {
+  if (!jsonOut) console.log(message);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function appendLog(logs, key, chunk) {
+  const limit = 24000;
+  logs[key] += chunk.toString();
+  if (logs[key].length > limit) logs[key] = logs[key].slice(-limit);
+}
+
+function childFailed(child) {
+  const logs = childLogs.get(child);
+  return Boolean(logs?.error || child.exitCode !== null || child.signalCode);
+}
+
+function formatChildDiagnostics(child) {
+  const logs = childLogs.get(child);
+  if (!logs) return "child diagnostics unavailable";
+  const exit = logs.exit || { code: child.exitCode, signal: child.signalCode };
+  const lines = [
+    `child: ${logs.command} ${logs.args.join(" ")}`,
+    `exit: code=${exit.code ?? "running"} signal=${exit.signal ?? ""}`
+  ];
+  if (logs.error) lines.push(`spawn_error: ${logs.error}`);
+  if (logs.stdout.trim()) lines.push(`stdout:\n${redactDiagnostics(logs.stdout.trim())}`);
+  if (logs.stderr.trim()) lines.push(`stderr:\n${redactDiagnostics(logs.stderr.trim())}`);
+  return lines.join("\n");
+}
+
+function waitForExit(child, timeoutMs = 5000) {
+  if (child.exitCode !== null || child.signalCode) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+function unique(values) {
+  return [...new Set(values)];
+}
+
+function redactDiagnostics(text) {
+  return String(text || "")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "sk-[REDACTED]")
+    .replace(/\babt_edge_[A-Za-z0-9_-]{12,}\b/g, "abt_edge_[REDACTED]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, "Bearer [REDACTED]");
+}

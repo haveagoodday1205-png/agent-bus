@@ -19,6 +19,7 @@ const jsFiles = [
   "scripts/demo-room.mjs",
   "scripts/demo-issue-pr.mjs",
   "scripts/compatibility-smoke.mjs",
+  "scripts/doctor-smoke.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
@@ -40,6 +41,7 @@ try {
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
+  step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
   step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);

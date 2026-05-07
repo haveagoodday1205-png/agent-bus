@@ -287,22 +287,33 @@ agent-bus doctor --config edge.config.json --json
 
 Use `--json` for automation/CI. It prints `{ ok, counts, checks }` and keeps the same exit-code behavior as the human output.
 
+Doctor is intentionally shallow and quota-safe: URL pings use cheap reachability checks, gateway checks are read-only, and it does not create rooms, start runs, or call chat/completions or responses.
+
 `doctor` checks:
 
 - Node.js runtime
 - config file readability
 - local tool availability for command adapters
 - missing or placeholder gateway URL
+- malformed gateway URL
 - missing or placeholder token
+- declared token scope (`edge` or `admin`)
 - enabled agents
+- duplicate agent ids
+- unsupported adapters
 - missing command adapters
+- missing command working directories
 - ping URL placeholders
 - gateway well-known endpoint
 - gateway public health endpoint
 - authenticated manifest, when a token is configured
+- authenticated `/agents` discovery and whether configured agents are online
+- authenticated `/nodes` discovery and whether the configured node is registered
+- authenticated `/v1/models` discovery without model inference
+- authenticated `/rooms` listing without creating a room
 - local edge health probe
 
-It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation.
+It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation. For example, `/rooms` may warn with an edge token because room listing is an operator/admin endpoint, while `/v1/models` may warn with an edge token unless the gateway has edge agent models enabled.
 
 ## Docker
 

@@ -42,6 +42,7 @@
     "smoke": "node smoke-test.mjs",
     "smoke:offline": "node scripts/offline-smoke.mjs",
     "compat:check": "node scripts/compatibility-smoke.mjs",
+    "doctor:smoke": "node scripts/doctor-smoke.mjs",
     "smoke:room-stale": "node scripts/room-autonomy-stale-smoke.mjs",
     "demo:local": "node scripts/demo-local.mjs",
     "demo:remote-assistant": "node scripts/demo-local.mjs",

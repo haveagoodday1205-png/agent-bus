@@ -481,6 +481,7 @@ async function doctor(args) {
 
   try {
     config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    if (!isPlainObject(config)) throw new Error("edge config must be a JSON object");
     addCheck(checks, "pass", "Read edge config", configPath);
   } catch (err) {
     addCheck(checks, "fail", "Read edge config", err.message);
@@ -491,10 +492,11 @@ async function doctor(args) {
 
   const gatewayUrl = gatewayArg || config.gatewayUrl || "http://127.0.0.1:8788";
   const token = tokenArg || config.token || "";
-  validateEdgeConfig(checks, config, gatewayUrl, token);
-  checkConfiguredTools(checks, config, path.dirname(path.resolve(configPath)));
+  const configDir = path.dirname(path.resolve(configPath));
+  validateEdgeConfig(checks, config, gatewayUrl, token, configDir);
+  checkConfiguredTools(checks, config, configDir);
 
-  await checkGateway(checks, gatewayUrl, token);
+  await checkGateway(checks, gatewayUrl, token, config);
   await checkLocalProbe(checks, configPath);
 
   printDoctorResult(checks, jsonOut);
@@ -668,66 +670,105 @@ async function joinPairCode(args) {
   console.log(`Next: agent-bus doctor --config ${out}`);
 }
 
-function validateEdgeConfig(checks, config, gatewayUrl, token) {
+function validateEdgeConfig(checks, config, gatewayUrl, token, baseDir) {
   if (config.nodeId) {
     addCheck(checks, "pass", "nodeId", String(config.nodeId));
   } else {
-    addCheck(checks, "warn", "nodeId", "missing; hostname will be used");
+    addCheck(checks, "warn", "nodeId", "missing; hostname will be used", "Set nodeId to a stable machine id so other agents can recognize this edge.");
   }
 
-  if (gatewayUrl && !isPlaceholder(gatewayUrl)) {
+  const gatewayStatus = validateGatewayUrl(gatewayUrl);
+  if (gatewayStatus.ok && !isPlaceholder(gatewayUrl)) {
     addCheck(checks, "pass", "gatewayUrl", gatewayUrl);
   } else {
-    addCheck(checks, "fail", "gatewayUrl", "set gatewayUrl or AGENT_BUS_GATEWAY_URL");
+    addCheck(checks, "fail", "gatewayUrl", gatewayStatus.error || "set gatewayUrl or AGENT_BUS_GATEWAY_URL", "Use the public central gateway URL, for example https://example.com/agent-bus.");
   }
 
   if (token && !isPlaceholder(token)) {
     addCheck(checks, "pass", "token", "configured");
   } else {
-    addCheck(checks, "warn", "token", "missing or placeholder; protected gateway checks will fail");
+    addCheck(checks, "warn", "token", "missing or placeholder; protected gateway checks will fail", "Pair the edge or set AGENT_BUS_TOKEN before starting the service.");
   }
 
-  const agents = Array.isArray(config.agents) ? config.agents.filter((agent) => agent.enabled !== false) : [];
+  if (token && !isPlaceholder(token)) {
+    const scope = String(config.tokenScope || config.token_scope || "").trim();
+    if (!scope) {
+      addCheck(checks, "warn", "token scope", "not declared", "Set tokenScope to edge for edge configs, or admin only for operator configs.");
+    } else if (["edge", "admin"].includes(scope)) {
+      addCheck(checks, "pass", "token scope", scope);
+    } else {
+      addCheck(checks, "warn", "token scope", scope, "Expected tokenScope to be edge or admin.");
+    }
+  }
+
+  if (!Array.isArray(config.agents)) {
+    addCheck(checks, "fail", "agents", "config.agents must be an array", "Run agent-bus init edge --preset echo --out edge.config.json for a known-good shape.");
+    return;
+  }
+
+  const duplicateIds = duplicateValues(config.agents.map((agent) => agent?.id).filter(Boolean));
+  if (duplicateIds.length) {
+    addCheck(checks, "fail", "agent ids", `duplicates: ${duplicateIds.join(", ")}`, "Each agent id must be unique across the gateway.");
+  }
+
+  const disabled = config.agents.filter((agent) => agent.enabled === false);
+  if (disabled.length) {
+    addCheck(checks, "pass", "disabled agents", `${disabled.length}: ${disabled.map((agent) => agent.id || "(missing id)").join(", ")}`);
+  }
+
+  const agents = config.agents.filter((agent) => agent.enabled !== false);
   if (agents.length) {
     addCheck(checks, "pass", "enabled agents", agents.map((agent) => agent.id).join(", "));
   } else {
-    addCheck(checks, "fail", "enabled agents", "no enabled agents configured");
+    addCheck(checks, "fail", "enabled agents", "no enabled agents configured", "Enable at least one echo, command, Codex, OpenClaw, Hermes, or Ollama agent.");
   }
 
   for (const agent of agents) {
     const prefix = `agent ${agent.id || "(missing id)"}`;
-    if (!agent.id) addCheck(checks, "fail", `${prefix} id`, "missing");
+    const adapter = agent.adapter || "command";
+    if (!agent.id) addCheck(checks, "fail", `${prefix} id`, "missing", "Give every enabled agent a stable id.");
+    if (!["command", "echo"].includes(adapter)) {
+      addCheck(checks, "fail", `${prefix} adapter`, adapter, "Supported adapters are command and echo.");
+    }
     if ((agent.adapter || "command") === "command" && !agent.runCommand) {
-      addCheck(checks, "fail", `${prefix} runCommand`, "missing");
+      addCheck(checks, "fail", `${prefix} runCommand`, "missing", "Command agents need a runCommand that can read AGENT_MESSAGE or AGENT_MESSAGE_FILE.");
     }
     if ((agent.adapter || "command") === "command" && isPlaceholder(agent.runCommand || "")) {
-      addCheck(checks, "warn", `${prefix} runCommand`, "contains placeholder");
+      addCheck(checks, "warn", `${prefix} runCommand`, "contains placeholder", "Replace template placeholders before starting the edge service.");
+    }
+    if ((agent.adapter || "command") === "command" && (agent.cwd || config.cwd)) {
+      const cwdPath = resolveConfigPath(agent.cwd || config.cwd, baseDir);
+      if (isDirectory(cwdPath)) {
+        addCheck(checks, "pass", `${prefix} cwd`, cwdPath);
+      } else {
+        addCheck(checks, "fail", `${prefix} cwd`, `${cwdPath} not found`, "Create the directory or point cwd at the workspace this agent should use.");
+      }
     }
     const pingUrl = agent.pingUrl || agent.healthUrl || agent.modelUrl || "";
     if (!pingUrl) {
-      addCheck(checks, "warn", `${prefix} pingUrl`, "not configured");
+      addCheck(checks, "warn", `${prefix} pingUrl`, "not configured", "Add pingUrl for shallow online checks; it should be a URL probe, not a real model request.");
     } else if (isPlaceholder(pingUrl)) {
-      addCheck(checks, "warn", `${prefix} pingUrl`, "contains placeholder");
+      addCheck(checks, "warn", `${prefix} pingUrl`, "contains placeholder", "Use a cheap health endpoint such as /v1/models or a provider status URL.");
     } else {
       addCheck(checks, "pass", `${prefix} pingUrl`, pingUrl);
     }
   }
 }
 
-async function checkGateway(checks, gatewayUrl, token) {
-  if (!gatewayUrl || isPlaceholder(gatewayUrl)) return;
+async function checkGateway(checks, gatewayUrl, token, config = {}) {
+  if (!gatewayUrl || isPlaceholder(gatewayUrl) || !validateGatewayUrl(gatewayUrl).ok) return;
   const wellKnown = await fetchJson(gatewayUrl, "/.well-known/agent-bus.json", "", 8000);
   if (wellKnown.ok) {
     addCheck(checks, "pass", "gateway well-known", wellKnown.data.protocol || "ok");
   } else {
-    addCheck(checks, "warn", "gateway well-known", wellKnown.error);
+    addCheck(checks, "warn", "gateway well-known", wellKnown.error, "The gateway can still work, but discovery clients may not recognize it automatically.");
   }
 
   const health = await fetchJson(gatewayUrl, "/health", "", 8000);
   if (health.ok) {
-    addCheck(checks, "pass", "gateway health", `nodes=${health.data.nodes ?? "?"} agents=${health.data.agents ?? "?"}`);
+    addCheck(checks, "pass", "gateway health", gatewayHealthSummary(health.data));
   } else {
-    addCheck(checks, "fail", "gateway health", health.error);
+    addCheck(checks, "fail", "gateway health", health.error, "Check that the central gateway is running and that the URL includes any reverse-proxy path prefix.");
   }
 
   if (!token || isPlaceholder(token)) return;
@@ -735,7 +776,171 @@ async function checkGateway(checks, gatewayUrl, token) {
   if (manifest.ok) {
     addCheck(checks, "pass", "gateway manifest", `${manifest.data.protocol || "agent-bus"} agents=${manifest.data.agents?.length ?? "?"}`);
   } else {
-    addCheck(checks, "warn", "gateway manifest", manifest.error);
+    addEndpointFailure(checks, "gateway manifest", manifest, "Manifest requires an admin or edge token on modern gateways.");
+  }
+
+  const agents = await fetchJson(gatewayUrl, "/agents", token, 8000);
+  if (agents.ok) {
+    const list = asList(agents.data);
+    const detail = list.length ? `${list.length} online: ${sampleIds(list).join(", ")}` : "0 online agents";
+    addCheck(checks, list.length ? "pass" : "warn", "gateway agents", detail, list.length ? "" : "Start at least one edge service and wait for it to register.");
+    checkConfiguredAgentsOnline(checks, config, list);
+  } else {
+    addEndpointFailure(checks, "gateway agents", agents, "The token needs admin or edge scope to read /agents.");
+  }
+
+  const nodes = await fetchJson(gatewayUrl, "/nodes", token, 8000);
+  if (nodes.ok) {
+    const list = asList(nodes.data);
+    const online = list.filter((node) => String(node.status || node.node_status || "").toLowerCase() === "online");
+    const detail = list.length
+      ? `${online.length}/${list.length} online: ${sampleNodeIds(list).join(", ")}`
+      : "0 registered nodes";
+    addCheck(checks, list.length ? "pass" : "warn", "gateway nodes", detail, list.length ? "" : "Start an edge service so the gateway can register a node.");
+    checkConfiguredNodeRegistered(checks, config, list);
+  } else {
+    addEndpointFailure(checks, "gateway nodes", nodes, "The token needs admin or edge scope to read /nodes.");
+  }
+
+  const models = await fetchJson(gatewayUrl, "/v1/models", token, 8000);
+  if (models.ok) {
+    const list = asList(models.data);
+    const agentModels = list.filter((item) => String(item.id || "").startsWith("agent:")).length;
+    const backendModels = Math.max(0, list.length - agentModels);
+    addCheck(checks, list.length ? "pass" : "warn", "gateway models", `${list.length} total; agent=${agentModels} backend=${backendModels}`, list.length ? "" : "Configure a backend model or start online agents with agent-backed models enabled.");
+  } else {
+    addEndpointFailure(checks, "gateway models", models, "GET /v1/models is a cheap list call. Edge tokens can read it only when allowEdgeAgentModels is enabled.");
+  }
+
+  const rooms = await fetchJson(gatewayUrl, "/rooms", token, 8000);
+  if (rooms.ok) {
+    const list = asList(rooms.data);
+    const active = list.filter(isActiveRoom).length;
+    addCheck(checks, "pass", "gateway rooms", `${list.length} rooms; active=${active}`);
+  } else {
+    const hint = isUnauthorizedResult(rooms)
+      ? "Room listing is admin-only; use an admin token for operator checks."
+      : "If this is an older gateway, upgrade central_gateway.py to enable room diagnostics.";
+    addEndpointFailure(checks, "gateway rooms", rooms, hint);
+  }
+}
+
+function validateGatewayUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return { ok: false, error: "set gatewayUrl or AGENT_BUS_GATEWAY_URL" };
+  if (isPlaceholder(text)) return { ok: false, error: "contains placeholder" };
+  try {
+    const url = new URL(text);
+    if (!["http:", "https:"].includes(url.protocol)) {
+      return { ok: false, error: "must use http or https" };
+    }
+    return { ok: true, error: "" };
+  } catch (err) {
+    return { ok: false, error: err.message || "invalid URL" };
+  }
+}
+
+function gatewayHealthSummary(data) {
+  const parts = [
+    `nodes=${data?.nodes ?? "?"}`,
+    `agents=${data?.agents ?? "?"}`
+  ];
+  if (data?.registered_nodes !== undefined) parts.push(`registered_nodes=${data.registered_nodes}`);
+  if (data?.registered_agents !== undefined) parts.push(`registered_agents=${data.registered_agents}`);
+  if (data?.queued !== undefined) parts.push(`queued=${data.queued}`);
+  return parts.join(" ");
+}
+
+function asList(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.rooms)) return value.rooms;
+  if (Array.isArray(value?.agents)) return value.agents;
+  if (Array.isArray(value?.nodes)) return value.nodes;
+  return [];
+}
+
+function sampleIds(items, limit = 5) {
+  return items
+    .map((item) => String(item?.id || item?.agent_id || "").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function sampleNodeIds(items, limit = 5) {
+  return items
+    .map((item) => String(item?.node_id || item?.id || "").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function checkConfiguredAgentsOnline(checks, config, gatewayAgents) {
+  const expected = configuredEnabledAgentIds(config);
+  if (!expected.length) return;
+  const online = new Set(gatewayAgents.map((agent) => String(agent?.id || "")));
+  const missing = expected.filter((id) => !online.has(id));
+  if (missing.length) {
+    addCheck(checks, "warn", "configured agents online", `missing: ${missing.join(", ")}`, "Start or restart agent-bus connect on this edge and wait for registration.");
+  } else {
+    addCheck(checks, "pass", "configured agents online", expected.join(", "));
+  }
+}
+
+function checkConfiguredNodeRegistered(checks, config, gatewayNodes) {
+  const nodeId = String(config.nodeId || "").trim();
+  if (!nodeId) return;
+  const node = gatewayNodes.find((item) => String(item?.node_id || item?.id || "") === nodeId);
+  if (!node) {
+    addCheck(checks, "warn", "configured node registered", `${nodeId} not registered`, "Start agent-bus connect for this edge or check that nodeId matches the service config.");
+    return;
+  }
+  const status = String(node.status || node.node_status || "unknown");
+  addCheck(checks, status.toLowerCase() === "online" ? "pass" : "warn", "configured node registered", `${nodeId} status=${status}`);
+}
+
+function configuredEnabledAgentIds(config) {
+  return Array.isArray(config.agents)
+    ? config.agents
+      .filter((agent) => agent?.enabled !== false && agent?.id)
+      .map((agent) => String(agent.id))
+    : [];
+}
+
+function addEndpointFailure(checks, name, result, hint) {
+  addCheck(checks, "warn", name, result?.error || "request failed", hint);
+}
+
+function isUnauthorizedResult(result) {
+  return [401, 403].includes(httpStatusFromError(result?.error));
+}
+
+function httpStatusFromError(value) {
+  const match = String(value || "").match(/^(\d{3})\b/);
+  return match ? Number(match[1]) : 0;
+}
+
+function duplicateValues(values) {
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const value of values.map((item) => String(item || "").trim()).filter(Boolean)) {
+    if (seen.has(value)) duplicates.add(value);
+    seen.add(value);
+  }
+  return [...duplicates];
+}
+
+function resolveConfigPath(value, baseDir) {
+  const text = expandHome(value);
+  if (path.isAbsolute(text) || /^[A-Za-z]:[\\/]/.test(text)) return text;
+  return path.resolve(baseDir || process.cwd(), text);
+}
+
+function isDirectory(value) {
+  try {
+    return fs.statSync(value).isDirectory();
+  } catch {
+    return false;
   }
 }
 
@@ -825,8 +1030,13 @@ function runScriptCapture(name, args, timeoutMs) {
   });
 }
 
-function addCheck(checks, status, name, detail) {
-  checks.push({ status, name, detail: detail || "" });
+function addCheck(checks, status, name, detail, hint = "") {
+  checks.push({
+    status,
+    name,
+    detail: detail || "",
+    ...(hint ? { hint } : {})
+  });
 }
 
 function printDoctorResult(checks, jsonOut = false) {
@@ -853,6 +1063,7 @@ function printDoctor(checks) {
   for (const item of checks) {
     const mark = item.status === "pass" ? "OK" : item.status === "warn" ? "WARN" : "FAIL";
     console.log(`${mark.padEnd(4)} ${item.name}${item.detail ? ` - ${item.detail}` : ""}`);
+    if (item.hint) console.log(`     hint: ${item.hint}`);
   }
 }
 

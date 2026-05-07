@@ -1,0 +1,49 @@
+name: Good first task
+description: Propose or claim a small public-friendly contribution.
+title: "[Good first task]: "
+labels: ["good first issue", "help wanted", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Pick tasks that can be worked on without private servers, live model keys, or maintainer-only context.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Docs and examples
+        - CLI and setup UX
+        - Adapter preset
+        - Rooms and exports
+        - SDK
+        - Web console
+        - Packaging and release checks
+        - Protocol fixtures
+        - Security docs
+    validations:
+      required: true
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: What is the smallest useful change?
+      placeholder: Add a Python example that creates a room, posts one message, exports events, and replays them offline.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: List the checks or visible behavior that prove the task is complete.
+      placeholder: |
+        - The example runs with no model calls.
+        - README or docs link to it.
+        - `npm run smoke:offline` still passes.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes for contributors
+      description: Links to relevant files, docs, or fixtures. Do not include private IPs, tokens, prompts, or logs.
+

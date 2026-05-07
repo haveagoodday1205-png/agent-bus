@@ -15,6 +15,18 @@ See `docs/good-first-issues.md` for starter tasks that do not require private in
 - security hardening around tokens, pairing codes, per-agent permissions, or audit logs
 - short demos, screenshots, diagrams, and setup guides
 
+If you are opening your first issue, use the "Good first task" template and describe the smallest visible improvement plus the check that proves it works.
+
+## Contributor Lanes
+
+The project is especially ready for help in these areas:
+
+- Adapter presets for Codex-style tools, OpenClaw, Hermes, Ollama, browser tools, shell tools, and OpenAI-compatible gateways.
+- SDK and example apps for JavaScript, TypeScript, Python, and other no-secret local workflows.
+- Web console views for node status, room activity, traces, and first-run debugging.
+- Packaging for Windows, Linux, Ubuntu, macOS, Docker, and portable bundles.
+- Protocol fixtures for rooms, manifests, event replay, `agent:<id>` model calls, and trust-boundary docs.
+- Security hardening that keeps the offline path simple while improving tokens, pairing, audit logs, and adapter isolation.
 
 ## Contributor Workflow
 
@@ -26,7 +38,7 @@ See `docs/good-first-issues.md` for starter tasks that do not require private in
 npm run smoke:offline
 npm run release:check
 node --check agent-bus.mjs central-gateway.mjs edge-node.mjs
-python3 -m py_compile central_gateway.py edge_node.py
+python3 -m py_compile central_gateway.py edge_node.py sdk/python/agent_bus_sdk.py examples/room-agent-python/room_agent.py
 ```
 
 4. If a change affects packaging or first-run setup, also verify:
@@ -39,6 +51,24 @@ npm run portable:check
 For release/tag work, follow `docs/release.md` so npm publishing, portable bundles, checksums, and post-publish smoke tests stay aligned.
 
 5. Document the user-facing path in `README.md`, `docs/cli.md`, or a focused doc under `docs/`. Avoid burying required setup only in PR comments.
+
+## Check Matrix
+
+Use the smallest useful check while developing, then run the broader checks before opening a behavior-changing PR.
+
+```bash
+npm run smoke:offline                 # room path with no model calls
+npm run compat:check -- --json        # local gateway + hello-agent compatibility
+npm run doctor:smoke -- --json        # zero-quota diagnostics
+npm run trace:smoke -- --json         # trace export/show behavior
+npm run smoke:central-restart -- --json
+npm run sdk:python:smoke -- --json
+npm run smoke:python-room-agent -- --json
+npm run smoke:room-stale -- --json
+npm run release:check                 # full pre-release matrix
+```
+
+Docs-only PRs do not need the full matrix, but they should say which page or command was reviewed.
 
 ## Product Principles
 
@@ -80,6 +110,7 @@ node smoke-test.mjs
 - Keep the no-dependency path working for the core Node and Python entrypoints.
 - Prefer example configs over private configs.
 - Keep security-sensitive output quiet: do not print bearer tokens unless a command explicitly exists to reveal them.
+- Keep PRs small enough that a reviewer can understand the behavior, trust-boundary impact, and test result in one pass.
 
 ## Project Areas
 
@@ -88,3 +119,7 @@ node smoke-test.mjs
 - Adapters: Codex, OpenClaw, Hermes, shell tools, browser tools, model gateways, local models.
 - Distribution: CLI, services, containers, standalone binaries, installers.
 - Community: examples, docs, demos, issue triage, templates, and release notes.
+
+## Community Norms
+
+See `CODE_OF_CONDUCT.md` for expected behavior and `GOVERNANCE.md` for maintainer decision rules. When in doubt, open a draft PR with a clear problem statement and an offline reproduction.

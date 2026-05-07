@@ -34,6 +34,17 @@ JS/TS tool authors can start with `sdk/js/`; it is a zero-dependency ESM client 
 
 Python tool authors can start with `sdk/python/` and `examples/room-agent-python/`; both use only the Python standard library and cover discovery, rooms, agent-backed model calls, and room replay fixtures.
 
+## Contributing
+
+Agent Bus is ready for outside contributors. The easiest path is to pick a task that can run offline and does not require private servers, model keys, or maintainer-only logs.
+
+- Start with `CONTRIBUTING.md` for setup, smoke checks, and pull request expectations.
+- Browse `docs/good-first-issues.md` for public-friendly starter tasks.
+- Use the "Good first task" issue template if you want to propose or claim a small task.
+- Read `SECURITY.md`, `docs/trust-boundaries.md`, `CODE_OF_CONDUCT.md`, and `GOVERNANCE.md` before touching tokens, adapters, pairing, rooms, or the model router.
+
+High-impact contribution lanes right now are adapter presets, SDK examples, web console debugging, portable install polish, protocol fixtures, and smoke tests that keep AI-to-AI rooms safe to change.
+
 ## Quick Start
 
 Run the local smoke test:
@@ -80,7 +91,7 @@ npm install -g .
 agent-bus smoke --offline
 ```
 
-Or download a portable bundle from [GitHub Releases](https://github.com/haveagoodday1205-png/agent-bus/releases). The bundle includes launchers for Windows and Unix-style shells, a manifest, and SHA-256 checksums. It still only requires Node.js 20+.
+Or download a portable bundle from [GitHub Releases](https://github.com/haveagoodday1205-png/agent-bus/releases). The bundle includes launchers for Windows and Unix-style shells, docs, SDK examples, a manifest, and SHA-256 checksums. It still only requires Node.js 20+.
 
 Release operators should follow the [release checklist](docs/release.md) for the npm vs portable install matrix, checksum expectations, tag workflow, post-publish smoke tests, and release-note wording. See `CHANGELOG.md` for the current public release highlights.
 

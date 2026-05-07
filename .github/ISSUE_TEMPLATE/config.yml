@@ -1,1 +1,11 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
+contact_links:
+  - name: Good first issues
+    url: https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/good-first-issues.md
+    about: Starter tasks that do not need private infrastructure or live model calls.
+  - name: Contributing guide
+    url: https://github.com/haveagoodday1205-png/agent-bus/blob/main/CONTRIBUTING.md
+    about: Local setup, checks, product principles, and pull request expectations.
+  - name: Security policy
+    url: https://github.com/haveagoodday1205-png/agent-bus/blob/main/SECURITY.md
+    about: Read this before reporting token, gateway, adapter, or model-router issues.

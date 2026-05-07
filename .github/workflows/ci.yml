@@ -26,21 +26,31 @@ jobs:
           node --check edge-node.mjs
           node --check mock-openai-backend.mjs
           node --check windows-openai-proxy.mjs
+          node --check sdk/js/agent-bus-sdk.mjs
+          node --check examples/hello-agent/hello-agent.mjs
           node --check scripts/demo-local.mjs
           node --check scripts/demo-starter.mjs
           node --check scripts/demo-agent-model.mjs
           node --check scripts/demo-room.mjs
           node --check scripts/demo-issue-pr.mjs
           node --check scripts/compatibility-smoke.mjs
+          node --check scripts/doctor-smoke.mjs
+          node --check scripts/trace-smoke.mjs
+          node --check scripts/central-restart-smoke.mjs
+          node --check scripts/python-sdk-smoke.mjs
+          node --check scripts/python-room-agent-smoke.mjs
+          node --check scripts/room-autonomy-stale-smoke.mjs
           node --check scripts/make-portable-release.mjs
           node --check scripts/npm-install-smoke.mjs
           node --check scripts/offline-smoke.mjs
           node --check scripts/verify-protocol-v1.mjs
+          node --check scripts/verify-package.mjs
+          node --check scripts/verify-portable-release.mjs
           node --check scripts/release-check.mjs
           node --check scripts/release-notes.mjs
           node --check scripts/release-preflight.mjs
       - name: Syntax check Python
-        run: python -m py_compile central_gateway.py edge_node.py
+        run: python -m py_compile central_gateway.py edge_node.py sdk/python/agent_bus_sdk.py sdk/python/__init__.py examples/room-agent-python/room_agent.py
       - name: Validate JSON examples
         run: |
           node -e "for (const f of ['package.json','central.config.example.json','edge.config.example.json','edge.120.example.json','edge.178.example.json','edge.hk.example.json']) JSON.parse(require('fs').readFileSync(f, 'utf8'));"
@@ -81,12 +91,28 @@ jobs:
         env:
           AGENT_BUS_PYTHON: python
         run: npm run demo:starter -- --json
+      - name: Doctor smoke
+        run: npm run doctor:smoke -- --json
+      - name: Trace smoke
+        run: npm run trace:smoke -- --json
+      - name: Central restart smoke
+        run: npm run smoke:central-restart -- --json
+      - name: Python SDK smoke
+        env:
+          AGENT_BUS_PYTHON: python
+        run: npm run sdk:python:smoke -- --json
+      - name: Python room-agent smoke
+        env:
+          AGENT_BUS_PYTHON: python
+        run: npm run smoke:python-room-agent -- --json
       - name: Hello-agent compatibility smoke
         run: npm run compat:check -- --json
       - name: Agent-backed model demo
         run: npm run demo:agent-model -- --json
       - name: Offline room smoke
         run: npm run smoke:offline -- --json
+      - name: Stale room autonomy smoke
+        run: npm run smoke:room-stale -- --json
       - name: Full smoke
         run: npm run smoke
 

@@ -21,6 +21,7 @@ const files = [
   "central_gateway.py",
   "central.config.example.json",
   "CHANGELOG.md",
+  "CODE_OF_CONDUCT.md",
   "compose.yaml",
   "config.example.json",
   "CONTRIBUTING.md",
@@ -31,6 +32,7 @@ const files = [
   "edge.178.example.json",
   "edge.config.example.json",
   "edge.hk.example.json",
+  "GOVERNANCE.md",
   "LICENSE",
   "mock-openai-backend.mjs",
   "package.json",
@@ -45,6 +47,8 @@ const files = [
 const directories = [
   "console",
   "docs",
+  "examples",
+  "sdk",
   "scripts"
 ];
 

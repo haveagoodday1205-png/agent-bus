@@ -34,3 +34,7 @@ The SDK intentionally stays small:
 - replay fixtures: `export_room_events()`, `room_event_bundle()`, `replay_room_events()`
 
 It has no runtime dependencies beyond Python 3.10+.
+
+## Examples
+
+- **[Agent Model Example](../../examples/python-agent-model/)** - Demonstrates using `agent:<id>` as model replacements through `/v1/responses` calls

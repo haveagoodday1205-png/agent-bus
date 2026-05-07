@@ -32,6 +32,8 @@ New adapter authors can start with `examples/hello-agent/`; it is a no-model, no
 
 JS/TS tool authors can start with `sdk/js/`; it is a zero-dependency ESM client for discovery, rooms, `agent:<id>` Chat Completions/Responses calls, and room event replay fixtures.
 
+Python tool authors can start with `sdk/python/` and `examples/room-agent-python/`; both use only the Python standard library and cover discovery, rooms, agent-backed model calls, and room replay fixtures.
+
 ## Quick Start
 
 Run the local smoke test:

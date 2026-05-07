@@ -22,6 +22,7 @@ const jsFiles = [
   "scripts/doctor-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
+  "scripts/python-sdk-smoke.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
@@ -40,12 +41,13 @@ try {
   }
 
   const python = process.env.AGENT_BUS_PYTHON || process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
-  step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py"]);
+  step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py", "sdk/python/agent_bus_sdk.py", "sdk/python/__init__.py", "examples/room-agent-python/room_agent.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
+  step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);
   step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);

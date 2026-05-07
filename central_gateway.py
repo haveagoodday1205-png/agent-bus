@@ -252,7 +252,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(agent_bus_well_known())
             if path == "/console":
                 self.send_response(308)
-                self.send_header("location", self.path.rstrip("/") + "/")
+                self.send_header("location", "console/")
                 self.send_header("cache-control", "no-store")
                 self.end_headers()
                 return

@@ -25,7 +25,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
 
-Start with `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
+Start with `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
 
 ## Quick Start
 
@@ -40,6 +40,7 @@ Run a local demo:
 ```bash
 # Pair a local edge and send a normal task.
 npm run demo:local
+npm run demo:remote-assistant
 
 # Show AI-to-AI room delegation and export a share-safe report.
 npm run demo:room
@@ -81,6 +82,8 @@ agent-bus init edge --auto --out edge.config.json
 agent-bus doctor --config edge.config.json   # add --json for CI/setup automation
 agent-bus connect --config edge.config.json
 ```
+
+For the full two-machine path, see [Remote Assistant Quickstart](docs/remote-assistant-quickstart.md).
 
 Check live reachability and room activity from the operator machine:
 

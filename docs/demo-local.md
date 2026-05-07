@@ -6,6 +6,7 @@ Run:
 
 ```bash
 npm run demo:local
+npm run demo:remote-assistant
 ```
 
 It shows the core Agent Bus loop on localhost:

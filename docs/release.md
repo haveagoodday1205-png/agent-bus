@@ -68,7 +68,7 @@ After the workflow finishes, verify the public release page includes:
 - `agent-bus-v<version>-portable.zip`.
 - `agent-bus-v<version>-portable.manifest.json`.
 - `SHA256SUMS`.
-- generated release notes from `npm run release:notes`, with `CHANGELOG.md` used as the human-edited summary source.
+- generated release notes from `npm run release:notes`, with `CHANGELOG.md` used as the human-edited summary source and the first-run room demo called out explicitly.
 - this install matrix, or a link back to this checklist.
 
 ## npm Publish
@@ -100,7 +100,7 @@ Include a short boundary reminder in release notes when behavior changes touch r
 - Pairing codes and scoped edge tokens are preferred over sharing the admin token.
 - Health and ping status are shallow reachability signals, not proof that a real model call succeeded.
 - Room participants can read room state and should avoid posting secrets, private logs, private prompts, or real config files.
-- Offline smoke and packaging checks must not call paid model providers.
+- Offline smoke, the local room demo, and packaging checks must not call paid model providers.
 
 ## Rollback
 

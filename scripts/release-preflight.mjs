@@ -12,6 +12,7 @@ try {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const version = valueAfter("--version") || pkg.version;
   const tag = version.startsWith("v") ? version : `v${version}`;
+  const packageName = pkg.name || "agent-bus";
   const head = git(["rev-parse", "--short=12", "HEAD"], { required: false }).stdout.trim();
   const branch = git(["branch", "--show-current"], { required: false }).stdout.trim();
 
@@ -37,14 +38,14 @@ try {
   if (network) {
     remoteTag = git(["ls-remote", "--tags", "origin", tag], { required: false }).stdout.trim();
     check("remote release tag not already present", !remoteTag, remoteTag ? `${tag} already exists on origin` : `${tag} absent on origin`);
-    const npm = spawnSync("npm", ["view", `agent-bus@${version.replace(/^v/, "")}`, "version"], {
+    const npm = spawnSync("npm", ["view", `${packageName}@${version.replace(/^v/, "")}`, "version"], {
       cwd: root,
       encoding: "utf8",
       windowsHide: true,
       env: { ...process.env, npm_config_loglevel: "error" }
     });
     npmStatus = npm.status === 0 ? npm.stdout.trim() : "not published or npm unavailable";
-    check("npm package not already published", npm.status !== 0, npm.status === 0 ? `agent-bus@${npm.stdout.trim()} already published` : npmStatus);
+    check("npm package not already published", npm.status !== 0, npm.status === 0 ? `${packageName}@${npm.stdout.trim()} already published` : npmStatus);
   }
 
   const result = {
@@ -62,7 +63,7 @@ try {
       `git tag ${tag}`,
       `git push origin ${tag}`,
       "npm publish --access public",
-      "npm view agent-bus version",
+      `npm view ${packageName} version`,
       "verify GitHub Release assets and smoke npm/portable install paths"
     ]
   };

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1 - Scoped npm package publication
+
+Agent Bus 0.5.1 publishes the CLI under the npm scope `@haveagoodday1205/agent-bus` after the public registry rejected the unscoped `agent-bus` name as too similar to an existing package.
+
+### Packaging
+
+- Renames the npm package to `@haveagoodday1205/agent-bus` while keeping the installed CLI command as `agent-bus`.
+- Updates npm install, publish verification, release-note generation, and rollback documentation to use the scoped package name.
+- Keeps the v0.5 room demo, stale-room autonomy, preflight, release-note, npm package, and portable bundle gates intact.
+
 ## 0.5.0 - Packaged remote-assistant CLI
 
 Agent Bus 0.5.0 turns the project from a working gateway prototype into a more credible packaged remote-assistant CLI for contributors, operators, and AI-to-AI room experiments.

@@ -2,7 +2,7 @@
 
 Agent Bus ships in two user-facing forms:
 
-1. npm package: fastest for Node.js users (`npm install -g agent-bus`).
+1. npm package: fastest for Node.js users (`npm install -g @haveagoodday1205/agent-bus`).
 2. Portable bundle: GitHub Release archives for Linux, macOS, Ubuntu, and Windows users who want a self-contained Agent Bus directory without relying on npm global state.
 
 Both forms require Node.js 20+. Python 3.10+ is only required for the Python gateway/edge implementation and for offline room smoke tests while room support lives there.
@@ -44,7 +44,7 @@ Use this matrix in GitHub Release notes so users know which artifact to choose.
 
 | User path | Command or artifact | Verify | Smoke |
 | --- | --- | --- | --- |
-| npm on Linux/macOS/Ubuntu/Windows | `npm install -g agent-bus` | `agent-bus --help` | `agent-bus smoke --offline` |
+| npm on Linux/macOS/Ubuntu/Windows | `npm install -g @haveagoodday1205/agent-bus` | `agent-bus --help` | `agent-bus smoke --offline` |
 | Portable Linux/macOS/Ubuntu | `agent-bus-v<version>-portable.tar.gz` | `sha256sum -c SHA256SUMS` then `./agent-bus --help` | `./agent-bus smoke --offline` |
 | Portable Windows | `agent-bus-v<version>-portable.zip` | compare with `SHA256SUMS`, then `.\agent-bus.cmd --help` | `.\agent-bus.cmd smoke --offline` |
 | Contributor checkout | `npm install -g .` | `agent-bus --help` | `agent-bus smoke --offline` |
@@ -82,14 +82,14 @@ Publish from the same commit as the GitHub tag. Keep the package contents predic
 ```bash
 npm run pack:check
 npm publish --access public
-npm view agent-bus version
+npm view @haveagoodday1205/agent-bus version
 ```
 
 After publishing, test an isolated global install instead of relying on a checkout-linked binary:
 
 ```bash
 PREFIX=$(mktemp -d)
-npm install -g --prefix "$PREFIX" agent-bus
+npm install -g --prefix "$PREFIX" @haveagoodday1205/agent-bus
 "$PREFIX/bin/agent-bus" --help
 "$PREFIX/bin/agent-bus" smoke --offline
 ```
@@ -112,5 +112,5 @@ If a release artifact is wrong:
 
 1. Delete or mark the GitHub Release as broken.
 2. Remove the bad tag only if no downstream process depends on it.
-3. For npm, use `npm deprecate agent-bus@<version> "reason"`; avoid unpublish unless the package policy window and risk justify it.
+3. For npm, use `npm deprecate @haveagoodday1205/agent-bus@<version> "reason"`; avoid unpublish unless the package policy window and risk justify it.
 4. Cut a patch version from a clean commit and rerun both `pack:check` and `portable:check` before publishing again.

@@ -141,6 +141,46 @@ async function main() {
   assert(plannerStatus?.active_runs?.some((run) => run.status === "running"), "CLI status did not include the active planner run");
   assert(workerStatus?.activity === "idle", "CLI status marked the idle peer as busy");
   assert(runningStatus.rooms?.some((item) => item.id === room.id && item.active_runs?.length), "CLI status did not expose active room runs");
+
+  await requestJson(`${gateway}/edge/register`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "orphan-room-edge",
+      hostname: "orphan-room-smoke",
+      agents: [{ id: "orphan-worker", kind: "smoke", role: "worker" }]
+    })
+  });
+  const orphanRoom = await requestJson(`${gateway}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Orphan queued room smoke",
+      goal: "Verify status ignores an old queued room snapshot when the gateway queue is empty.",
+      agents: ["orphan-worker"],
+      max_steps: 1
+    })
+  });
+  const orphanTask = await requestJson(`${gateway}/edge/poll`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({ node_id: "orphan-room-edge", timeout_ms: 1 })
+  });
+  assert(orphanTask?.task?.room_id === orphanRoom.id, "orphan room task was not drained from the gateway queue");
+  await delay(1200);
+  const orphanHealth = await requestJson(`${gateway}/health`);
+  assert(orphanHealth.queued === 0, "gateway queue should be empty for stale queued room status coverage");
+  const staleQueuedStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
+  const orphanStatus = staleQueuedStatus.agents?.find((agent) => agent.id === "orphan-worker");
+  const stillRunningPlanner = staleQueuedStatus.agents?.find((agent) => agent.id === "slow-planner");
+  assert(staleQueuedStatus.summary?.stale_queued_runs === 1, "CLI status did not count the stale queued room run");
+  assert(staleQueuedStatus.summary?.busy_agents === 1, "CLI status should ignore stale queued runs but keep the running planner busy");
+  assert(orphanStatus?.activity === "idle", "CLI status marked a stale queued orphan as live queued work");
+  assert(orphanStatus?.stale_queued_runs?.some((run) => run.room_id === orphanRoom.id && run.status === "queued"), "CLI status did not expose stale queued run metadata on the agent");
+  assert(staleQueuedStatus.rooms?.some((item) => item.id === orphanRoom.id && item.stale_queued_runs?.length === 1), "CLI status did not expose stale queued run metadata on the room");
+  assert(staleQueuedStatus.warnings?.some((warning) => /Ignored 1 stale queued room run older than 1s; gateway queue is empty/.test(warning)), "CLI status did not warn about the ignored stale queued room run");
+  assert(stillRunningPlanner?.activity === "running", "CLI status should not mark a genuine running planner as stale");
+
   await delay(2200);
   const busyAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });
   assert(busyAgents.some((agent) => agent.id === "slow-planner" && agent.status === "online"), "busy planner went stale while running");
@@ -168,7 +208,8 @@ async function main() {
     room_id: completed.id,
     room_status: completed.status,
     run_count: completed.runs?.length || 0,
-    stale_node_freshness: staleNode?.freshness || null
+    stale_node_freshness: staleNode?.freshness || null,
+    stale_queued_room_id: orphanRoom.id
   };
 
   if (jsonOut) {

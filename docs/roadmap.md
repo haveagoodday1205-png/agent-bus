@@ -15,7 +15,7 @@ The next high-leverage release should make Agent Bus easy to try, safe to trust,
 
 Concrete v0.6 release candidates:
 
-- Add `agent-bus install-smoke` or an npm script that installs `agent-bus-cli` from the registry into a temporary prefix and runs `agent-bus --help` plus `agent-bus smoke --offline` without publishing a release.
+- Keep the registry install smoke path (`npm run smoke:npm-install`) green; it installs `agent-bus-cli` into a temporary prefix and runs `agent-bus --help` plus `agent-bus smoke --offline` without tagging or publishing a release.
 - Improve `agent-bus status` with human labels for `online`, `busy/running`, `stale`, `ping reachable/unreachable`, and `last run ok/failed/unknown`, while preserving JSON fields for automation.
 - Add a remote-assistant quickstart page that starts with npm, creates a central gateway, pairs one edge node, checks status, sends one fake/local task, and exports only reports.
 - Add a trust-boundary diagram covering outbound edge polling, scoped edge tokens, central/admin actions, adapter execution scope, and share-safe exports.

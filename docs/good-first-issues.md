@@ -4,7 +4,7 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 
 ## v0.6 adoption tasks
 
-- Add a registry install smoke command/script that installs `agent-bus-cli` into a temporary npm prefix and runs `agent-bus --help` plus `agent-bus smoke --offline`.
+- Extend the registry install smoke script with a CI-friendly scheduled job or platform matrix once registry/network access is available.
 - Improve `agent-bus status` human output so a new operator can tell online, busy/running, stale, ping reachability, and last-run health apart at a glance.
 - Add a remote-assistant quickstart that starts from `npm install -g agent-bus-cli`, pairs one edge node, sends one fake/local task, and exports only reports.
 - Add or update a trust-boundary diagram for central/admin token, scoped edge token, command adapters, model-router access, and share-safe room exports.

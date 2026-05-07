@@ -54,7 +54,8 @@
     "release:check": "node scripts/release-check.mjs",
     "demo:room": "node scripts/demo-room.mjs",
     "release:notes": "node scripts/release-notes.mjs",
-    "release:preflight": "node scripts/release-preflight.mjs"
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "smoke:npm-install": "node scripts/npm-install-smoke.mjs"
   },
   "engines": {
     "node": ">=20"

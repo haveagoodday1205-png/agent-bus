@@ -50,6 +50,7 @@ Install the CLI from npm or from a checkout:
 ```bash
 npm install -g agent-bus-cli
 agent-bus --help
+agent-bus smoke --offline
 
 # contributor checkout install
 npm install -g .
@@ -60,12 +61,13 @@ Or download a portable bundle from [GitHub Releases](https://github.com/haveagoo
 
 Release operators should follow the [release checklist](docs/release.md) for the npm vs portable install matrix, checksum expectations, tag workflow, post-publish smoke tests, and release-note wording. See `CHANGELOG.md` for the current public release highlights.
 
-Contributors can verify the npm artifact before publishing or tagging:
+Contributors can verify package and install paths before publishing or tagging:
 
 ```bash
 npm run release:check
 npm run pack:check
 npm run portable:check
+npm run smoke:npm-install   # installs agent-bus-cli@package.json version into a temp prefix
 npm run bundle -- --archive
 ```
 

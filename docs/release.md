@@ -88,13 +88,10 @@ npm view agent-bus-cli version
 After publishing, test an isolated global install instead of relying on a checkout-linked binary:
 
 ```bash
-PREFIX=$(mktemp -d)
-npm install -g --prefix "$PREFIX" agent-bus-cli
-"$PREFIX/bin/agent-bus" --help
-"$PREFIX/bin/agent-bus" smoke --offline
+npm run smoke:npm-install
 ```
 
-On Windows, use a temporary prefix and run the generated `agent-bus.cmd` launcher.
+The smoke script installs `agent-bus-cli@package.json version` from the registry into a temporary npm prefix, runs `agent-bus --help`, then runs `agent-bus smoke --offline --json`. Use `npm run smoke:npm-install -- --package agent-bus-cli@latest` to test a different registry dist-tag or version. The script automatically uses the generated `agent-bus.cmd` launcher on Windows.
 
 ## Trust and Safety Notes for Release Notes
 

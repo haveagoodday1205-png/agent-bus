@@ -16,10 +16,13 @@ npm install -g agent-bus-cli
 agent-bus --help
 agent-bus smoke --offline
 agent-bus demo room
+agent-bus demo agent-model
 agent-bus demo issue
 ```
 
 `agent-bus demo room` is the fastest no-secret/no-model-call public demo: it starts temporary local services, wakes two fake room agents, and writes a reports-only Markdown export in the current directory. For a first two-machine setup, start with `docs/remote-assistant-quickstart.md`.
+
+`agent-bus demo agent-model` is the fastest demo for the model-replacement path: it starts a temporary gateway plus command edge, exposes `agent:model-agent`, calls Chat Completions and Responses with one cache scope, and proves both calls reuse the same derived Agent Bus session key without contacting a model provider.
 
 `agent-bus demo issue` is the local flagship demo skeleton: it starts planner/coder/reviewer fake agents, turns a GitHub-style issue into a room, and writes shareable report, event replay, patch, and PR draft artifacts without contacting GitHub or a model provider.
 

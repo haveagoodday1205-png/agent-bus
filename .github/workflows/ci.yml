@@ -27,6 +27,7 @@ jobs:
           node --check mock-openai-backend.mjs
           node --check windows-openai-proxy.mjs
           node --check scripts/demo-local.mjs
+          node --check scripts/demo-agent-model.mjs
           node --check scripts/demo-room.mjs
           node --check scripts/demo-issue-pr.mjs
           node --check scripts/compatibility-smoke.mjs
@@ -77,6 +78,8 @@ jobs:
         run: npm run protocol:check
       - name: Hello-agent compatibility smoke
         run: npm run compat:check -- --json
+      - name: Agent-backed model demo
+        run: npm run demo:agent-model -- --json
       - name: Offline room smoke
         run: npm run smoke:offline -- --json
       - name: Full smoke

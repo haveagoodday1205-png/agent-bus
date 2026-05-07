@@ -47,6 +47,10 @@ Run a local demo from the installed CLI or checkout:
 agent-bus demo room
 npm run demo:room
 
+# Show agent:<id> as an OpenAI-compatible model for Chat Completions and Responses.
+agent-bus demo agent-model
+npm run demo:agent-model
+
 # Show the issue-to-PR flagship demo skeleton and export patch/PR artifacts.
 agent-bus demo issue
 npm run demo:issue
@@ -176,6 +180,14 @@ npm run demo:room
 ```
 
 It starts a local gateway, connects two fake command agents, has one agent delegate to the other with `@demo-worker: ...`, waits for `DONE`, and writes `agent-bus-room-demo-report.md` using `room export --reports-only` so the artifact is safe to share.
+
+For the model-replacement path, run:
+
+```bash
+npm run demo:agent-model
+```
+
+It starts a private local gateway plus a fake command edge, exposes `agent:model-agent` from `/v1/models`, calls both `/v1/chat/completions` and `/v1/responses`, and proves the same explicit cache scope becomes one stable Agent Bus session key. It makes no model-provider calls.
 
 Or start the demo pieces manually:
 

@@ -138,9 +138,11 @@ The same story can be tested without any external machine or model quota from th
 ```bash
 agent-bus demo local
 agent-bus demo room
+agent-bus demo agent-model
 # checkout aliases:
 npm run demo:remote-assistant
 npm run demo:room
+npm run demo:agent-model
 ```
 
-`agent-bus demo local` starts a local gateway, creates a pair code, joins a local echo edge, sends a task, and prints the remote assistant result. `agent-bus demo room` starts two fake local agents, exercises `@agent-id`, `REPORT`, `BLACKBOARD`, and `DONE`, then writes a reports-only Markdown file.
+`agent-bus demo local` starts a local gateway, creates a pair code, joins a local echo edge, sends a task, and prints the remote assistant result. `agent-bus demo room` starts two fake local agents, exercises `@agent-id`, `REPORT`, `BLACKBOARD`, and `DONE`, then writes a reports-only Markdown file. `agent-bus demo agent-model` exposes a fake edge as `agent:model-agent`, calls both Chat Completions and Responses, and proves a stable cache scope becomes one reusable Agent Bus session key.

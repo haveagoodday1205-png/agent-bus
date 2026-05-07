@@ -257,7 +257,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(public_agents())
             if path == "/nodes":
                 self.require_auth(("admin", "edge"))
-                return self.json(public_nodes())
+                return self.json(public_registered_nodes())
             if path in ("/manifest", "/v1/agent-bus/manifest"):
                 self.require_auth(("admin", "edge"))
                 return self.json(agent_bus_manifest(self.config))
@@ -479,6 +479,30 @@ def normalize_agents(node_id, agents):
 
 def public_nodes():
     return [node for node in STATE["nodes"].values() if node_is_online(node)]
+
+
+def public_registered_nodes():
+    return sorted((public_node(node) for node in STATE["nodes"].values()), key=lambda item: item.get("node_id") or "")
+
+
+def public_node(node):
+    return {
+        "node_id": node.get("node_id"),
+        "hostname": node.get("hostname"),
+        "status": node.get("status"),
+        "last_seen_at": node.get("last_seen_at"),
+        "agents": [public_node_agent(agent) for agent in node.get("agents", [])],
+    }
+
+
+def public_node_agent(agent):
+    return {
+        "id": agent.get("id"),
+        "kind": agent.get("kind"),
+        "role": agent.get("role"),
+        "enabled": agent.get("enabled") is not False,
+        "capabilities": agent.get("capabilities") or [],
+    }
 
 
 def node_is_online(node):

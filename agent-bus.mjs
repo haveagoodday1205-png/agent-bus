@@ -1499,7 +1499,8 @@ function printStatus(result) {
   if (result.nodes?.length) {
     console.log("\nNodes:");
     for (const node of result.nodes) {
-      console.log(`- ${node.id}: ${node.freshness}, agents=${node.agents.join(",") || "-"}`);
+      const seen = node.last_seen_at ? ` seen=${node.last_seen_at}` : " seen=unknown";
+      console.log(`- ${node.id}: node=${node.freshness}, agents=${node.agents.join(",") || "-"}${seen}`);
     }
   }
   if (result.agents.length) {

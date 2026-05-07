@@ -553,13 +553,18 @@ function publicNode(node) {
     hostname: node.hostname,
     status: node.status,
     last_seen_at: node.last_seen_at,
-    agents: node.agents
+    agents: (node.agents || []).map((agent) => ({
+      id: agent.id,
+      kind: agent.kind,
+      role: agent.role,
+      enabled: agent.enabled !== false,
+      capabilities: agent.capabilities || []
+    }))
   };
 }
 
 function publicNodes() {
   return [...state.nodes.values()]
-    .filter((node) => node.status === "online")
     .map((node) => publicNode(node))
     .sort((a, b) => String(a.node_id || "").localeCompare(String(b.node_id || "")));
 }

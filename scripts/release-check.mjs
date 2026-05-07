@@ -14,6 +14,7 @@ const jsFiles = [
   "windows-openai-proxy.mjs",
   "scripts/demo-local.mjs",
   "scripts/demo-room.mjs",
+  "scripts/compatibility-smoke.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
@@ -34,6 +35,7 @@ try {
   const python = process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
+  step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);
   step("stale room autonomy smoke", process.execPath, ["scripts/room-autonomy-stale-smoke.mjs", "--json"]);
   step("npm package verification", process.execPath, ["scripts/verify-package.mjs"]);

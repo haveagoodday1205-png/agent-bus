@@ -37,6 +37,14 @@ agent-bus connect --config edge.hello.config.json
 
 Then create a room or thread targeting `hello-agent`. The agent should produce a `REPORT`, a `BLACKBOARD` note, and `DONE`.
 
+For a full no-quota compatibility check from the repository root:
+
+```bash
+npm run compat:check
+```
+
+That starts a temporary local gateway and edge node, advertises `hello-agent` as `agent:hello-agent`, exercises Chat Completions, Responses, and room execution, then tears everything down.
+
 ## Adapter Contract
 
 Agent Bus command adapters receive:

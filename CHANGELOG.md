@@ -7,6 +7,7 @@
 - Adds a v1 protocol draft that captures the emerging Agent Bus contract for agent identity, rooms, directives, append-only events, permissions, compatibility tests, and the flagship multi-runtime PR demo.
 - Adds a machine-readable protocol v1 JSON Schema plus a no-model `examples/hello-agent` adapter template.
 - Adds `npm run protocol:check` to verify the schema and hello-agent contract without live model calls.
+- Adds `npm run compat:check` to start a temporary gateway and hello-agent edge, verify `agent:<id>` Chat Completions/Responses routing, and confirm room `REPORT`/`BLACKBOARD` parsing without model quota.
 - Updates the roadmap and starter issues around the "MCP connects models to tools; Agent Bus connects agents to agents" direction.
 
 ### Edge-to-edge model replacement

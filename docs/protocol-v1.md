@@ -27,6 +27,7 @@ Offline verification:
 
 ```bash
 npm run protocol:check
+npm run compat:check
 ```
 
 ## Goals
@@ -293,6 +294,8 @@ A v1-compatible gateway should pass:
 - report/blackboard persistence
 - agent-backed `/v1/chat/completions`
 - agent-backed `/v1/responses`
+
+The repository includes `npm run compat:check` for this baseline. It starts a temporary local Python gateway and Node edge, registers `examples/hello-agent`, verifies scoped edge discovery, confirms edge tokens only see `agent:<id>` virtual models, exercises agent-backed Chat Completions and Responses calls, then creates a room and checks `REPORT`, `BLACKBOARD`, and `DONE` parsing. It makes no provider model calls.
 
 ## Flagship Demo Target
 

@@ -28,6 +28,7 @@ try {
     "central_gateway.py",
     "edge-node.mjs",
     "edge_node.py",
+    "scripts/compatibility-smoke.mjs",
     "scripts/offline-smoke.mjs",
     "scripts/npm-install-smoke.mjs",
     "scripts/verify-protocol-v1.mjs",

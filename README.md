@@ -24,6 +24,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - OpenAI-compatible routing: expose selected model aliases behind one authenticated gateway.
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
+- Compatibility verification: `npm run compat:check` starts a temporary gateway plus `examples/hello-agent` and validates registration, `agent:<id>` chat/responses calls, and room directives without spending model quota.
 
 Start with `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `docs/protocol-v1.md` for the emerging stable protocol contract, `docs/trust-boundaries.md` plus `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
 
@@ -69,6 +70,7 @@ Contributors can verify package and install paths before publishing or tagging:
 
 ```bash
 npm run release:check
+npm run compat:check
 npm run pack:check
 npm run portable:check
 npm run smoke:npm-install -- --package .  # pre-publish checkout install path

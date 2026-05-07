@@ -12,7 +12,7 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 ## Protocol v1 tasks
 
 - Extend `docs/protocol-v1.schema.json` with stricter artifact, wake, and permission-profile definitions.
-- Add a compatibility smoke that starts `examples/hello-agent`, verifies registration, run execution, `REPORT`, `BLACKBOARD`, and agent-backed `/v1/responses`.
+- Extend the compatibility smoke with large-message coverage, failing-adapter assertions, or a CI matrix across Windows, Linux, and macOS.
 - Add a Python version of `examples/hello-agent` for users who do not want Node.js on an edge machine.
 - Add a protocol-version field to the manifest and document how clients should handle unknown minor versions.
 - Add policy profile examples for read-only, coder, browser, deploy, and admin agents.

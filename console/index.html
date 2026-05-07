@@ -196,13 +196,26 @@
             </div>
             <label>
               <span data-i18n="model">Model</span>
-              <input id="modelInput" value="agent-bus-default" list="modelSuggestions" />
-              <datalist id="modelSuggestions"></datalist>
+              <input id="modelInput" value="agent-bus-default" list="modelOptions" />
+              <datalist id="modelOptions"></datalist>
             </label>
-            <label>
-              <span data-i18n="cacheScope">Cache Scope</span>
-              <input id="cacheScopeInput" placeholder="Optional stable key for agent:&lt;id&gt; calls" data-i18n-placeholder="cacheScopePlaceholder" />
-            </label>
+            <div class="model-options-grid">
+              <label>
+                <span data-i18n="apiEndpoint">API</span>
+                <select id="modelEndpoint">
+                  <option value="chat" data-i18n="chatCompletions">Chat Completions</option>
+                  <option value="responses" data-i18n="responsesApi">Responses</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="cacheScope">Cache Scope</span>
+                <input id="modelCacheScope" placeholder="optional stable scope" data-i18n-placeholder="cacheScopePlaceholder" />
+              </label>
+              <label>
+                <span data-i18n="timeoutSeconds">Timeout</span>
+                <input id="modelTimeoutSeconds" type="number" min="1" max="900" value="60" />
+              </label>
+            </div>
             <label>
               <span data-i18n="prompt">Prompt</span>
               <textarea id="chatPrompt" rows="7" placeholder="Send a message through /v1/chat/completions" data-i18n-placeholder="chatPlaceholder"></textarea>

@@ -328,6 +328,14 @@ tbody tr:last-child td {
   margin-top: 12px;
 }
 
+.model-options-grid {
+  display: grid;
+  grid-template-columns: minmax(132px, 0.8fr) minmax(160px, 1fr) minmax(96px, 0.5fr);
+  gap: 12px;
+  align-items: end;
+  margin: 12px 0;
+}
+
 .message-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -569,6 +577,7 @@ tbody tr:last-child td {
   .split,
   .rooms-grid,
   .form-row,
+  .model-options-grid,
   .message-form,
   .summary-grid {
     grid-template-columns: 1fr;

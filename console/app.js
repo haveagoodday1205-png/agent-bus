@@ -1,5 +1,6 @@
 const state = {
   agents: [],
+  models: [],
   rooms: [],
   selectedAgents: new Set(),
   currentThreadId: null,
@@ -24,6 +25,7 @@ const messages = {
     activeRooms: "Active Rooms",
     activeRuns: "active runs",
     activity: "Activity",
+    apiEndpoint: "API",
     autonomousRoom: "Autonomous Room",
     broadcast: "broadcast",
     busy: "busy",
@@ -31,6 +33,7 @@ const messages = {
     cacheScope: "Cache Scope",
     cacheScopePlaceholder: "Optional stable key for agent:<id> calls",
     chatPlaceholder: "Send a message through /v1/chat/completions",
+    chatCompletions: "Chat Completions",
     checking: "checking",
     clear: "Clear",
     events: "Events",
@@ -75,6 +78,7 @@ const messages = {
     recentRooms: "Recent Rooms",
     reports: "reports",
     response: "Response",
+    responsesApi: "Responses",
     role: "Role",
     route: "Route",
     routeFailed: "route failed: {message}",
@@ -119,6 +123,7 @@ const messages = {
     tokenSaved: "Saved for this browser tab",
     tokenSavedLog: "token saved; refreshing authorized data",
     tokenSaving: "Saved. Loading agents...",
+    timeoutSeconds: "Timeout (s)",
     unknown: "unknown",
     unreachable: "unreachable",
     not_configured: "not configured",
@@ -139,13 +144,15 @@ const messages = {
     activeRooms: "活跃房间",
     activeRuns: "活跃运行",
     activity: "活动",
+    apiEndpoint: "接口",
     autonomousRoom: "自主房间",
     broadcast: "广播给全部",
     busy: "忙碌",
     capabilities: "能力",
-    cacheScope: "缓存范围",
+    cacheScope: "缓存作用域",
     cacheScopePlaceholder: "agent:<id> 调用的可选稳定键",
     chatPlaceholder: "通过 /v1/chat/completions 发送消息",
+    chatCompletions: "Chat Completions",
     checking: "检查中",
     clear: "清空",
     events: "事件",
@@ -190,6 +197,7 @@ const messages = {
     recentRooms: "最近房间",
     reports: "报告",
     response: "响应",
+    responsesApi: "Responses",
     role: "角色",
     route: "路由",
     routeFailed: "路由失败：{message}",
@@ -234,6 +242,7 @@ const messages = {
     tokenSaved: "已保存到当前浏览器标签页",
     tokenSavedLog: "token 已保存，正在刷新授权数据",
     tokenSaving: "已保存，正在加载智能体...",
+    timeoutSeconds: "超时（秒）",
     unknown: "未知",
     unreachable: "不可达",
     not_configured: "未配置",
@@ -696,7 +705,8 @@ function renderConversation(thread) {
 async function loadModels() {
   try {
     const data = await request("v1/models");
-    renderModelSuggestions(data.data || []);
+    state.models = data.data || [];
+    renderModelOptions();
     $("modelOutput").textContent = JSON.stringify(data, null, 2);
     logEvent(t("modelsLoaded", { count: data.data?.length || 0 }));
   } catch (err) {
@@ -704,15 +714,15 @@ async function loadModels() {
   }
 }
 
-function renderModelSuggestions(models) {
-  const list = $("modelSuggestions");
-  if (!list) return;
+function renderModelOptions() {
+  const list = $("modelOptions");
   list.textContent = "";
-  for (const model of models) {
+  for (const model of state.models) {
     const id = String(model.id || "").trim();
     if (!id) continue;
     const option = document.createElement("option");
     option.value = id;
+    if (model.owned_by) option.label = model.owned_by;
     list.append(option);
   }
 }
@@ -720,26 +730,37 @@ function renderModelSuggestions(models) {
 async function sendChat(event) {
   event.preventDefault();
   const model = $("modelInput").value.trim() || "agent-bus-default";
+  const endpoint = $("modelEndpoint").value;
   const prompt = $("chatPrompt").value.trim();
+  const cacheScope = $("modelCacheScope").value.trim();
+  const timeoutSeconds = Number($("modelTimeoutSeconds").value || 0);
   if (!prompt) return logEvent(t("modelPromptEmpty"));
   $("modelOutput").textContent = t("waiting");
   try {
-    const body = {
-      model,
-      messages: [{ role: "user", content: prompt }]
-    };
-    const cacheScope = $("cacheScopeInput").value.trim();
-    if (cacheScope) {
-      body.metadata = { agent_bus_cache_scope: cacheScope };
-    }
-    const data = await request("v1/chat/completions", {
-      method: "POST",
-      body
-    });
+    const path = endpoint === "responses" ? "v1/responses" : "v1/chat/completions";
+    const data = await request(path, { method: "POST", body: modelRequestBody({ endpoint, model, prompt, cacheScope, timeoutSeconds }) });
     $("modelOutput").textContent = JSON.stringify(data, null, 2);
   } catch (err) {
     $("modelOutput").textContent = err.message;
   }
+}
+
+function modelRequestBody({ endpoint, model, prompt, cacheScope, timeoutSeconds }) {
+  const timeout = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? { timeout_seconds: timeoutSeconds } : {};
+  if (endpoint === "responses") {
+    return {
+      model,
+      input: prompt,
+      ...(cacheScope ? { metadata: { agent_bus_cache_scope: cacheScope } } : {}),
+      ...timeout
+    };
+  }
+  return {
+    model,
+    messages: [{ role: "user", content: prompt }],
+    ...(cacheScope ? { prompt_cache_key: cacheScope } : {}),
+    ...timeout
+  };
 }
 
 async function request(path, options = {}) {

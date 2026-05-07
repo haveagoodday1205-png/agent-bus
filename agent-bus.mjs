@@ -1375,7 +1375,7 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
         ping_status: pingStatus,
         last_run_status: lastRunStatus,
         last_seen_at: lastSeenAt,
-        freshness: statusFreshness(agent.status, lastSeenAt),
+        freshness: statusFreshness(agent.status, lastSeenAt, staleSeconds),
         activity: agentActivity(activeRuns, activeRoomIds),
         active_rooms: activeRoomIds,
         active_runs: activeRuns,

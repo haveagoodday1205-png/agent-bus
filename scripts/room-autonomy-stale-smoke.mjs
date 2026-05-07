@@ -94,9 +94,23 @@ async function main() {
     AGENT_BUS_HOST: "127.0.0.1",
     AGENT_BUS_PORT: String(port),
     AGENT_BUS_DATA_DIR: path.join(tempDir, "data"),
-    AGENT_BUS_NODE_STALE_SECONDS: "2"
+    AGENT_BUS_NODE_STALE_SECONDS: "3"
   });
   await waitForJson(`${gateway}/health`);
+
+  await requestJson(`${gateway}/edge/register`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "threshold-status-node",
+      hostname: "threshold-status-smoke",
+      agents: [{ id: "threshold-status-agent", kind: "smoke", role: "worker" }]
+    })
+  });
+  await delay(1200);
+  const thresholdStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token, "--stale-seconds", "1"]);
+  assert(thresholdStatus.nodes?.some((node) => node.id === "threshold-status-node" && node.freshness?.startsWith("stale")), "CLI status --stale-seconds did not apply to node freshness");
+  assert(thresholdStatus.agents?.some((agent) => agent.id === "threshold-status-agent" && agent.freshness?.startsWith("stale")), "CLI status --stale-seconds did not apply to agent freshness");
 
   const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
     AGENT_BUS_CONFIG: edgeConfig,
@@ -141,6 +155,7 @@ async function main() {
   const staleStatus = await waitForStatusNodeFreshness(gateway, token, "stale-room-edge", "stale");
   const staleNode = staleStatus.nodes?.find((node) => node.id === "stale-room-edge");
   assert(staleNode?.agents?.includes("slow-planner"), "stale node inventory lost agent membership");
+  await delay(1200);
   const staleAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });
   assert(!staleAgents.some((agent) => agent.id === "slow-planner" || agent.id === "slow-worker"), "stale node agents should not remain routable via /agents");
   const registeredNodes = await runCliJson(["nodes", "--gateway", gateway, "--token", token]);

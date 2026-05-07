@@ -30,10 +30,15 @@ try {
     "edge_node.py",
     "scripts/offline-smoke.mjs",
     "scripts/npm-install-smoke.mjs",
+    "scripts/verify-protocol-v1.mjs",
     "scripts/make-portable-release.mjs",
     "scripts/release-check.mjs",
     "docs/cli.md",
     "docs/ai-to-ai.md",
+    "docs/protocol-v1.md",
+    "docs/protocol-v1.schema.json",
+    "examples/hello-agent/hello-agent.mjs",
+    "examples/hello-agent/README.md",
     "central.config.example.json",
     "edge.config.example.json"
   ];

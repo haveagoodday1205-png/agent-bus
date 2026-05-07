@@ -56,7 +56,8 @@
     "demo:room": "node scripts/demo-room.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
-    "smoke:npm-install": "node scripts/npm-install-smoke.mjs"
+    "smoke:npm-install": "node scripts/npm-install-smoke.mjs",
+    "protocol:check": "node scripts/verify-protocol-v1.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -83,6 +84,7 @@
     "compose.yaml",
     "console/**",
     "docs/**",
+    "examples/**",
     "scripts/**",
     "CHANGELOG.md",
     "CONTRIBUTING.md",

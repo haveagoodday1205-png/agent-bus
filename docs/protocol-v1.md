@@ -11,6 +11,24 @@ Agent Bus connects agents to agents.
 
 This page is the working v1 contract for SDKs, adapters, compatibility tests, and operator trust boundaries. It intentionally describes the smallest stable surface first; richer planning, consensus, federation, and hosted products should build on this contract instead of replacing it.
 
+Machine-readable schema:
+
+```text
+docs/protocol-v1.schema.json
+```
+
+Minimal adapter example:
+
+```text
+examples/hello-agent/
+```
+
+Offline verification:
+
+```bash
+npm run protocol:check
+```
+
 ## Goals
 
 - Let independent agents discover each other, advertise capabilities, delegate work, share durable state, and report outcomes.

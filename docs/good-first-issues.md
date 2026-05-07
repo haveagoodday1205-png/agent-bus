@@ -11,9 +11,9 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 
 ## Protocol v1 tasks
 
-- Turn `docs/protocol-v1.md` event types into a JSON Schema file for room, run, agent, and event objects.
-- Add a compatibility smoke that starts a fake v1 adapter and verifies registration, run execution, `REPORT`, `BLACKBOARD`, and agent-backed `/v1/responses`.
-- Add a tiny "hello agent" adapter in Python or TypeScript that reads `AGENT_MESSAGE_FILE`, emits one `REPORT`, and exits successfully.
+- Extend `docs/protocol-v1.schema.json` with stricter artifact, wake, and permission-profile definitions.
+- Add a compatibility smoke that starts `examples/hello-agent`, verifies registration, run execution, `REPORT`, `BLACKBOARD`, and agent-backed `/v1/responses`.
+- Add a Python version of `examples/hello-agent` for users who do not want Node.js on an edge machine.
 - Add a protocol-version field to the manifest and document how clients should handle unknown minor versions.
 - Add policy profile examples for read-only, coder, browser, deploy, and admin agents.
 

@@ -1,0 +1,19 @@
+{
+  "nodeId": "hello-node",
+  "gatewayUrl": "http://127.0.0.1:8788",
+  "token": "replace-with-agent-bus-token-or-paired-edge-token",
+  "pollTimeoutMs": 25000,
+  "idleDelayMs": 1000,
+  "defaultTimeoutMs": 60000,
+  "agents": [
+    {
+      "id": "hello-agent",
+      "kind": "example",
+      "role": "worker",
+      "enabled": true,
+      "adapter": "command",
+      "capabilities": ["hello", "protocol-v1", "offline"],
+      "runCommand": "node examples/hello-agent/hello-agent.mjs"
+    }
+  ]
+}

@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/protocol-v1.schema.json",
+  "title": "Agent Bus Protocol v1 Draft",
+  "description": "Draft schema for Agent Bus v1-compatible gateways, rooms, runs, agents, and append-only events.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/manifest" },
+    { "$ref": "#/$defs/node" },
+    { "$ref": "#/$defs/agent" },
+    { "$ref": "#/$defs/room" },
+    { "$ref": "#/$defs/run" },
+    { "$ref": "#/$defs/event" }
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "capability": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "terminalRunStatus": {
+      "enum": ["completed", "failed", "error", "cancelled", "canceled", "skipped"]
+    },
+    "runStatus": {
+      "enum": ["queued", "running", "completed", "failed", "error", "cancelled", "canceled", "skipped"]
+    },
+    "roomStatus": {
+      "enum": ["active", "running", "finishing", "completed", "paused"]
+    },
+    "agent": {
+      "type": "object",
+      "required": ["id", "node_id", "kind", "role", "capabilities", "enabled"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "node_id": { "$ref": "#/$defs/identifier" },
+        "kind": { "$ref": "#/$defs/identifier" },
+        "role": { "$ref": "#/$defs/identifier" },
+        "enabled": { "type": "boolean" },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability" },
+          "uniqueItems": true
+        },
+        "owner": { "type": "string" },
+        "runtime": { "type": "string" },
+        "permission_profile": { "$ref": "#/$defs/identifier" },
+        "allowed_rooms": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowed_wake_targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "status": {
+          "enum": ["online", "stale", "offline"]
+        },
+        "last_seen_at": { "$ref": "#/$defs/timestamp" },
+        "health": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "node": {
+      "type": "object",
+      "required": ["node_id", "status", "last_seen_at", "agents"],
+      "properties": {
+        "node_id": { "$ref": "#/$defs/identifier" },
+        "status": {
+          "enum": ["online", "stale", "offline"]
+        },
+        "hostname": { "type": ["string", "null"] },
+        "version": { "type": ["string", "null"] },
+        "registered_at": { "$ref": "#/$defs/timestamp" },
+        "last_seen_at": { "$ref": "#/$defs/timestamp" },
+        "agents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/agent" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "message": {
+      "type": "object",
+      "required": ["speaker", "content"],
+      "properties": {
+        "speaker": { "type": "string" },
+        "role": { "type": "string" },
+        "content": { "type": "string" },
+        "run_id": { "$ref": "#/$defs/identifier" },
+        "status": { "$ref": "#/$defs/runStatus" },
+        "at": { "$ref": "#/$defs/timestamp" }
+      },
+      "additionalProperties": true
+    },
+    "report": {
+      "type": "object",
+      "required": ["speaker", "content", "at"],
+      "properties": {
+        "speaker": { "type": "string" },
+        "content": { "type": "string" },
+        "at": { "$ref": "#/$defs/timestamp" },
+        "run_id": { "$ref": "#/$defs/identifier" }
+      },
+      "additionalProperties": true
+    },
+    "blackboard": {
+      "type": "object",
+      "properties": {
+        "goal": { "type": "string" },
+        "permissions": { "type": "string" },
+        "budget": { "type": "string" },
+        "open_questions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next_actions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/report" }
+        },
+        "reports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/report" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "room": {
+      "type": "object",
+      "required": ["id", "title", "goal", "status", "agents", "messages", "runs", "reports", "blackboard"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "title": { "type": "string" },
+        "goal": { "type": "string" },
+        "status": { "$ref": "#/$defs/roomStatus" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "agents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/message" }
+        },
+        "runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/run" }
+        },
+        "reports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/report" }
+        },
+        "blackboard": { "$ref": "#/$defs/blackboard" }
+      },
+      "additionalProperties": true
+    },
+    "runEvent": {
+      "type": "object",
+      "required": ["at", "type"],
+      "properties": {
+        "at": { "$ref": "#/$defs/timestamp" },
+        "type": { "type": "string" },
+        "stream": {
+          "enum": ["stdout", "stderr"]
+        },
+        "text": { "type": "string" },
+        "node_id": { "$ref": "#/$defs/identifier" }
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "type": "object",
+      "required": ["id", "thread_id", "agent_id", "node_id", "status", "message", "created_at", "stdout", "stderr", "events"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "thread_id": { "$ref": "#/$defs/identifier" },
+        "room_id": { "$ref": "#/$defs/identifier" },
+        "agent_id": { "$ref": "#/$defs/identifier" },
+        "node_id": { "$ref": "#/$defs/identifier" },
+        "kind": { "$ref": "#/$defs/identifier" },
+        "role": { "$ref": "#/$defs/identifier" },
+        "status": { "$ref": "#/$defs/runStatus" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "started_at": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "completed_at": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "message": { "type": "string" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "summary": { "type": "string" },
+        "exit_code": { "type": ["integer", "null"] },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/runEvent" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "event": {
+      "type": "object",
+      "required": ["id", "type", "at", "actor", "payload"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "type": {
+          "enum": [
+            "room.created",
+            "room.message.added",
+            "room.blackboard.updated",
+            "room.report.added",
+            "run.queued",
+            "run.started",
+            "run.output",
+            "run.completed",
+            "run.failed",
+            "agent.registered",
+            "agent.health.updated",
+            "wake.requested",
+            "wake.dispatched",
+            "wake.cancelled",
+            "policy.denied"
+          ]
+        },
+        "at": { "$ref": "#/$defs/timestamp" },
+        "actor": { "type": "string" },
+        "room_id": { "$ref": "#/$defs/identifier" },
+        "run_id": { "$ref": "#/$defs/identifier" },
+        "node_id": { "$ref": "#/$defs/identifier" },
+        "agent_id": { "$ref": "#/$defs/identifier" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["name", "protocol", "endpoints"],
+      "properties": {
+        "name": { "const": "agent-bus" },
+        "protocol": {
+          "type": "string",
+          "pattern": "^agent-bus\\.v[0-9]+"
+        },
+        "description": { "type": "string" },
+        "auth": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "agents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/agent" }
+        },
+        "model_router": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

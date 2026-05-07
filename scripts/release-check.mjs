@@ -18,6 +18,7 @@ const jsFiles = [
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
   "scripts/npm-install-smoke.mjs",
+  "scripts/verify-protocol-v1.mjs",
   "scripts/verify-package.mjs",
   "scripts/verify-portable-release.mjs",
   "scripts/release-check.mjs",
@@ -32,6 +33,7 @@ try {
 
   const python = process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py"]);
+  step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);
   step("stale room autonomy smoke", process.execPath, ["scripts/room-autonomy-stale-smoke.mjs", "--json"]);
   step("npm package verification", process.execPath, ["scripts/verify-package.mjs"]);

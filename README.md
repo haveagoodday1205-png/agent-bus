@@ -27,6 +27,8 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 
 Start with `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `docs/protocol-v1.md` for the emerging stable protocol contract, `docs/trust-boundaries.md` plus `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
 
+New adapter authors can start with `examples/hello-agent/`; it is a no-model, no-secret reference adapter that reads `AGENT_MESSAGE_FILE` and emits `REPORT`, `BLACKBOARD`, and `DONE`.
+
 ## Quick Start
 
 Run the local smoke test:

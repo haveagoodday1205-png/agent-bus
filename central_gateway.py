@@ -11,6 +11,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -39,12 +40,23 @@ def int_env(name, default):
 NODE_STALE_SECONDS = max(1, int_env("AGENT_BUS_NODE_STALE_SECONDS", 180))
 
 
+class AgentBusHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def server_bind(self):
+        TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+
+
 def main():
     config = load_config()
     ensure_dirs(config)
     load_edge_tokens(config)
     threading.Thread(target=reminder_loop, args=(config,), daemon=True).start()
-    server = ThreadingHTTPServer((config["host"], int(config["port"])), Handler)
+    server = AgentBusHTTPServer((config["host"], int(config["port"])), Handler)
     server.config = config
     print(f"central-gateway.py listening on http://{config['host']}:{config['port']}", flush=True)
     server.serve_forever()

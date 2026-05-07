@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const command = argv[0] || "serve";
 const configPath = optionValue("--config") || path.join(__dirname, "central.config.json");
+const NODE_STALE_SECONDS = intEnv("AGENT_BUS_NODE_STALE_SECONDS", 180);
 
 const state = {
   nodes: new Map(),
@@ -571,10 +572,17 @@ function publicNodes() {
 
 function publicAgents() {
   return [...state.nodes.values()]
-    .filter((node) => node.status === "online")
+    .filter(nodeIsOnline)
     .flatMap((node) => node.agents.map((agent) => publicAgent(node, agent)))
     .filter((agent) => agent.enabled !== false)
     .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function nodeIsOnline(node) {
+  if (node.status !== "online") return false;
+  if (!node.last_seen_at) return false;
+  const parsed = Date.parse(node.last_seen_at);
+  return Number.isFinite(parsed) && Date.now() - parsed <= NODE_STALE_SECONDS * 1000;
 }
 
 function publicAgent(node, agent) {
@@ -1106,6 +1114,11 @@ function optionValue(name) {
   const index = argv.indexOf(name);
   if (index === -1) return undefined;
   return argv[index + 1];
+}
+
+function intEnv(name, fallback) {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function resolvePath(value, baseDir) {

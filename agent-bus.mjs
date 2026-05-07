@@ -177,7 +177,7 @@ Usage:
   agent-bus room export room_xxx --format json --out room.json --no-redact
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
-  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25]
+  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180]
 
 Gateway queries:
   agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
@@ -1313,7 +1313,8 @@ async function status(args) {
     authWarning = "Pass --token or AGENT_BUS_TOKEN to include agents, nodes, and rooms.";
   }
 
-  const result = summarizeStatus({ health, agents, rooms, nodes, authWarning });
+  const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
+  const result = summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds });
   if (jsonOut) {
     printJson(result);
     return;
@@ -1321,7 +1322,7 @@ async function status(args) {
   printStatus(result);
 }
 
-function summarizeStatus({ health, agents, rooms, nodes, authWarning }) {
+function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds = 180 }) {
   const agentList = Array.isArray(agents) ? agents : [];
   const roomList = Array.isArray(rooms) ? rooms : [];
   const nodeList = Array.isArray(nodes) ? nodes : [];
@@ -1352,7 +1353,7 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning }) {
       id: node.node_id || node.id || "unknown",
       status: node.status || "unknown",
       last_seen_at: node.last_seen_at || null,
-      freshness: statusFreshness(node.status, node.last_seen_at || null),
+      freshness: statusFreshness(node.status, node.last_seen_at || null, staleSeconds),
       agents: Array.isArray(node.agents) ? node.agents.map((agent) => typeof agent === "string" ? agent : agent.id).filter(Boolean) : []
     })),
     agents: agentList.map((agent) => {
@@ -1461,13 +1462,13 @@ function unique(values) {
   return Array.from(new Set(values));
 }
 
-function statusFreshness(status, lastSeenAt) {
+function statusFreshness(status, lastSeenAt, staleSeconds = 180) {
   if (status !== "online") return status || "unknown";
   if (!lastSeenAt) return "online/unknown";
   const parsed = Date.parse(lastSeenAt);
   if (!Number.isFinite(parsed)) return "online/unknown";
   const ageSeconds = Math.max(0, Math.round((Date.now() - parsed) / 1000));
-  if (ageSeconds > 180) return `stale (${ageSeconds}s ago)`;
+  if (ageSeconds > staleSeconds) return `stale (${ageSeconds}s ago)`;
   return `online/fresh (${ageSeconds}s ago)`;
 }
 

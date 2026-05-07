@@ -98,7 +98,7 @@ async function main() {
   });
   await waitForJson(`${gateway}/health`);
 
-  start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
+  const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
     AGENT_BUS_CONFIG: edgeConfig,
     AGENT_BUS_GATEWAY_URL: gateway,
     AGENT_BUS_TOKEN: token
@@ -137,13 +137,23 @@ async function main() {
   assert(completed.runs?.some((run) => run.agent_id === "slow-worker" && run.status === "completed"), "delegated worker run did not complete");
   assert(!completed.reports?.some((item) => /Agent offline or unknown/.test(item.content || "")), "room incorrectly reported an online busy agent as offline");
 
+  edge.kill("SIGKILL");
+  const staleStatus = await waitForStatusNodeFreshness(gateway, token, "stale-room-edge", "stale");
+  const staleNode = staleStatus.nodes?.find((node) => node.id === "stale-room-edge");
+  assert(staleNode?.agents?.includes("slow-planner"), "stale node inventory lost agent membership");
+  const staleAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });
+  assert(!staleAgents.some((agent) => agent.id === "slow-planner" || agent.id === "slow-worker"), "stale node agents should not remain routable via /agents");
+  const registeredNodes = await runCliJson(["nodes", "--gateway", gateway, "--token", token]);
+  assert(registeredNodes.some((node) => node.node_id === "stale-room-edge"), "CLI nodes did not include the stale registered node");
+
   const result = {
     ok: true,
     mode: "offline",
     quota: "no_model_calls",
     room_id: completed.id,
     room_status: completed.status,
-    run_count: completed.runs?.length || 0
+    run_count: completed.runs?.length || 0,
+    stale_node_freshness: staleNode?.freshness || null
   };
 
   if (jsonOut) {
@@ -193,6 +203,17 @@ async function waitForAgents(gateway, token, agentIds, timeoutMs = 10000) {
     await delay(200);
   }
   throw new Error(`Timed out waiting for agents: ${agentIds.join(", ")}`);
+}
+
+async function waitForStatusNodeFreshness(gateway, token, nodeId, freshnessPrefix, timeoutMs = 10000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const status = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token, "--stale-seconds", "2"]);
+    const node = status.nodes?.find((item) => item.id === nodeId);
+    if (node?.freshness?.startsWith(freshnessPrefix)) return status;
+    await delay(200);
+  }
+  throw new Error(`Timed out waiting for node ${nodeId} freshness ${freshnessPrefix}`);
 }
 
 async function waitForRoomComplete(gateway, token, roomId, timeoutMs = 10000) {

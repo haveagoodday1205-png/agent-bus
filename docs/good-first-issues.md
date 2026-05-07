@@ -6,8 +6,8 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 
 - Extend the registry install smoke script with a CI-friendly scheduled job or platform matrix once registry/network access is available.
 - Improve `agent-bus status` human output so a new operator can tell online, busy/running, stale, ping reachability, and last-run health apart at a glance.
-- Add a remote-assistant quickstart that starts from `npm install -g agent-bus-cli`, pairs one edge node, sends one fake/local task, and exports only reports.
-- Add or update a trust-boundary diagram for central/admin token, scoped edge token, command adapters, model-router access, and share-safe room exports.
+- Extend the remote-assistant quickstart with screenshots, copy/paste two-machine transcripts, or a short demo video script for the npm install -> `agent-bus demo room` -> pair/setup edge -> status -> reports-only export path.
+- Extend the trust-boundary docs with screenshots, deployment examples, or one small adapter-sandboxing recipe for central/admin token, pair code, scoped edge token, command adapters, model-router access, `/agents` vs `/nodes`, and share-safe room exports.
 
 ## Adapter presets
 
@@ -35,7 +35,7 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 
 ## Docs and diagrams
 
-- Draw the central gateway / outbound edge-node trust boundary.
+- Improve the central gateway / outbound edge-node trust-boundary diagram in `docs/trust-boundaries.md`.
 - Add a short tutorial for pairing a second machine without exposing inbound ports.
 - Add screenshots or terminal output from the local room demo with tokens and hostnames redacted.
 

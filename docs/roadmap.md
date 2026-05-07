@@ -18,7 +18,7 @@ Concrete v0.6 release candidates:
 - Keep the registry install smoke path (`npm run smoke:npm-install`) green; it installs `agent-bus-cli` into a temporary prefix and runs `agent-bus --help` plus `agent-bus smoke --offline` without tagging or publishing a release.
 - Improve `agent-bus status` with human labels for `online`, `busy/running`, `stale`, `ping reachable/unreachable`, and `last run ok/failed/unknown`, while preserving JSON fields for automation.
 - Add a remote-assistant quickstart page that starts with npm, creates a central gateway, pairs one edge node, checks status, sends one fake/local task, and exports only reports.
-- Add a trust-boundary diagram covering outbound edge polling, scoped edge tokens, central/admin actions, adapter execution scope, and share-safe exports.
+- Keep the trust-boundary docs current for outbound edge polling, scoped edge tokens, central/admin actions, adapter execution scope, model-router access, `/agents` vs `/nodes`, and share-safe exports. (Initial diagram and token matrix landed in `docs/trust-boundaries.md`.)
 - Add issue templates for adapter presets, setup UX, smoke coverage, docs/demo, and trust/safety.
 
 ## 1. Stable Local Network

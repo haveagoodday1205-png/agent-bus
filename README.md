@@ -25,7 +25,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
 
-Start with `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
+Start with `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `docs/trust-boundaries.md` plus `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
 
 ## Quick Start
 
@@ -107,6 +107,8 @@ agent-bus connect --config edge.config.json
 ```
 
 Pairing returns a scoped edge token for that node. It can register, poll, report runs, and read discovery metadata, but it cannot create pair codes, create threads, wake rooms, or use the model router.
+
+For the full trust-boundary map covering the admin token, pair code, scoped edge token, adapter execution scope, model-router access, `/agents` vs `/nodes`, and reports-only exports, see [Trust Boundaries](docs/trust-boundaries.md).
 
 Run a central gateway:
 

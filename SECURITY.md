@@ -26,6 +26,8 @@ Agent Bus can execute commands through edge adapters and can proxy model API tra
 
 Agent Bus records runs for audit, but it is not a sandbox. Use OS permissions, service users, containers, network policy, and reviewable configs as the enforcement layer.
 
+For an operator-oriented diagram and token/capability matrix, see `docs/trust-boundaries.md`.
+
 ## Token Storage
 
 Pairing stores only SHA-256 hashes of generated edge tokens in `data/central/edge_tokens.json`. The raw edge token is returned once to the joining node and should be kept in that node's local config or secret store. `GET /edge/tokens` returns metadata only, never raw tokens or token hashes.

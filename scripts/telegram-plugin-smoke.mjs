@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -127,6 +128,9 @@ async function main() {
   assert(callbackAgentsWebhook.ok === true && callbackAgentsWebhook.command === "agents", "telegram /agents callback failed");
   assert(callbackAgentsWebhook.callback_answer?.status === "dry_run", "telegram callback answer did not stay in dry-run mode");
   assertInlineButton(callbackAgentsWebhook.reply_markup, "/agent telegram-smoke-agent", "telegram /agents callback did not include agent selection button");
+  const pollerCallback = await runPollerCallbackSmoke(gateway, webhookSecret, telegramChatId, "/status", dataDir);
+  assert(pollerCallback.ok === true && pollerCallback.handled === 1, "telegram poller did not forward callback query");
+  assert(pollerCallback.allowedUpdates.includes("callback_query"), "telegram poller did not request callback_query updates");
   const agentsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/agents");
   assert(agentsWebhook.ok === true && agentsWebhook.command === "agents", "telegram /agents webhook failed");
   const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-smoke-agent Run webhook command smoke.");
@@ -430,6 +434,84 @@ function telegramCallbackWebhook(gateway, secret, chatId, data) {
   });
 }
 
+async function runPollerCallbackSmoke(gateway, secret, chatId, data, dataDir) {
+  const update = {
+    update_id: 5000,
+    callback_query: {
+      id: `poller-callback-${Date.now()}`,
+      data,
+      message: {
+        message_id: 3,
+        chat: { id: chatId, type: "private" },
+        text: "button"
+      }
+    }
+  };
+  const mock = await startTelegramApiMock([update]);
+  try {
+    const result = await runNodeJson([
+      path.join(root, "scripts", "telegram-poller.mjs"),
+      "--gateway",
+      gateway,
+      "--api-base-url",
+      mock.url,
+      "--offset-file",
+      path.join(dataDir, "telegram-poller-smoke.offset"),
+      "--once",
+      "--json"
+    ], {
+      AGENT_BUS_TELEGRAM_BOT_TOKEN: "telegram-poller-smoke-token",
+      AGENT_BUS_TELEGRAM_WEBHOOK_SECRET: secret
+    });
+    await waitForNotification(dataDir, (item) => (
+      item.event === "telegram.callback_answer"
+      && item.callback_query_id === update.callback_query.id
+      && item.status === "dry_run"
+    ));
+    return { ...result, allowedUpdates: mock.allowedUpdates };
+  } finally {
+    await mock.close();
+  }
+}
+
+async function startTelegramApiMock(updates) {
+  const state = { updates, calls: [], allowedUpdates: [] };
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1");
+    state.calls.push(url.pathname);
+    if (url.pathname.endsWith("/getUpdates")) {
+      const allowed = parseJson(url.searchParams.get("allowed_updates") || "[]");
+      state.allowedUpdates = Array.isArray(allowed) ? allowed : [];
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: state.updates.splice(0) }));
+      return;
+    }
+    if (url.pathname.endsWith("/deleteWebhook")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: true }));
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: false, description: "not_found" }));
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  return {
+    get url() {
+      return `http://127.0.0.1:${address.port}`;
+    },
+    get allowedUpdates() {
+      return state.allowedUpdates;
+    },
+    close() {
+      return new Promise((resolve) => server.close(resolve));
+    }
+  };
+}
+
 async function pollTask(gateway, token, nodeId = "telegram-smoke-edge") {
   const result = await requestJson(`${gateway}/edge/poll`, {
     method: "POST",
@@ -525,6 +607,33 @@ function runAgentBus(args) {
     throw new Error(`agent-bus ${args.join(" ")} failed with ${result.status}: ${result.stderr || result.stdout}`);
   }
   return JSON.parse(result.stdout);
+}
+
+function runNodeJson(args, env = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, {
+      cwd: root,
+      env: { ...process.env, ...env },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        reject(new Error(`node ${args.join(" ")} failed with ${code}: ${stderr || stdout}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (err) {
+        reject(new Error(`failed to parse node JSON output: ${err.message}; output=${stdout}; stderr=${stderr}`));
+      }
+    });
+  });
 }
 
 async function waitForOutput(child, pattern, timeoutMs = 10000) {
@@ -637,4 +746,12 @@ function assert(condition, message) {
 function assertInlineButton(replyMarkup, callbackData, message) {
   const buttons = (replyMarkup?.inline_keyboard || []).flat();
   assert(buttons.some((button) => button?.callback_data === callbackData), message);
+}
+
+function parseJson(text) {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {};
+  }
 }

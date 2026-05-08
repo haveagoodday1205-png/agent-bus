@@ -316,7 +316,7 @@ agent-bus plugin telegram poll \
   --offset-file /var/lib/agent-bus/telegram-poller.offset
 ```
 
-The poller calls Telegram `getUpdates`, forwards each update into the same local `/v1/agent-bus/plugins/telegram/webhook` handler, and stores the next update offset so it can run under systemd without reprocessing old messages.
+The poller calls Telegram `getUpdates`, asks for `message`, `edited_message`, and `callback_query` updates, forwards each update into the same local `/v1/agent-bus/plugins/telegram/webhook` handler, and stores the next update offset so it can run under systemd without reprocessing old messages.
 
 Keep `allowedChatIds` or `AGENT_BUS_TELEGRAM_CHAT_ID` scoped to operator chats, because `/run` and conversation mode queue real Agent Bus tasks for edge machines.
 

@@ -23,6 +23,7 @@ async function main() {
   const botToken = optionValue("--bot-token") || process.env.AGENT_BUS_TELEGRAM_BOT_TOKEN || "";
   const secretToken = optionValue("--secret-token") || process.env.AGENT_BUS_TELEGRAM_WEBHOOK_SECRET || "";
   const gateway = optionValue("--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
+  const apiBaseUrl = optionValue("--api-base-url") || process.env.AGENT_BUS_TELEGRAM_API_BASE_URL || "https://api.telegram.org";
   const offsetFile = optionValue("--offset-file") || process.env.AGENT_BUS_TELEGRAM_POLLER_OFFSET_FILE || defaultOffsetFile();
   const timeoutSeconds = positiveInteger(optionValue("--poll-timeout") || process.env.AGENT_BUS_TELEGRAM_POLLER_TIMEOUT_SECONDS, 25, 50);
   const intervalMs = positiveInteger(optionValue("--interval-ms") || process.env.AGENT_BUS_TELEGRAM_POLLER_INTERVAL_MS, 250, 60000);
@@ -38,7 +39,7 @@ async function main() {
   if (args.includes("--delete-webhook")) {
     await telegramApi(botToken, "deleteWebhook", {
       drop_pending_updates: args.includes("--drop-pending") ? "true" : "false"
-    });
+    }, apiBaseUrl);
   }
 
   let nextOffset = readOffset(offsetFile);
@@ -55,8 +56,8 @@ async function main() {
       offset: nextOffset,
       timeout: timeoutSeconds,
       limit: 50,
-      allowed_updates: JSON.stringify(["message", "edited_message"])
-    });
+      allowed_updates: JSON.stringify(["message", "edited_message", "callback_query"])
+    }, apiBaseUrl);
 
     for (const update of updates) {
       const updateId = Number(update.update_id);
@@ -64,8 +65,7 @@ async function main() {
         await forwardUpdate(gateway, secretToken, update);
         handled += 1;
         if (!quiet) {
-          const text = update.message?.text || update.edited_message?.text || "";
-          console.log(`forwarded update ${updateId}: ${String(text).slice(0, 80)}`);
+          console.log(`forwarded update ${updateId}: ${updatePreview(update)}`);
         }
       } catch (err) {
         failed += 1;
@@ -97,16 +97,18 @@ Environment:
   AGENT_BUS_TELEGRAM_BOT_TOKEN       Telegram bot token.
   AGENT_BUS_TELEGRAM_WEBHOOK_SECRET  Shared secret sent to the local Central webhook.
   AGENT_BUS_GATEWAY_URL              Central gateway URL, usually http://127.0.0.1:8788 for the poller.
+  AGENT_BUS_TELEGRAM_API_BASE_URL    Optional Telegram API base URL for no-network smoke tests.
 `);
 }
 
-async function telegramUpdates(botToken, params) {
-  const response = await telegramApi(botToken, "getUpdates", params);
+async function telegramUpdates(botToken, params, apiBaseUrl) {
+  const response = await telegramApi(botToken, "getUpdates", params, apiBaseUrl);
   return Array.isArray(response.result) ? response.result : [];
 }
 
-async function telegramApi(botToken, method, params = {}) {
-  const url = new URL(`https://api.telegram.org/bot${botToken}/${method}`);
+async function telegramApi(botToken, method, params = {}, apiBaseUrl = "https://api.telegram.org") {
+  const root = String(apiBaseUrl || "https://api.telegram.org").replace(/\/+$/, "");
+  const url = new URL(`${root}/bot${botToken}/${method}`);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
   }
@@ -117,6 +119,14 @@ async function telegramApi(botToken, method, params = {}) {
     throw new Error(body.description || text || `${res.status} ${res.statusText}`);
   }
   return body;
+}
+
+function updatePreview(update) {
+  const text = update.message?.text || update.edited_message?.text;
+  if (text) return String(text).slice(0, 80);
+  const data = update.callback_query?.data;
+  if (data) return `callback ${String(data).slice(0, 70)}`;
+  return "non-message update";
 }
 
 async function forwardUpdate(gateway, secretToken, update) {

@@ -80,6 +80,21 @@
           </div>
           <div class="tool-surface">
             <div class="section-head">
+              <h2 data-i18n="edgeJoin">Edge Join</h2>
+              <button id="copyEdgeJoinButton" type="button" data-i18n="copyJoin">Copy Join</button>
+            </div>
+            <form id="edgeJoinForm" class="edge-join-form">
+              <label>
+                <span data-i18n="edgeLabel">Edge Label</span>
+                <input id="edgeJoinLabel" type="text" autocomplete="off" placeholder="office-macbook" data-i18n-placeholder="edgeLabelPlaceholder" />
+              </label>
+              <button type="submit" data-i18n="createJoin">Create Join</button>
+            </form>
+            <div id="edgeTokenSummary" class="muted">-</div>
+            <pre id="edgeJoinCommand" class="compact-output" tabindex="0"></pre>
+          </div>
+          <div class="tool-surface">
+            <div class="section-head">
               <h2 data-i18n="nodes">Nodes</h2>
               <button id="loadNodesButton" type="button" data-i18n="reload">Reload</button>
             </div>

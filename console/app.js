@@ -5,6 +5,8 @@ const state = {
   agents: [],
   models: [],
   rooms: [],
+  edgeTokens: [],
+  edgeJoinCommand: "",
   selectedAgents: new Set(),
   currentThreadId: null,
   currentThread: null,
@@ -95,6 +97,17 @@ const messages = {
     failed: "failed",
     finishing: "finishing",
     running: "running",
+    copyJoin: "Copy Join",
+    createJoin: "Create Join",
+    edgeJoin: "Edge Join",
+    edgeJoinCreated: "edge join command created",
+    edgeJoinFailed: "edge join failed: {message}",
+    edgeJoinPlaceholder: "Create a join command",
+    edgeLabel: "Edge Label",
+    edgeLabelPlaceholder: "office-macbook",
+    edgeTokens: "Edge Tokens",
+    edgeTokensLoaded: "loaded {count} edge tokens",
+    edgeTokensLoadFailed: "edge tokens failed: {message}",
     prompt: "Prompt",
     queued: "Queued",
     quickstart: "Quickstart",
@@ -245,6 +258,17 @@ const messages = {
     failed: "失败",
     finishing: "收尾中",
     running: "运行中",
+    copyJoin: "复制接入命令",
+    createJoin: "生成接入",
+    edgeJoin: "Edge 接入",
+    edgeJoinCreated: "Edge 接入命令已生成",
+    edgeJoinFailed: "Edge 接入失败：{message}",
+    edgeJoinPlaceholder: "生成接入命令",
+    edgeLabel: "Edge 名称",
+    edgeLabelPlaceholder: "office-macbook",
+    edgeTokens: "Edge Token",
+    edgeTokensLoaded: "已加载 {count} 个 Edge Token",
+    edgeTokensLoadFailed: "Edge Token 加载失败：{message}",
     prompt: "提示词",
     queued: "队列",
     quickstart: "快速状态",
@@ -344,6 +368,8 @@ $("tokenInput").addEventListener("keydown", (event) => {
 });
 $("refreshButton").addEventListener("click", refreshAll);
 $("copyStatusCommandButton").addEventListener("click", copyStatusCommand);
+$("copyEdgeJoinButton").addEventListener("click", copyEdgeJoinCommand);
+$("edgeJoinForm").addEventListener("submit", createEdgeJoin);
 $("loadNodesButton").addEventListener("click", loadNodes);
 $("loadAgentsButton").addEventListener("click", loadAgents);
 $("loadPluginsButton").addEventListener("click", loadManifest);
@@ -385,6 +411,7 @@ function activateTab(name) {
 async function refreshAll() {
   await loadHealth();
   await loadManifest();
+  await loadEdgeTokens();
   await loadNodes();
   await loadAgents();
   await loadRooms();
@@ -396,7 +423,10 @@ async function saveToken() {
   $("tokenInput").value = token;
   if (!token) {
     sessionStorage.removeItem("agentBusToken");
+    state.edgeTokens = [];
+    state.edgeJoinCommand = "";
     setTokenStatus("tokenRequiredShort", "failed");
+    renderEdgeJoin();
     renderAuthError(new Error(t("missingToken")));
     return;
   }
@@ -457,6 +487,24 @@ async function loadManifest() {
     renderPlugins();
     renderOverview();
     logEvent(t("pluginsLoadFailed", { message: err.message }));
+  }
+}
+
+async function loadEdgeTokens() {
+  if (!currentToken()) {
+    state.edgeTokens = [];
+    renderEdgeJoin();
+    return;
+  }
+  try {
+    const data = await request("v1/agent-bus/edge-tokens");
+    state.edgeTokens = Array.isArray(data) ? data : data.edgeTokens || data.tokens || [];
+    renderEdgeJoin();
+    logEvent(t("edgeTokensLoaded", { count: state.edgeTokens.length }));
+  } catch (err) {
+    state.edgeTokens = [];
+    renderEdgeJoin();
+    logEvent(t("edgeTokensLoadFailed", { message: err.message }));
   }
 }
 
@@ -588,6 +636,7 @@ function renderOverview() {
     list.append(row);
   }
   $("quickstartCommands").textContent = quickstartCommandText();
+  renderEdgeJoin();
 }
 
 function quickstartChecks() {
@@ -670,6 +719,61 @@ async function copyStatusCommand() {
     $("quickstartCommands").focus();
   }
   logEvent(t("copied"));
+}
+
+async function createEdgeJoin(event) {
+  event.preventDefault();
+  const label = $("edgeJoinLabel").value.trim();
+  try {
+    const data = await request("v1/agent-bus/edge-tokens", {
+      method: "POST",
+      body: { label: label || "web-console" }
+    });
+    if (data.edgeToken) upsertEdgeToken(data.edgeToken);
+    state.edgeJoinCommand = data.token ? edgeJoinCommand(data.token) : "";
+    renderEdgeJoin();
+    logEvent(t("edgeJoinCreated"));
+  } catch (err) {
+    logEvent(t("edgeJoinFailed", { message: err.message }));
+  }
+}
+
+function renderEdgeJoin() {
+  const command = state.edgeJoinCommand || "";
+  const activeTokens = state.edgeTokens.filter((item) => String(item.status || "active").toLowerCase() === "active");
+  $("edgeTokenSummary").textContent = currentToken()
+    ? `${activeTokens.length}/${state.edgeTokens.length} ${t("edgeTokens")}`
+    : t("tokenRequiredShort");
+  $("edgeJoinCommand").textContent = command || t("edgeJoinPlaceholder");
+  $("copyEdgeJoinButton").disabled = !command;
+}
+
+function edgeJoinCommand(token) {
+  const gateway = apiBase.href.replace(/\/$/, "");
+  return `agent-bus setup edge --gateway ${gateway} --token ${token} --auto --service auto --out edge.config.json`;
+}
+
+async function copyEdgeJoinCommand() {
+  if (!state.edgeJoinCommand) {
+    $("edgeJoinCommand").focus();
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(state.edgeJoinCommand);
+    } else {
+      $("edgeJoinCommand").focus();
+    }
+  } catch {
+    $("edgeJoinCommand").focus();
+  }
+  logEvent(t("copied"));
+}
+
+function upsertEdgeToken(edgeToken) {
+  const id = edgeToken?.id;
+  if (!id) return;
+  state.edgeTokens = [edgeToken, ...state.edgeTokens.filter((item) => item.id !== id)];
 }
 
 async function routeTask() {
@@ -1253,6 +1357,7 @@ function applyLanguage() {
   renderNodes();
   renderPlugins();
   renderOverview();
+  renderEdgeJoin();
   renderRooms();
   if (state.currentRoom) renderRoom(state.currentRoom);
   if (state.currentThread) renderThread(state.currentThread);

@@ -48,6 +48,7 @@
     "compose:smoke": "node scripts/compose-smoke.mjs",
     "adapter:preset:smoke": "node scripts/adapter-preset-smoke.mjs",
     "setup:join:smoke": "node scripts/setup-join-smoke.mjs",
+    "edge-token:smoke": "node scripts/edge-token-api-smoke.mjs",
     "trace:smoke": "node scripts/trace-smoke.mjs",
     "smoke:central-restart": "node scripts/central-restart-smoke.mjs",
     "smoke:room-stale": "node scripts/room-autonomy-stale-smoke.mjs",

@@ -36,6 +36,7 @@ const jsFiles = [
   "scripts/compose-smoke.mjs",
   "scripts/adapter-preset-smoke.mjs",
   "scripts/setup-join-smoke.mjs",
+  "scripts/edge-token-api-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
   "scripts/python-sdk-smoke.mjs",
@@ -71,6 +72,7 @@ try {
   step("compose preflight smoke", process.execPath, ["scripts/compose-smoke.mjs", "--json"]);
   step("adapter preset smoke", process.execPath, ["scripts/adapter-preset-smoke.mjs", "--json"]);
   step("setup join smoke", process.execPath, ["scripts/setup-join-smoke.mjs", "--json"]);
+  step("edge token API smoke", process.execPath, ["scripts/edge-token-api-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
   step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);

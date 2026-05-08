@@ -144,6 +144,8 @@ The command generates a long admin token plus one scoped edge token when `--toke
 agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --token abt_edge_... --auto --service auto --out edge.config.json
 ```
 
+After the gateway is running, the Web Console at `/console/` can create additional scoped edge tokens and copy the same join command for another machine. Raw edge tokens are shown once; the token list keeps only metadata for later audit or revocation.
+
 Use `--no-first-edge-token` if you prefer the stricter pair-code path only. Pair codes remain useful when the edge operator should never see or paste a standing token.
 
 Run a zero-quota offline smoke test:

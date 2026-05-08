@@ -171,6 +171,7 @@ const messages = {
     stopPolling: "Stop Polling",
     status: "Status",
     statusCommand: "Status command",
+    recoveryCommands: "Recovery commands",
     statusLoadFailed: "status failed: {message}",
     statusLoaded: "readiness: {status}",
     task: "Task",
@@ -357,6 +358,7 @@ const messages = {
     stopPolling: "停止轮询",
     status: "状态",
     statusCommand: "状态命令",
+    recoveryCommands: "恢复命令",
     statusLoadFailed: "状态加载失败：{message}",
     statusLoaded: "就绪状态：{status}",
     task: "任务",
@@ -848,10 +850,34 @@ function quickstartCommandText() {
     "Room:",
     `agent-bus room create --gateway ${gateway} --token *** --agents ${agents} --goal "Check current Agent Bus status and report next action."`
   ];
+  const recoveryCommands = recoveryCommandLines(gateway);
+  if (recoveryCommands.length) {
+    lines.push("", `${t("recoveryCommands")}:`, ...recoveryCommands);
+  }
   if (state.currentRoom?.trace_id) {
     lines.push("", "Trace:", `agent-bus trace show ${state.currentRoom.trace_id} --gateway ${gateway} --token ***`);
   }
   return lines.join("\n");
+}
+
+function recoveryCommandLines(gateway) {
+  const hints = Array.isArray(state.status?.recovery_hints) ? state.status.recovery_hints : [];
+  const commands = [];
+  for (const hint of hints.slice(0, 3)) {
+    for (const key of ["inspect_command", "recover_command", "pause_command"]) {
+      const command = hint?.[key];
+      if (command) commands.push(withGatewayToken(command, gateway));
+    }
+  }
+  return [...new Set(commands)];
+}
+
+function withGatewayToken(command, gateway) {
+  const text = String(command || "").trim();
+  if (!text) return "";
+  const hasGateway = /(?:^|\s)--gateway(?:\s|=)/.test(text);
+  const hasToken = /(?:^|\s)--token(?:\s|=)/.test(text);
+  return `${text}${hasGateway ? "" : ` --gateway ${gateway}`}${hasToken ? "" : " --token ***"}`;
 }
 
 async function copyStatusCommand() {

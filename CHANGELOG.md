@@ -40,6 +40,7 @@
 - Adds contextual Telegram inline keyboards for status, multi-select agent selection, new/resume process controls, room controls, callback query handling, and dry-run `reply_markup` smoke coverage.
 - Adds Telegram room drafts so operators can multi-select room agents, set max autonomous steps, and create a room by sending the goal.
 - Makes the Telegram polling bridge request and forward `callback_query` updates so inline buttons work when public webhooks are disabled.
+- Adds Telegram slash-command registration so typing `/` in the chat can show `/new`, `/resume`, `/agents`, `/room`, and other Agent Bus controls in Telegram's native command menu.
 - Makes `agent-bus setup central` generate and print a first scoped edge token plus a copy/paste `setup edge --token ...` command, while still supporting pair-code onboarding.
 - Adds a Web Console Edge Join panel that creates, lists, and revokes scoped edge tokens while copying a ready-to-run `agent-bus setup edge --gateway ... --token ...` command.
 - Adds Web Console pair-code onboarding so operators can create short-lived codes and copy `agent-bus setup edge --gateway ... --code ...` commands without exposing admin tokens.

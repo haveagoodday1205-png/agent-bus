@@ -33,6 +33,7 @@ const jsFiles = [
   "scripts/doctor-smoke.mjs",
   "scripts/diagnostics-redaction-smoke.mjs",
   "scripts/telegram-plugin-smoke.mjs",
+  "scripts/telegram-commands.mjs",
   "scripts/telegram-poller.mjs",
   "scripts/compose-smoke.mjs",
   "scripts/adapter-preset-smoke.mjs",

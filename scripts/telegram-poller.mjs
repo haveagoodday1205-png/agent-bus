@@ -41,6 +41,11 @@ async function main() {
       drop_pending_updates: args.includes("--drop-pending") ? "true" : "false"
     }, apiBaseUrl);
   }
+  if (args.includes("--set-commands") || envTruthy(process.env.AGENT_BUS_TELEGRAM_SET_COMMANDS)) {
+    await telegramApi(botToken, "setMyCommands", {
+      commands: JSON.stringify(defaultBotCommands())
+    }, apiBaseUrl);
+  }
 
   let nextOffset = readOffset(offsetFile);
   let handled = 0;
@@ -91,13 +96,14 @@ function printHelp() {
   console.log(`agent-bus telegram poller
 
 Usage:
-  agent-bus plugin telegram poll --gateway http://127.0.0.1:8788 --delete-webhook
+  agent-bus plugin telegram poll --gateway http://127.0.0.1:8788 --delete-webhook [--set-commands]
 
 Environment:
   AGENT_BUS_TELEGRAM_BOT_TOKEN       Telegram bot token.
   AGENT_BUS_TELEGRAM_WEBHOOK_SECRET  Shared secret sent to the local Central webhook.
   AGENT_BUS_GATEWAY_URL              Central gateway URL, usually http://127.0.0.1:8788 for the poller.
   AGENT_BUS_TELEGRAM_API_BASE_URL    Optional Telegram API base URL for no-network smoke tests.
+  AGENT_BUS_TELEGRAM_SET_COMMANDS    Register slash-command suggestions on startup when true.
 `);
 }
 
@@ -127,6 +133,21 @@ function updatePreview(update) {
   const data = update.callback_query?.data;
   if (data) return `callback ${String(data).slice(0, 70)}`;
   return "non-message update";
+}
+
+function defaultBotCommands() {
+  return [
+    ["start", "Open the Agent Bus control menu"],
+    ["help", "Show Telegram control commands"],
+    ["status", "Show central, edge, queue, and room status"],
+    ["agents", "List online agents and choose process agents"],
+    ["new", "Start a new Telegram process/thread"],
+    ["resume", "Resume a previous process/thread"],
+    ["agent", "Set, toggle, or clear process agents"],
+    ["rooms", "List Agent Bus rooms"],
+    ["room", "Inspect or create rooms, set agents and steps"],
+    ["run", "Queue one task for a specific agent"]
+  ].map(([command, description]) => ({ command, description }));
 }
 
 async function forwardUpdate(gateway, secretToken, update) {
@@ -176,6 +197,10 @@ function positiveInteger(value, fallback, max) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
+}
+
+function envTruthy(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || "").trim());
 }
 
 function parseJson(text) {

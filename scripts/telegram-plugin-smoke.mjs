@@ -131,6 +131,9 @@ async function main() {
   const pollerCallback = await runPollerCallbackSmoke(gateway, webhookSecret, telegramChatId, "/status", dataDir);
   assert(pollerCallback.ok === true && pollerCallback.handled === 1, "telegram poller did not forward callback query");
   assert(pollerCallback.allowedUpdates.includes("callback_query"), "telegram poller did not request callback_query updates");
+  assert(pollerCallback.commands.includes("room"), "telegram poller --set-commands did not register /room");
+  const commandMenu = await runTelegramCommandMenuSmoke();
+  assert(commandMenu.ok === true && commandMenu.commands.includes("room"), "telegram command menu smoke did not register /room");
   const agentsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/agents");
   assert(agentsWebhook.ok === true && agentsWebhook.command === "agents", "telegram /agents webhook failed");
   const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-smoke-agent Run webhook command smoke.");
@@ -495,6 +498,7 @@ async function runPollerCallbackSmoke(gateway, secret, chatId, data, dataDir) {
       mock.url,
       "--offset-file",
       path.join(dataDir, "telegram-poller-smoke.offset"),
+      "--set-commands",
       "--once",
       "--json"
     ], {
@@ -506,14 +510,35 @@ async function runPollerCallbackSmoke(gateway, secret, chatId, data, dataDir) {
       && item.callback_query_id === update.callback_query.id
       && item.status === "dry_run"
     ));
-    return { ...result, allowedUpdates: mock.allowedUpdates };
+    return { ...result, allowedUpdates: mock.allowedUpdates, commands: mock.commands.map((item) => item.command) };
+  } finally {
+    await mock.close();
+  }
+}
+
+async function runTelegramCommandMenuSmoke() {
+  const mock = await startTelegramApiMock([]);
+  try {
+    const result = await runNodeJson([
+      path.join(root, "scripts", "telegram-commands.mjs"),
+      "set",
+      "--api-base-url",
+      mock.url,
+      "--bot-token",
+      "telegram-command-menu-smoke-token",
+      "--json"
+    ]);
+    return {
+      ok: result.ok === true,
+      commands: mock.commands.map((item) => item.command)
+    };
   } finally {
     await mock.close();
   }
 }
 
 async function startTelegramApiMock(updates) {
-  const state = { updates, calls: [], allowedUpdates: [] };
+  const state = { updates, calls: [], allowedUpdates: [], commands: [] };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     state.calls.push(url.pathname);
@@ -525,6 +550,24 @@ async function startTelegramApiMock(updates) {
       return;
     }
     if (url.pathname.endsWith("/deleteWebhook")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: true }));
+      return;
+    }
+    if (url.pathname.endsWith("/setMyCommands")) {
+      const commands = parseJson(url.searchParams.get("commands") || "[]");
+      state.commands = Array.isArray(commands) ? commands : [];
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: true }));
+      return;
+    }
+    if (url.pathname.endsWith("/getMyCommands")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: state.commands }));
+      return;
+    }
+    if (url.pathname.endsWith("/deleteMyCommands")) {
+      state.commands = [];
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, result: true }));
       return;
@@ -543,6 +586,9 @@ async function startTelegramApiMock(updates) {
     },
     get allowedUpdates() {
       return state.allowedUpdates;
+    },
+    get commands() {
+      return state.commands;
     },
     close() {
       return new Promise((resolve) => server.close(resolve));

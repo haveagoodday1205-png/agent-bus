@@ -275,13 +275,27 @@ agent-bus plugin telegram test \
   --dry-run
 ```
 
-Telegram control is intentionally disabled by default. After setting `control.enabled: true`, register Telegram's webhook URL as `https://YOUR-DOMAIN/agent-bus/v1/agent-bus/plugins/telegram/webhook` and set `AGENT_BUS_TELEGRAM_WEBHOOK_SECRET` as Telegram's secret token. The first supported commands are:
+Telegram control is intentionally disabled by default. After setting `control.enabled: true`, register Telegram's webhook URL as `https://YOUR-DOMAIN/agent-bus/v1/agent-bus/plugins/telegram/webhook` and set `AGENT_BUS_TELEGRAM_WEBHOOK_SECRET` as Telegram's secret token. Register the native Telegram slash-command menu so typing `/` shows the available Agent Bus commands:
+
+```bash
+AGENT_BUS_TELEGRAM_BOT_TOKEN=... agent-bus plugin telegram commands set
+agent-bus plugin telegram commands list
+agent-bus plugin telegram commands delete
+```
+
+The registered command menu includes:
 
 ```text
+/start
+/help
 /status
 /agents
+/new
+/resume
+/agent
 /rooms
-/run openclaw-hk check disk usage and report back
+/room
+/run agent-id task
 ```
 
 Telegram buttons are contextual instead of being attached to every reply. `/status` and `/help` show a compact menu, `/new`, `/agents`, and `/agent` show multi-select agent buttons for the active process, `/resume` shows process/thread buttons, and `/rooms` shows room buttons. `/room new` starts a room draft with multi-select agent buttons plus step presets; send the room goal as the next plain message, or use `/room start <goal>`, to create the room. Telegram callback queries go through the same webhook handler as typed commands; dry-run mode records the `reply_markup` in `notifications.jsonl` so deployments can test the UX without contacting Telegram.
@@ -325,10 +339,11 @@ AGENT_BUS_TELEGRAM_WEBHOOK_SECRET=... \
 agent-bus plugin telegram poll \
   --gateway http://127.0.0.1:8788 \
   --delete-webhook \
+  --set-commands \
   --offset-file /var/lib/agent-bus/telegram-poller.offset
 ```
 
-The poller calls Telegram `getUpdates`, asks for `message`, `edited_message`, and `callback_query` updates, forwards each update into the same local `/v1/agent-bus/plugins/telegram/webhook` handler, and stores the next update offset so it can run under systemd without reprocessing old messages.
+The poller calls Telegram `getUpdates`, asks for `message`, `edited_message`, and `callback_query` updates, forwards each update into the same local `/v1/agent-bus/plugins/telegram/webhook` handler, and stores the next update offset so it can run under systemd without reprocessing old messages. Pass `--set-commands` or set `AGENT_BUS_TELEGRAM_SET_COMMANDS=true` to refresh the `/` command menu whenever the poller starts.
 
 Keep `allowedChatIds` or `AGENT_BUS_TELEGRAM_CHAT_ID` scoped to operator chats, because `/run` and conversation mode queue real Agent Bus tasks for edge machines.
 

@@ -234,6 +234,7 @@ Usage:
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
   agent-bus plugin status --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus plugin telegram test --message "hello" --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus plugin telegram commands set
   agent-bus plugin telegram poll --gateway http://127.0.0.1:8788 --delete-webhook
 
 Gateway queries:
@@ -2924,8 +2925,12 @@ async function plugin(args) {
       await runScript("scripts/telegram-poller.mjs", stripCliOnlyArgs(rest));
       return;
     }
+    if (subcommand === "commands" || subcommand === "command-menu") {
+      await runScript("scripts/telegram-commands.mjs", stripCliOnlyArgs(rest));
+      return;
+    }
   }
-  throw new Error("Usage: agent-bus plugin status | agent-bus plugin telegram status | agent-bus plugin telegram test [--message text] [--dry-run|--live] | agent-bus plugin telegram poll");
+  throw new Error("Usage: agent-bus plugin status | agent-bus plugin telegram status | agent-bus plugin telegram test [--message text] [--dry-run|--live] | agent-bus plugin telegram commands set|list|delete | agent-bus plugin telegram poll");
 }
 
 function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds = 180, queuedRunStaleSeconds = 21600 }) {

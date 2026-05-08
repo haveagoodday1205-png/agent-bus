@@ -24,6 +24,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - OpenAI-compatible routing: expose selected model aliases behind one authenticated gateway.
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
+- Golden-path demo: `npm run demo:no-quota-room-replay -- --json` starts local central/edge services, runs deterministic room agents, exports events, replays them, and inspects the room without model calls.
 - Compatibility verification: `npm run compat:check` starts a temporary gateway plus `examples/hello-agent` and validates registration, `agent:<id>` chat/responses calls, and room directives without spending model quota.
 
 Start with `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `docs/protocol-v1.md` for the emerging stable protocol contract, `docs/trust-boundaries.md` plus `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
@@ -65,6 +66,9 @@ npm run demo:starter
 # Show AI-to-AI room delegation and export a share-safe report.
 agent-bus demo room
 npm run demo:room
+
+# Run the full no-quota room replay golden path with inspect/export/replay assertions.
+npm run demo:no-quota-room-replay -- --json
 
 # Show agent:<id> as an OpenAI-compatible model for Chat Completions and Responses.
 agent-bus demo agent-model
@@ -214,6 +218,14 @@ npm run demo:room
 ```
 
 It starts a local gateway, connects two fake command agents, has one agent delegate to the other with `@demo-worker: ...`, waits for `DONE`, and writes `agent-bus-room-demo-report.md` using `room export --reports-only` so the artifact is safe to share.
+
+For the contributor golden path, run:
+
+```bash
+npm run demo:no-quota-room-replay -- --out-dir ./agent-bus-no-quota-demo
+```
+
+It starts local central/edge services, registers two deterministic command agents, creates a room, verifies directives, runs `room inspect`, exports `room-events.json`, replays it into JSON and Markdown, and checks event `sequence` plus `export_metadata`. It makes no model-provider calls.
 
 For the model-replacement path, run:
 

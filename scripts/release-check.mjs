@@ -48,7 +48,8 @@ const jsFiles = [
   "scripts/release-check.mjs",
   "scripts/release-notes.mjs",
   "scripts/release-preflight.mjs",
-  "examples/js-room-replay/room_replay_example.mjs"
+  "examples/js-room-replay/room_replay_example.mjs",
+  "examples/no-quota-room-replay/run.mjs"
 ];
 
 try {
@@ -70,6 +71,7 @@ try {
   step("python room-agent smoke", process.execPath, ["scripts/python-room-agent-smoke.mjs", "--json"]);
   step("python agent-model example", python, ["examples/python-agent-model/agent_model_example.py"]);
   step("JS room replay example", process.execPath, ["examples/js-room-replay/room_replay_example.mjs", "--json"]);
+  step("no-quota room replay golden path", process.execPath, ["examples/no-quota-room-replay/run.mjs", "--json"]);
   step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);

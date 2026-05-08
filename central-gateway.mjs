@@ -11,6 +11,7 @@ const command = argv[0] || "serve";
 const configPath = optionValue("--config") || path.join(__dirname, "central.config.json");
 const NODE_STALE_SECONDS = intEnv("AGENT_BUS_NODE_STALE_SECONDS", 180);
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped"]);
+const TELEGRAM_DEFAULT_EVENTS = ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"];
 
 const state = {
   nodes: new Map(),
@@ -81,6 +82,7 @@ function loadConfig(file) {
   config.port ||= 8788;
   config.host = process.env.AGENT_BUS_HOST || config.host;
   config.port = Number(process.env.AGENT_BUS_PORT || config.port);
+  config.gatewayUrl = process.env.AGENT_BUS_GATEWAY_URL || config.gatewayUrl || "";
   config.token = process.env.AGENT_BUS_TOKEN || config.token;
   config.dataDir = process.env.AGENT_BUS_DATA_DIR || resolvePath(config.dataDir || "./data/central", path.dirname(file));
   config.defaults ||= {};
@@ -90,6 +92,8 @@ function loadConfig(file) {
   config.modelRouter.allowEdgeAgentModels ??= false;
   config.modelRouter.agentModelTimeoutSeconds ??= 600;
   config.modelRouter.backends ||= [];
+  config.plugins ||= {};
+  config.plugins.telegramBot ||= {};
   config.edgeTokens ||= [];
   return config;
 }
@@ -381,6 +385,11 @@ async function serve(config) {
 
   server.listen(config.port, config.host, () => {
     console.log(`central-gateway listening on http://${config.host}:${config.port}`);
+    console.log(`Agent Bus join endpoint: ${publicGatewayUrl(config)}`);
+    notifyPlugin(config, "central.started", {
+      gateway: publicGatewayUrl(config),
+      runtime: "node"
+    });
   });
 }
 
@@ -546,6 +555,12 @@ function registerNode(config, body) {
   state.nodes.set(body.node_id, node);
   state.queues.set(body.node_id, state.queues.get(body.node_id) || []);
   appendJsonl(config, "nodes.jsonl", node);
+  notifyPlugin(config, "edge.registered", {
+    node_id: body.node_id,
+    hostname: node.hostname,
+    agents: node.agents.map((agent) => agent.id),
+    agent_count: node.agents.length
+  });
   return publicNode(node);
 }
 
@@ -659,6 +674,9 @@ function agentBusManifest(config) {
     model_router: {
       enabled: config.modelRouter?.enabled !== false,
       models: openAiModels(config).data.map((item) => item.id)
+    },
+    plugins: {
+      telegramBot: publicTelegramPluginStatus(config)
     }
   };
 }
@@ -1464,6 +1482,14 @@ function completeRun(config, body) {
   writeSnapshot(config, "runs", run.id, run);
   updateThreadRun(config, run);
   appendJsonl(config, "runs.jsonl", run);
+  notifyPlugin(config, run.status === "completed" ? "run.completed" : "run.failed", {
+    run_id: run.id,
+    thread_id: run.thread_id,
+    agent_id: run.agent_id,
+    node_id: run.node_id,
+    status: run.status,
+    exit_code: run.exit_code
+  });
   return run;
 }
 
@@ -1529,6 +1555,122 @@ function sendConsoleAsset(res, pathname) {
     "cache-control": ext === ".html" ? "no-store" : "public, max-age=60"
   });
   fs.createReadStream(file).pipe(res);
+}
+
+function publicGatewayUrl(config) {
+  const configured = String(config.gatewayUrl || "").trim();
+  if (configured) return configured.replace(/\/+$/, "");
+  return `http://${config.host || "127.0.0.1"}:${config.port || 8788}`.replace(/\/+$/, "");
+}
+
+function telegramPluginConfig(config) {
+  const plugin = { ...((config.plugins && config.plugins.telegramBot) || {}) };
+  if (process.env.AGENT_BUS_TELEGRAM_ENABLED) {
+    plugin.enabled = /^(1|true|yes|on)$/i.test(process.env.AGENT_BUS_TELEGRAM_ENABLED);
+  }
+  plugin.enabled ??= false;
+  plugin.botTokenEnv ||= "AGENT_BUS_TELEGRAM_BOT_TOKEN";
+  plugin.chatIdEnv ||= "AGENT_BUS_TELEGRAM_CHAT_ID";
+  plugin.events ||= TELEGRAM_DEFAULT_EVENTS;
+  plugin.dryRun ??= false;
+  return plugin;
+}
+
+function publicTelegramPluginStatus(config) {
+  const plugin = telegramPluginConfig(config);
+  return {
+    enabled: plugin.enabled === true,
+    configured: Boolean(telegramBotToken(plugin) && telegramChatId(plugin)),
+    dry_run: plugin.dryRun === true || plugin.dry_run === true,
+    events: pluginEvents(plugin),
+    bot_token_env: plugin.botTokenEnv,
+    chat_id_env: plugin.chatIdEnv
+  };
+}
+
+function pluginEvents(plugin) {
+  return Array.isArray(plugin.events) && plugin.events.length
+    ? plugin.events.map((event) => String(event))
+    : TELEGRAM_DEFAULT_EVENTS;
+}
+
+function telegramBotToken(plugin) {
+  return String(process.env[plugin.botTokenEnv || "AGENT_BUS_TELEGRAM_BOT_TOKEN"] || plugin.botToken || plugin.bot_token || "").trim();
+}
+
+function telegramChatId(plugin) {
+  return String(process.env[plugin.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID"] || plugin.chatId || plugin.chat_id || "").trim();
+}
+
+function notifyPlugin(config, event, payload = {}) {
+  const plugin = telegramPluginConfig(config);
+  if (plugin.enabled !== true) return;
+  if (!new Set(pluginEvents(plugin)).has(event)) return;
+  const text = telegramNotificationText(event, payload);
+  const token = telegramBotToken(plugin);
+  const chatId = telegramChatId(plugin);
+  const dryRun = plugin.dryRun === true || plugin.dry_run === true;
+  appendJsonl(config, "notifications.jsonl", {
+    at: new Date().toISOString(),
+    plugin: "telegramBot",
+    event,
+    status: dryRun ? "dry_run" : (token && chatId ? "queued" : "missing_config"),
+    message: text,
+    payload
+  });
+  if (dryRun || !token || !chatId) return;
+  sendTelegramNotification(config, plugin, token, chatId, text);
+}
+
+function telegramNotificationText(event, payload) {
+  if (event === "central.started") {
+    return `Agent Bus central started\nGateway: ${payload.gateway || ""}\nRuntime: ${payload.runtime || ""}`;
+  }
+  if (event === "edge.registered") {
+    return `Agent Bus edge registered\nNode: ${payload.node_id || ""}\nAgents: ${(payload.agents || []).join(", ") || "none"}`;
+  }
+  if (event === "run.completed" || event === "run.failed") {
+    return `Agent Bus run ${payload.status || event}\nRun: ${payload.run_id || ""}\nAgent: ${payload.agent_id || ""}\nNode: ${payload.node_id || ""}`;
+  }
+  if (event === "room.completed") {
+    return `Agent Bus room completed\nRoom: ${payload.room_id || ""}\nTitle: ${payload.title || ""}\nReports: ${payload.reports || 0}`;
+  }
+  return `Agent Bus event: ${event}\n${JSON.stringify(payload)}`;
+}
+
+function sendTelegramNotification(config, plugin, token, chatId, text) {
+  const timeoutMs = Math.max(1000, Math.min(Number(plugin.timeoutSeconds || 5) * 1000, 30000));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const body = new URLSearchParams({
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: "true"
+  });
+  fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+    signal: controller.signal
+  }).then((res) => {
+    clearTimeout(timer);
+    appendJsonl(config, "notifications.jsonl", {
+      at: new Date().toISOString(),
+      plugin: "telegramBot",
+      event: res.ok ? "send.completed" : "send.failed",
+      status: res.ok ? "completed" : "failed",
+      http_status: res.status
+    });
+  }).catch((err) => {
+    clearTimeout(timer);
+    appendJsonl(config, "notifications.jsonl", {
+      at: new Date().toISOString(),
+      plugin: "telegramBot",
+      event: "send.failed",
+      status: "failed",
+      error: err.message || String(err)
+    });
+  });
 }
 
 function appendJsonl(config, fileName, value) {

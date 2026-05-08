@@ -158,6 +158,14 @@ agent-bus pair join --gateway https://YOUR-GATEWAY-DOMAIN/agent-bus --code ABCD-
 
 Pairing writes a scoped edge token into `edge.config.json`. That token is enough for the node to register, poll, report run events, and read discovery metadata, but it cannot create pair codes, create threads, wake rooms, or call the model router.
 
+For the shortest trusted bootstrap, `agent-bus setup central --gateway ...` now generates one first scoped edge token and prints a direct edge command:
+
+```bash
+agent-bus setup edge --gateway https://YOUR-GATEWAY-DOMAIN/agent-bus --token abt_edge_... --auto --service auto --out edge.config.json
+```
+
+Use this only when the same operator controls both machines or a private deployment channel. Use pair codes when you want short-lived one-time onboarding instead of a standing token.
+
 Manual path: copy an edge config, set the gateway URL and an edge/admin token, then run:
 
 ```bash

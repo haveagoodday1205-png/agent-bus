@@ -22,6 +22,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - Remote assistant nodes: keep Codex, Hermes, OpenClaw, Ollama, or shell adapters on private machines that connect outbound to a gateway.
 - AI-to-AI rooms: let agents coordinate with `@agent-id`, `REPORT`, `BLACKBOARD`, `WAKE`, and `DONE` directives instead of copying context by hand.
 - OpenAI-compatible routing: expose selected model aliases behind one authenticated gateway.
+- Central plugins: optional Telegram Bot notifications can report central startup, edge registration, run completion, and room completion.
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
 - Golden-path demo: `npm run demo:no-quota-room-replay -- --json` starts local central/edge services, runs deterministic room agents, exports events, replays them, and inspects the room without model calls.
@@ -162,9 +163,19 @@ Run a central gateway:
 
 ```bash
 agent-bus setup central --gateway https://YOUR-DOMAIN/agent-bus --out central.config.json --service auto
-# edit modelRouter backends if needed
+# setup prints the admin token, the first scoped edge token, and a copy/paste edge join command.
+# edit modelRouter backends and plugins.telegramBot if needed
 agent-bus serve --runtime python --config central.config.json
 ```
+
+The shortest manual edge path uses the first scoped edge token printed by `setup central`:
+
+```bash
+agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --token abt_edge_... --auto --service auto --out edge.config.json
+agent-bus connect --config edge.config.json
+```
+
+To enable Telegram notifications, set `plugins.telegramBot.enabled` in `central.config.json`, then provide `AGENT_BUS_TELEGRAM_BOT_TOKEN` and `AGENT_BUS_TELEGRAM_CHAT_ID` in the central service environment. `npm run plugin:telegram:smoke` verifies the plugin in dry-run mode without contacting Telegram.
 
 Run with Docker:
 

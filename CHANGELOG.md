@@ -31,6 +31,8 @@
 
 ### Deployment hardening
 
+- Adds a Central Telegram Bot plugin skeleton for startup, edge registration, run completion, and room completion notifications, with a dry-run smoke test that makes no external calls.
+- Makes `agent-bus setup central` generate and print a first scoped edge token plus a copy/paste `setup edge --token ...` command, while still supporting pair-code onboarding.
 - Makes the bundled `compose.yaml` fail fast when `AGENT_BUS_TOKEN` is unset instead of silently starting a public central gateway with a placeholder token.
 - Adds `npm run compose:smoke` plus Docker preflight docs so the single-service Python central deployment, persistent-volume story, and "database optional later" guidance stay aligned.
 - Shows room-specific recovery recommendations in `agent-bus room inspect` human output so stale/orphan run recovery can be copy/pasted without substituting `ROOM_ID`.

@@ -454,11 +454,19 @@ async function setupCentral(args) {
 
   const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "https://YOUR-DOMAIN/agent-bus";
   const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || randomToken("abt_admin");
+  const firstEdgeToken = args.includes("--no-first-edge-token") ? "" : randomToken("abt_edge");
   const config = centralTemplate();
+  config.gatewayUrl = gateway;
   config.token = token;
   config.host = optionValue(args, "--host") || config.host;
   config.port = positiveIntegerOption(optionValue(args, "--port"), config.port, 65535);
   config.dataDir = optionValue(args, "--data-dir") || config.dataDir;
+  if (firstEdgeToken) {
+    config.edgeTokens.push({
+      token: firstEdgeToken,
+      label: optionValue(args, "--first-edge-label") || "first edge quick-start token"
+    });
+  }
   if (args.includes("--allow-edge-agent-models")) {
     config.modelRouter.allowEdgeAgentModels = true;
   }
@@ -470,9 +478,10 @@ async function setupCentral(args) {
   fs.writeFileSync(out, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   console.log("Agent Bus central setup");
   console.log(`Step 1/3: wrote ${out}`);
-  if (!optionValue(args, "--token") && !process.env.AGENT_BUS_TOKEN) {
-    console.log("         generated a long admin token and stored it only in the config file");
-  }
+  console.log(`         public gateway: ${gateway}`);
+  console.log(`         admin token: ${token}`);
+  if (firstEdgeToken) console.log(`         first edge token: ${firstEdgeToken}`);
+  console.log("         store these tokens privately; the edge token is scoped and can be revoked later");
 
   const serviceTarget = resolveSetupServiceTarget(optionValue(args, "--service") || "");
   if (serviceTarget) {
@@ -493,9 +502,13 @@ async function setupCentral(args) {
 
   const preset = optionValue(args, "--preset") || "codex";
   edgeTemplate(preset);
-  console.log("Step 3/3: first edge pairing command");
-  console.log(`  agent-bus pair create --gateway ${gateway} --token <admin token from ${out}> --preset ${preset}`);
-  console.log("Then run the returned setup edge command on the edge machine.");
+  console.log("Step 3/3: first edge join command");
+  if (firstEdgeToken) {
+    console.log(`  agent-bus setup edge --gateway ${gateway} --token ${firstEdgeToken} --auto --service auto --out edge.config.json`);
+  } else {
+    console.log(`  agent-bus pair create --gateway ${gateway} --token ${token} --preset ${preset}`);
+    console.log("Then run the returned setup edge command on the edge machine.");
+  }
   console.log(`Start local central now: agent-bus serve --runtime python --config ${out}`);
 }
 
@@ -1375,6 +1388,7 @@ function centralTemplate() {
   return {
     host: "127.0.0.1",
     port: 8788,
+    gatewayUrl: "",
     dataDir: "./data/central",
     token: "change-me-to-a-long-random-token",
     defaults: {
@@ -1397,6 +1411,15 @@ function centralTemplate() {
         },
         timeoutSeconds: 600
       }]
+    },
+    plugins: {
+      telegramBot: {
+        enabled: false,
+        botTokenEnv: "AGENT_BUS_TELEGRAM_BOT_TOKEN",
+        chatIdEnv: "AGENT_BUS_TELEGRAM_CHAT_ID",
+        dryRun: false,
+        events: ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"]
+      }
     }
   };
 }

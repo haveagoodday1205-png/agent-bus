@@ -21,13 +21,16 @@ agent-bus smoke --offline
 On the central/admin machine:
 
 ```bash
-agent-bus init central --out central.config.json
+agent-bus setup central \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --out central.config.json \
+  --service auto
 ```
 
-Edit `central.config.json` and replace the generated `token` with a long random value. Then start the gateway:
+This prints the public gateway URL, a generated admin token, a first scoped edge token, and a copy/paste `setup edge --token ...` command. Store the tokens privately. Then start the gateway:
 
 ```bash
-agent-bus serve --config central.config.json
+agent-bus serve --runtime python --config central.config.json
 ```
 
 Expose the gateway behind HTTPS if the edge machine is not on the same private network.
@@ -45,6 +48,12 @@ agent-bus pair create \
 ```
 
 The returned code is single-use and short-lived. It is safe to send the code to the edge operator; do not send the admin token.
+
+If the same trusted operator controls both machines, you can skip pair codes and use the direct edge command printed by `setup central`:
+
+```bash
+agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --token abt_edge_... --auto --service auto --out edge.config.json
+```
 
 ## 4. Join The Edge Machine
 

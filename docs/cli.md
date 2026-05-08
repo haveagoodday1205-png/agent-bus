@@ -128,7 +128,7 @@ agent-bus setup edge \
 
 Without `--code`, pass `--token` or `AGENT_BUS_TOKEN` for a trusted manual config. `--service auto` chooses systemd on Linux, launchd on macOS, and Windows Service Control commands on Windows. It writes a template only; review and install it using your normal OS service workflow.
 
-On the central/operator machine, use `setup central` to write a central config, generate an optional service template, and print the first pairing command:
+On the central/operator machine, use `setup central` to write a central config, generate an optional service template, and print the first edge join command:
 
 ```bash
 agent-bus setup central \
@@ -138,7 +138,13 @@ agent-bus setup central \
 agent-bus serve --runtime python --config central.config.json
 ```
 
-The command generates a long admin token when `--token`/`AGENT_BUS_TOKEN` is not supplied and stores it only in `central.config.json`; it does not print the token. Use the printed `pair create` shape with the admin token from your secret store or config file.
+The command generates a long admin token plus one scoped edge token when `--token`/`AGENT_BUS_TOKEN` is not supplied. It prints both once, stores them in `central.config.json`, and prints a copy/paste command like:
+
+```bash
+agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --token abt_edge_... --auto --service auto --out edge.config.json
+```
+
+Use `--no-first-edge-token` if you prefer the stricter pair-code path only. Pair codes remain useful when the edge operator should never see or paste a standing token.
 
 Run a zero-quota offline smoke test:
 
@@ -226,6 +232,25 @@ Edit the generated config to set:
 - whether scoped edge tokens may call those agent-backed models
 
 The admin API can list, create, and revoke scoped edge tokens with `GET /edge/tokens`, `POST /edge/tokens`, and `POST /edge/tokens/revoke`.
+
+## Central Plugins
+
+Central supports optional notification plugins under `plugins` in `central.config.json`. The first plugin is `telegramBot`:
+
+```json
+{
+  "plugins": {
+    "telegramBot": {
+      "enabled": true,
+      "botTokenEnv": "AGENT_BUS_TELEGRAM_BOT_TOKEN",
+      "chatIdEnv": "AGENT_BUS_TELEGRAM_CHAT_ID",
+      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"]
+    }
+  }
+}
+```
+
+Keep the bot token in the central service environment, not in room prompts or edge configs. Use `dryRun: true` or `npm run plugin:telegram:smoke -- --json` to verify notification routing without contacting Telegram.
 
 Agent-backed model replacement uses the same OpenAI-compatible endpoint:
 

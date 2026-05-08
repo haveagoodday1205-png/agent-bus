@@ -31,8 +31,10 @@ const jsFiles = [
   "scripts/compatibility-smoke.mjs",
   "scripts/doctor-smoke.mjs",
   "scripts/diagnostics-redaction-smoke.mjs",
+  "scripts/telegram-plugin-smoke.mjs",
   "scripts/compose-smoke.mjs",
   "scripts/adapter-preset-smoke.mjs",
+  "scripts/setup-join-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
   "scripts/python-sdk-smoke.mjs",
@@ -64,8 +66,10 @@ try {
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
   step("diagnostics redaction smoke", process.execPath, ["scripts/diagnostics-redaction-smoke.mjs", "--json"]);
+  step("telegram plugin smoke", process.execPath, ["scripts/telegram-plugin-smoke.mjs", "--json"]);
   step("compose preflight smoke", process.execPath, ["scripts/compose-smoke.mjs", "--json"]);
   step("adapter preset smoke", process.execPath, ["scripts/adapter-preset-smoke.mjs", "--json"]);
+  step("setup join smoke", process.execPath, ["scripts/setup-join-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
   step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);

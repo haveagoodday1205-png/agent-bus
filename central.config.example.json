@@ -1,6 +1,7 @@
 {
   "host": "127.0.0.1",
   "port": 8788,
+  "gatewayUrl": "https://YOUR-DOMAIN/agent-bus",
   "dataDir": "./data/central",
   "token": "change-me",
   "defaults": {
@@ -8,6 +9,15 @@
     "pollTimeoutMs": 25000
   },
   "edgeTokens": [],
+  "plugins": {
+    "telegramBot": {
+      "enabled": false,
+      "botTokenEnv": "AGENT_BUS_TELEGRAM_BOT_TOKEN",
+      "chatIdEnv": "AGENT_BUS_TELEGRAM_CHAT_ID",
+      "dryRun": false,
+      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"]
+    }
+  },
   "modelRouter": {
     "enabled": true,
     "agentModels": true,

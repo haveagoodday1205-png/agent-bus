@@ -12,10 +12,17 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
+TELEGRAM_DEFAULT_EVENTS = {
+    "central.started",
+    "edge.registered",
+    "run.completed",
+    "run.failed",
+    "room.completed",
+}
 
 STATE = {
     "nodes": {},
@@ -60,6 +67,11 @@ def main():
     server = AgentBusHTTPServer((config["host"], int(config["port"])), Handler)
     server.config = config
     print(f"central-gateway.py listening on http://{config['host']}:{config['port']}", flush=True)
+    print(f"Agent Bus join endpoint: {public_gateway_url(config)}", flush=True)
+    notify_plugin(config, "central.started", {
+        "gateway": public_gateway_url(config),
+        "runtime": "python",
+    })
     server.serve_forever()
 
 
@@ -71,6 +83,7 @@ def load_config():
         config = {}
     config["host"] = os.environ.get("AGENT_BUS_HOST", config.get("host", "127.0.0.1"))
     config["port"] = int(os.environ.get("AGENT_BUS_PORT", config.get("port", 8788)))
+    config["gatewayUrl"] = os.environ.get("AGENT_BUS_GATEWAY_URL", config.get("gatewayUrl", ""))
     config["token"] = os.environ.get("AGENT_BUS_TOKEN", config.get("token", ""))
     config["dataDir"] = os.environ.get("AGENT_BUS_DATA_DIR", str(Path(config.get("dataDir", "./data/central")).resolve()))
     config.setdefault("defaults", {})
@@ -82,6 +95,8 @@ def load_config():
     config["modelRouter"].setdefault("allowEdgeAgentModels", False)
     config["modelRouter"].setdefault("agentModelTimeoutSeconds", 600)
     config["modelRouter"].setdefault("backends", [])
+    config.setdefault("plugins", {})
+    config["plugins"].setdefault("telegramBot", {})
     config.setdefault("edgeTokens", [])
     return config
 
@@ -662,6 +677,13 @@ def register_node(config, body):
     STATE["queues"].setdefault(node_id, [])
     STATE["conditions"].setdefault(node_id, threading.Condition())
     append_jsonl(config, "nodes.jsonl", node)
+    notify_plugin(config, "edge.registered", {
+        "node_id": node_id,
+        "hostname": node.get("hostname"),
+        "agents": [agent.get("id") for agent in agents],
+        "agent_count": len(agents),
+        "was_registered": bool(old),
+    })
     return node
 
 
@@ -803,6 +825,9 @@ def agent_bus_manifest(config):
         "model_router": {
             "enabled": config.get("modelRouter", {}).get("enabled", True) is not False,
             "models": [item["id"] for item in openai_models(config)["data"]],
+        },
+        "plugins": {
+            "telegramBot": public_telegram_plugin_status(config),
         },
     }
 
@@ -2080,6 +2105,15 @@ def complete_run(config, body):
     continue_group_thread(config, run)
     continue_room_run(config, run)
     append_jsonl(config, "runs.jsonl", run)
+    notify_plugin(config, "run.completed" if run.get("status") == "completed" else "run.failed", {
+        "run_id": run.get("id"),
+        "thread_id": run.get("thread_id"),
+        "room_id": run.get("room_id"),
+        "agent_id": run.get("agent_id"),
+        "node_id": run.get("node_id"),
+        "status": run.get("status"),
+        "exit_code": run.get("exit_code"),
+    })
     return run
 
 
@@ -2120,8 +2154,17 @@ def continue_room_run(config, run):
         "content": content,
         "at": run.get("completed_at") or now(),
     })
+    previous_status = room.get("status")
     actions = process_room_directives(config, room, run, content)
     finalize_room_completion(room)
+    if previous_status != "completed" and room.get("status") == "completed":
+        notify_plugin(config, "room.completed", {
+            "room_id": room.get("id"),
+            "title": room.get("title"),
+            "agents": room.get("agents") or [],
+            "reports": len(room.get("reports") or []),
+            "runs": len(room.get("runs") or []),
+        })
     scheduled_actions = {"wake", "reminder", "done"}
     if not any(action in scheduled_actions for action in actions) and room.get("status") == "active" and room.get("autonomy", {}).get("auto_rotate", True):
         wake_room_agents(config, room, [next_room_agent(room)], "Continue the room from the latest message.", run.get("trace_id") or room.get("trace_id"))
@@ -2331,6 +2374,125 @@ def parse_delay_seconds(amount, unit):
 def write_room(config, room):
     STATE["rooms"][room["id"]] = room
     write_snapshot(config, "rooms", room["id"], room)
+
+
+def public_gateway_url(config):
+    configured = str(config.get("gatewayUrl") or "").strip()
+    if configured:
+        return configured.rstrip("/")
+    host = config.get("host") or "127.0.0.1"
+    port = config.get("port") or 8788
+    return f"http://{host}:{port}".rstrip("/")
+
+
+def telegram_plugin_config(config):
+    plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
+    plugin = dict(plugins.get("telegramBot") or {})
+    env_enabled = os.environ.get("AGENT_BUS_TELEGRAM_ENABLED")
+    if env_enabled:
+        plugin["enabled"] = env_enabled.strip().lower() in ("1", "true", "yes", "on")
+    plugin.setdefault("enabled", False)
+    plugin.setdefault("botTokenEnv", "AGENT_BUS_TELEGRAM_BOT_TOKEN")
+    plugin.setdefault("chatIdEnv", "AGENT_BUS_TELEGRAM_CHAT_ID")
+    plugin.setdefault("events", sorted(TELEGRAM_DEFAULT_EVENTS))
+    plugin.setdefault("dryRun", False)
+    return plugin
+
+
+def public_telegram_plugin_status(config):
+    plugin = telegram_plugin_config(config)
+    token = telegram_bot_token(plugin)
+    chat_id = telegram_chat_id(plugin)
+    return {
+        "enabled": plugin.get("enabled") is True,
+        "configured": bool(token and chat_id),
+        "dry_run": plugin.get("dryRun") is True or plugin.get("dry_run") is True,
+        "events": plugin_events(plugin),
+        "bot_token_env": plugin.get("botTokenEnv"),
+        "chat_id_env": plugin.get("chatIdEnv"),
+    }
+
+
+def plugin_events(plugin):
+    events = plugin.get("events")
+    if not isinstance(events, list) or not events:
+        return sorted(TELEGRAM_DEFAULT_EVENTS)
+    return [str(item) for item in events]
+
+
+def telegram_bot_token(plugin):
+    env_name = str(plugin.get("botTokenEnv") or "AGENT_BUS_TELEGRAM_BOT_TOKEN")
+    return str(os.environ.get(env_name) or plugin.get("botToken") or plugin.get("bot_token") or "").strip()
+
+
+def telegram_chat_id(plugin):
+    env_name = str(plugin.get("chatIdEnv") or "AGENT_BUS_TELEGRAM_CHAT_ID")
+    return str(os.environ.get(env_name) or plugin.get("chatId") or plugin.get("chat_id") or "").strip()
+
+
+def notify_plugin(config, event, payload):
+    plugin = telegram_plugin_config(config)
+    if plugin.get("enabled") is not True:
+        return
+    if event not in set(plugin_events(plugin)):
+        return
+    text = telegram_notification_text(event, payload)
+    token = telegram_bot_token(plugin)
+    chat_id = telegram_chat_id(plugin)
+    dry_run = plugin.get("dryRun") is True or plugin.get("dry_run") is True
+    status = "dry_run" if dry_run else ("queued" if token and chat_id else "missing_config")
+    append_jsonl(config, "notifications.jsonl", {
+        "at": now(),
+        "plugin": "telegramBot",
+        "event": event,
+        "status": status,
+        "message": text,
+        "payload": payload,
+    })
+    if dry_run or not token or not chat_id:
+        return
+    threading.Thread(target=send_telegram_notification, args=(config, token, chat_id, text), daemon=True).start()
+
+
+def telegram_notification_text(event, payload):
+    if event == "central.started":
+        return f"Agent Bus central started\nGateway: {payload.get('gateway')}\nRuntime: {payload.get('runtime')}"
+    if event == "edge.registered":
+        agents = ", ".join(payload.get("agents") or []) or "none"
+        return f"Agent Bus edge registered\nNode: {payload.get('node_id')}\nAgents: {agents}"
+    if event in ("run.completed", "run.failed"):
+        return f"Agent Bus run {payload.get('status')}\nRun: {payload.get('run_id')}\nAgent: {payload.get('agent_id')}\nNode: {payload.get('node_id')}"
+    if event == "room.completed":
+        return f"Agent Bus room completed\nRoom: {payload.get('room_id')}\nTitle: {payload.get('title')}\nReports: {payload.get('reports')}"
+    return f"Agent Bus event: {event}\n{json.dumps(payload, ensure_ascii=False)}"
+
+
+def send_telegram_notification(config, token, chat_id, text):
+    try:
+        data = urlencode({
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": "true",
+        }).encode("utf-8")
+        req = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data, method="POST")
+        req.add_header("content-type", "application/x-www-form-urlencoded")
+        timeout = float(telegram_plugin_config(config).get("timeoutSeconds") or 5)
+        with urlopen(req, timeout=max(1, min(timeout, 30))) as response:
+            response.read()
+        append_jsonl(config, "notifications.jsonl", {
+            "at": now(),
+            "plugin": "telegramBot",
+            "event": "send.completed",
+            "status": "completed",
+        })
+    except Exception as exc:
+        append_jsonl(config, "notifications.jsonl", {
+            "at": now(),
+            "plugin": "telegramBot",
+            "event": "send.failed",
+            "status": "failed",
+            "error": str(exc),
+        })
 
 
 def has_any(agent, values):

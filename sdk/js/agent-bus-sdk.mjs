@@ -178,6 +178,16 @@ export function roomEventBundle(room, options = {}) {
         node_id: run.node_id || ""
       }, { run_id: run.id || "" });
     }
+    if (!reportsOnly) {
+      for (const [index, event] of (run.events || []).entries()) {
+        if (!event?.text && !event?.stream) continue;
+        add("run.output", event.at || run.started_at || run.created_at, run.agent_id || "system", {
+          index,
+          stream: event.stream || "",
+          text: event.text || ""
+        }, { run_id: run.id || "" });
+      }
+    }
     if (isTerminalRunStatus(run.status)) {
       add(run.status === "completed" ? "run.completed" : "run.failed", run.completed_at || room?.updated_at, run.agent_id || "system", {
         agent_id: run.agent_id || "",
@@ -264,7 +274,9 @@ export function replayRoomEvents(bundle) {
       blackboard_updates: 0,
       runs: 0,
       completed_runs: 0,
-      failed_runs: 0
+      failed_runs: 0,
+      output_events: 0,
+      output_bytes: 0
     },
     reports: [],
     blackboard: [],
@@ -293,16 +305,26 @@ export function replayRoomEvents(bundle) {
       run.created_at = event.at;
       run.agent_id = event.payload?.agent_id || event.actor || run.agent_id;
     } else if (event.type === "run.started") {
-      ensureRun(runs, event).status = "running";
+      const run = ensureRun(runs, event);
+      run.status = "running";
+      run.started_at = event.at;
+    } else if (event.type === "run.output") {
+      const run = ensureRun(runs, event);
+      const bytes = byteLength(event.payload?.text || "");
+      run.output_events += 1;
+      run.output_bytes += bytes;
+      summary.counts.output_events += 1;
+      summary.counts.output_bytes += bytes;
     } else if (event.type === "run.completed" || event.type === "run.failed") {
       const run = ensureRun(runs, event);
       run.status = event.payload?.status || (event.type === "run.completed" ? "completed" : "failed");
       run.completed_at = event.at;
+      run.exit_code = event.payload?.exit_code ?? null;
       if (event.type === "run.completed") summary.counts.completed_runs += 1;
       if (event.type === "run.failed") summary.counts.failed_runs += 1;
     }
   }
-  summary.runs = [...runs.values()];
+  summary.runs = [...runs.values()].sort((left, right) => String(left.created_at || "").localeCompare(String(right.created_at || "")));
   summary.counts.runs = summary.runs.length;
   return summary;
 }
@@ -315,7 +337,11 @@ function ensureRun(runs, event) {
       agent_id: event.payload?.agent_id || event.actor || "",
       status: "unknown",
       created_at: "",
-      completed_at: ""
+      started_at: "",
+      completed_at: "",
+      exit_code: null,
+      output_events: 0,
+      output_bytes: 0
     });
   }
   return runs.get(runId);

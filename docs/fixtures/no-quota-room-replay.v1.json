@@ -1,0 +1,77 @@
+{
+  "object": "agent_bus.room_replay",
+  "protocol": "agent-bus.v1",
+  "source": "agent_bus.room_event_bundle",
+  "export_metadata": {
+    "format": "events",
+    "source": "room.snapshot",
+    "generated_at": "2026-01-01T00:00:06.000Z",
+    "reports_only": false,
+    "event_count": 15,
+    "sequence_start": 1,
+    "sequence_end": 15
+  },
+  "room": {
+    "id": "room_fixture_no_quota_replay",
+    "title": "No-quota replay fixture",
+    "status": "completed",
+    "agents": [
+      "fixture-planner",
+      "fixture-worker"
+    ]
+  },
+  "counts": {
+    "events": 15,
+    "messages": 2,
+    "reports": 2,
+    "blackboard_updates": 1,
+    "runs": 2,
+    "completed_runs": 2,
+    "failed_runs": 0,
+    "output_events": 2,
+    "output_bytes": 247
+  },
+  "reports": [
+    {
+      "at": "2026-01-01T00:00:02.100Z",
+      "speaker": "fixture-planner",
+      "content": "Planner prepared deterministic task."
+    },
+    {
+      "at": "2026-01-01T00:00:04.100Z",
+      "speaker": "fixture-worker",
+      "content": "Worker verified fixture replay, output accounting, and sequence metadata."
+    }
+  ],
+  "blackboard": [
+    {
+      "at": "2026-01-01T00:00:04.200Z",
+      "speaker": "fixture-worker",
+      "content": "Fixture is stable for SDK/CLI compatibility checks."
+    }
+  ],
+  "runs": [
+    {
+      "id": "run_fixture_planner",
+      "agent_id": "fixture-planner",
+      "status": "completed",
+      "created_at": "2026-01-01T00:00:01.000Z",
+      "started_at": "2026-01-01T00:00:01.200Z",
+      "completed_at": "2026-01-01T00:00:02.000Z",
+      "exit_code": 0,
+      "output_events": 1,
+      "output_bytes": 96
+    },
+    {
+      "id": "run_fixture_worker",
+      "agent_id": "fixture-worker",
+      "status": "completed",
+      "created_at": "2026-01-01T00:00:03.000Z",
+      "started_at": "2026-01-01T00:00:03.200Z",
+      "completed_at": "2026-01-01T00:00:04.000Z",
+      "exit_code": 0,
+      "output_events": 1,
+      "output_bytes": 151
+    }
+  ]
+}

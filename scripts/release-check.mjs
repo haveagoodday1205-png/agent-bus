@@ -37,6 +37,7 @@ const jsFiles = [
   "scripts/central-restart-smoke.mjs",
   "scripts/python-sdk-smoke.mjs",
   "scripts/python-room-agent-smoke.mjs",
+  "scripts/room-replay-fixture-check.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
   "scripts/room-prompt-compaction-smoke.mjs",
   "scripts/make-portable-release.mjs",
@@ -70,6 +71,7 @@ try {
   step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);
   step("python room-agent smoke", process.execPath, ["scripts/python-room-agent-smoke.mjs", "--json"]);
   step("python agent-model example", python, ["examples/python-agent-model/agent_model_example.py"]);
+  step("room replay fixture compatibility", process.execPath, ["scripts/room-replay-fixture-check.mjs", "--json"]);
   step("JS room replay example", process.execPath, ["examples/js-room-replay/room_replay_example.mjs", "--json"]);
   step("no-quota room replay golden path", process.execPath, ["examples/no-quota-room-replay/run.mjs", "--json"]);
   step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);

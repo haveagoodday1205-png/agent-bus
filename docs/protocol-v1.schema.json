@@ -10,7 +10,8 @@
     { "$ref": "#/$defs/agent" },
     { "$ref": "#/$defs/room" },
     { "$ref": "#/$defs/run" },
-    { "$ref": "#/$defs/event" }
+    { "$ref": "#/$defs/event" },
+    { "$ref": "#/$defs/roomEventBundle" }
   ],
   "$defs": {
     "timestamp": {
@@ -224,6 +225,7 @@
             "room.message.added",
             "room.blackboard.updated",
             "room.report.added",
+            "room.status.changed",
             "run.queued",
             "run.started",
             "run.output",
@@ -243,9 +245,86 @@
         "run_id": { "$ref": "#/$defs/identifier" },
         "node_id": { "$ref": "#/$defs/identifier" },
         "agent_id": { "$ref": "#/$defs/identifier" },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
         "payload": {
           "type": "object",
           "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "roomEventBundleMetadata": {
+      "type": "object",
+      "required": ["format", "source", "generated_at", "reports_only", "event_count", "sequence_start", "sequence_end"],
+      "properties": {
+        "format": { "const": "events" },
+        "source": { "type": "string" },
+        "generated_at": { "$ref": "#/$defs/timestamp" },
+        "reports_only": { "type": "boolean" },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sequence_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sequence_end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "roomEventBundle": {
+      "type": "object",
+      "required": ["object", "protocol", "export_metadata", "room", "counts", "events"],
+      "properties": {
+        "object": { "const": "agent_bus.room_event_bundle" },
+        "protocol": {
+          "type": "string",
+          "pattern": "^agent-bus\\.v[0-9]+"
+        },
+        "generated_at": { "$ref": "#/$defs/timestamp" },
+        "source": { "type": "string" },
+        "reports_only": { "type": "boolean" },
+        "export_metadata": { "$ref": "#/$defs/roomEventBundleMetadata" },
+        "room": {
+          "type": "object",
+          "required": ["id", "title", "status", "agents"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "title": { "type": "string" },
+            "status": { "$ref": "#/$defs/roomStatus" },
+            "agents": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/identifier" }
+            },
+            "created_at": { "$ref": "#/$defs/timestamp" },
+            "updated_at": { "$ref": "#/$defs/timestamp" }
+          },
+          "additionalProperties": true
+        },
+        "counts": {
+          "type": "object",
+          "required": ["events"],
+          "properties": {
+            "events": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/event" }
         }
       },
       "additionalProperties": true

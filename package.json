@@ -52,6 +52,7 @@
     "smoke:room-prompt": "node scripts/room-prompt-compaction-smoke.mjs",
     "sdk:python:smoke": "node scripts/python-sdk-smoke.mjs",
     "smoke:python-room-agent": "node scripts/python-room-agent-smoke.mjs",
+    "fixture:room-replay": "node scripts/room-replay-fixture-check.mjs",
     "demo:local": "node scripts/demo-local.mjs",
     "demo:remote-assistant": "node scripts/demo-local.mjs",
     "demo:starter": "node scripts/demo-starter.mjs",

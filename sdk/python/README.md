@@ -33,7 +33,7 @@ The SDK intentionally stays small:
 - OpenAI-compatible agent calls: `agent_chat()`, `agent_response()`
 - replay fixtures: `export_room_events()`, `room_event_bundle()`, `replay_room_events()`
 
-Room event bundles include stable event `sequence` numbers and `export_metadata` so examples and support tools can verify replay order without depending only on array position.
+Room event bundles include stable event `sequence` numbers and `export_metadata` so examples and support tools can verify replay order without depending only on array position. Public fixtures live under `docs/fixtures/` and can be checked with `npm run fixture:room-replay`.
 
 It has no runtime dependencies beyond Python 3.10+.
 

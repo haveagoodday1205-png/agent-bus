@@ -192,6 +192,7 @@ room.created
 room.message.added
 room.blackboard.updated
 room.report.added
+room.status.changed
 run.queued
 run.started
 run.output
@@ -231,9 +232,12 @@ Current implementation note:
 ```bash
 agent-bus room export room_xxx --format events --out room-events.json
 agent-bus room replay --in room-events.json --format markdown
+npm run fixture:room-replay
 ```
 
 This creates a redacted `agent_bus.room_event_bundle` from a room snapshot and replays it offline into a deterministic summary. Snapshot-derived bundles include contiguous event `sequence` numbers plus `export_metadata` (`source`, `generated_at`, `reports_only`, event count, and sequence range) so SDKs and auditors can verify ordering without depending on array position alone. It is a compatibility bridge toward a fully append-only room event store.
+
+The repository also includes a stable public fixture at `docs/fixtures/no-quota-room-events.v1.json` plus the expected replay summary at `docs/fixtures/no-quota-room-replay.v1.json`. `npm run fixture:room-replay` checks the fixture against the protocol schema event enum and replays it through the CLI, JS SDK, and Python SDK without starting a gateway or calling a model provider.
 
 ## Trust And Permissions
 

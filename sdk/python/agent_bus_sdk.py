@@ -160,6 +160,15 @@ def room_event_bundle(room: dict[str, Any], *, reports_only: bool = False) -> di
                 "agent_id": run.get("agent_id", ""),
                 "node_id": run.get("node_id", ""),
             }, run_id=run.get("id", ""))
+        if not reports_only:
+            for index, event in enumerate(run.get("events") or []):
+                if not event.get("text") and not event.get("stream"):
+                    continue
+                add("run.output", event.get("at") or run.get("started_at") or run.get("created_at"), run.get("agent_id") or "system", {
+                    "index": index,
+                    "stream": event.get("stream", ""),
+                    "text": event.get("text", ""),
+                }, run_id=run.get("id", ""))
         if _terminal_run(run.get("status")):
             add("run.completed" if run.get("status") == "completed" else "run.failed", run.get("completed_at") or room.get("updated_at"), run.get("agent_id") or "system", {
                 "agent_id": run.get("agent_id", ""),
@@ -232,7 +241,7 @@ def replay_room_events(bundle: dict[str, Any]) -> dict[str, Any]:
             "status": bundle.get("room", {}).get("status", "unknown"),
             "agents": bundle.get("room", {}).get("agents", []),
         },
-        "counts": {"events": 0, "messages": 0, "reports": 0, "blackboard_updates": 0, "runs": 0, "completed_runs": 0, "failed_runs": 0},
+        "counts": {"events": 0, "messages": 0, "reports": 0, "blackboard_updates": 0, "runs": 0, "completed_runs": 0, "failed_runs": 0, "output_events": 0, "output_bytes": 0},
         "reports": [],
         "blackboard": [],
         "runs": [],
@@ -262,16 +271,26 @@ def replay_room_events(bundle: dict[str, Any]) -> dict[str, Any]:
             run["created_at"] = event.get("at", "")
             run["agent_id"] = payload.get("agent_id") or event.get("actor") or run["agent_id"]
         elif event_type == "run.started":
-            _ensure_run(runs, event)["status"] = "running"
+            run = _ensure_run(runs, event)
+            run["status"] = "running"
+            run["started_at"] = event.get("at", "")
+        elif event_type == "run.output":
+            run = _ensure_run(runs, event)
+            byte_count = len(str(payload.get("text", "")).encode("utf-8"))
+            run["output_events"] += 1
+            run["output_bytes"] += byte_count
+            summary["counts"]["output_events"] += 1
+            summary["counts"]["output_bytes"] += byte_count
         elif event_type in ("run.completed", "run.failed"):
             run = _ensure_run(runs, event)
             run["status"] = payload.get("status") or ("completed" if event_type == "run.completed" else "failed")
             run["completed_at"] = event.get("at", "")
+            run["exit_code"] = payload.get("exit_code")
             if event_type == "run.completed":
                 summary["counts"]["completed_runs"] += 1
             else:
                 summary["counts"]["failed_runs"] += 1
-    summary["runs"] = list(runs.values())
+    summary["runs"] = sorted(runs.values(), key=lambda run: str(run.get("created_at", "")))
     summary["counts"]["runs"] = len(summary["runs"])
     return summary
 
@@ -284,7 +303,11 @@ def _ensure_run(runs: dict[str, dict[str, Any]], event: dict[str, Any]) -> dict[
             "agent_id": (event.get("payload") or {}).get("agent_id") or event.get("actor") or "",
             "status": "unknown",
             "created_at": "",
+            "started_at": "",
             "completed_at": "",
+            "exit_code": None,
+            "output_events": 0,
+            "output_bytes": 0,
         }
     return runs[run_id]
 

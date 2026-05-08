@@ -1,0 +1,249 @@
+{
+  "object": "agent_bus.room_event_bundle",
+  "protocol": "agent-bus.v1",
+  "generated_at": "2026-01-01T00:00:06.000Z",
+  "source": "room.snapshot",
+  "reports_only": false,
+  "export_metadata": {
+    "format": "events",
+    "source": "room.snapshot",
+    "generated_at": "2026-01-01T00:00:06.000Z",
+    "reports_only": false,
+    "event_count": 15,
+    "sequence_start": 1,
+    "sequence_end": 15
+  },
+  "room": {
+    "id": "room_fixture_no_quota_replay",
+    "title": "No-quota replay fixture",
+    "status": "completed",
+    "agents": [
+      "fixture-planner",
+      "fixture-worker"
+    ],
+    "created_at": "2026-01-01T00:00:00.000Z",
+    "updated_at": "2026-01-01T00:00:06.000Z"
+  },
+  "counts": {
+    "events": 15,
+    "room.created": 1,
+    "room.message.added": 2,
+    "run.queued": 2,
+    "run.started": 2,
+    "run.output": 2,
+    "run.completed": 2,
+    "room.report.added": 2,
+    "room.blackboard.updated": 1,
+    "room.status.changed": 1
+  },
+  "events": [
+    {
+      "type": "room.created",
+      "at": "2026-01-01T00:00:00.000Z",
+      "actor": "system",
+      "room_id": "room_fixture_no_quota_replay",
+      "payload": {
+        "title": "No-quota replay fixture",
+        "goal": "Prove room event replay compatibility without model calls.",
+        "status": "completed",
+        "agents": [
+          "fixture-planner",
+          "fixture-worker"
+        ]
+      },
+      "id": "room_fixture_no_quota_replay:event:0001",
+      "sequence": 1
+    },
+    {
+      "type": "room.message.added",
+      "at": "2026-01-01T00:00:00.100Z",
+      "actor": "user",
+      "room_id": "room_fixture_no_quota_replay",
+      "payload": {
+        "index": 0,
+        "role": "user",
+        "speaker": "user",
+        "content": "Create a deterministic no-quota room replay fixture."
+      },
+      "id": "room_fixture_no_quota_replay:event:0002",
+      "sequence": 2
+    },
+    {
+      "type": "run.queued",
+      "at": "2026-01-01T00:00:01.000Z",
+      "actor": "fixture-planner",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_planner",
+      "payload": {
+        "agent_id": "fixture-planner",
+        "node_id": "fixture-edge",
+        "kind": "demo",
+        "role": "planner"
+      },
+      "id": "room_fixture_no_quota_replay:event:0003",
+      "sequence": 3
+    },
+    {
+      "type": "run.started",
+      "at": "2026-01-01T00:00:01.200Z",
+      "actor": "fixture-planner",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_planner",
+      "payload": {
+        "agent_id": "fixture-planner",
+        "node_id": "fixture-edge"
+      },
+      "id": "room_fixture_no_quota_replay:event:0004",
+      "sequence": 4
+    },
+    {
+      "type": "run.output",
+      "at": "2026-01-01T00:00:01.500Z",
+      "actor": "fixture-planner",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_planner",
+      "payload": {
+        "index": 0,
+        "stream": "stdout",
+        "text": "REPORT: Planner prepared deterministic task.\n@fixture-worker: verify replay fixture and report.\n"
+      },
+      "id": "room_fixture_no_quota_replay:event:0005",
+      "sequence": 5
+    },
+    {
+      "type": "run.completed",
+      "at": "2026-01-01T00:00:02.000Z",
+      "actor": "fixture-planner",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_planner",
+      "payload": {
+        "agent_id": "fixture-planner",
+        "status": "completed",
+        "exit_code": 0,
+        "stdout_bytes": 96,
+        "stderr_bytes": 0
+      },
+      "id": "room_fixture_no_quota_replay:event:0006",
+      "sequence": 6
+    },
+    {
+      "type": "room.report.added",
+      "at": "2026-01-01T00:00:02.100Z",
+      "actor": "fixture-planner",
+      "room_id": "room_fixture_no_quota_replay",
+      "payload": {
+        "index": 0,
+        "content": "Planner prepared deterministic task."
+      },
+      "id": "room_fixture_no_quota_replay:event:0007",
+      "sequence": 7
+    },
+    {
+      "type": "room.message.added",
+      "at": "2026-01-01T00:00:02.200Z",
+      "actor": "fixture-planner",
+      "room_id": "room_fixture_no_quota_replay",
+      "payload": {
+        "index": 1,
+        "role": "assistant",
+        "speaker": "fixture-planner",
+        "content": "@fixture-worker: verify replay fixture and report."
+      },
+      "id": "room_fixture_no_quota_replay:event:0008",
+      "sequence": 8
+    },
+    {
+      "type": "run.queued",
+      "at": "2026-01-01T00:00:03.000Z",
+      "actor": "fixture-worker",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_worker",
+      "payload": {
+        "agent_id": "fixture-worker",
+        "node_id": "fixture-edge",
+        "kind": "demo",
+        "role": "executor"
+      },
+      "id": "room_fixture_no_quota_replay:event:0009",
+      "sequence": 9
+    },
+    {
+      "type": "run.started",
+      "at": "2026-01-01T00:00:03.200Z",
+      "actor": "fixture-worker",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_worker",
+      "payload": {
+        "agent_id": "fixture-worker",
+        "node_id": "fixture-edge"
+      },
+      "id": "room_fixture_no_quota_replay:event:0010",
+      "sequence": 10
+    },
+    {
+      "type": "run.output",
+      "at": "2026-01-01T00:00:03.600Z",
+      "actor": "fixture-worker",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_worker",
+      "payload": {
+        "index": 0,
+        "stream": "stdout",
+        "text": "REPORT: Worker verified fixture replay, output accounting, and sequence metadata.\nBLACKBOARD: Fixture is stable for SDK/CLI compatibility checks.\nDONE\n"
+      },
+      "id": "room_fixture_no_quota_replay:event:0011",
+      "sequence": 11
+    },
+    {
+      "type": "run.completed",
+      "at": "2026-01-01T00:00:04.000Z",
+      "actor": "fixture-worker",
+      "room_id": "room_fixture_no_quota_replay",
+      "run_id": "run_fixture_worker",
+      "payload": {
+        "agent_id": "fixture-worker",
+        "status": "completed",
+        "exit_code": 0,
+        "stdout_bytes": 151,
+        "stderr_bytes": 0
+      },
+      "id": "room_fixture_no_quota_replay:event:0012",
+      "sequence": 12
+    },
+    {
+      "type": "room.report.added",
+      "at": "2026-01-01T00:00:04.100Z",
+      "actor": "fixture-worker",
+      "room_id": "room_fixture_no_quota_replay",
+      "payload": {
+        "index": 1,
+        "content": "Worker verified fixture replay, output accounting, and sequence metadata."
+      },
+      "id": "room_fixture_no_quota_replay:event:0013",
+      "sequence": 13
+    },
+    {
+      "type": "room.blackboard.updated",
+      "at": "2026-01-01T00:00:04.200Z",
+      "actor": "fixture-worker",
+      "room_id": "room_fixture_no_quota_replay",
+      "payload": {
+        "index": 0,
+        "content": "Fixture is stable for SDK/CLI compatibility checks."
+      },
+      "id": "room_fixture_no_quota_replay:event:0014",
+      "sequence": 14
+    },
+    {
+      "type": "room.status.changed",
+      "at": "2026-01-01T00:00:05.000Z",
+      "actor": "system",
+      "room_id": "room_fixture_no_quota_replay",
+      "payload": {
+        "status": "completed"
+      },
+      "id": "room_fixture_no_quota_replay:event:0015",
+      "sequence": 15
+    }
+  ]
+}

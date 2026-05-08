@@ -23,8 +23,10 @@ function verifySchema() {
   assert(schema.$defs?.room, "schema missing room definition");
   assert(schema.$defs?.run, "schema missing run definition");
   assert(schema.$defs?.event, "schema missing event definition");
+  assert(schema.$defs?.roomEventBundle, "schema missing room event bundle definition");
   assert(schema.$defs?.manifest, "schema missing manifest definition");
   assert(schema.$defs.event.properties.type.enum.includes("run.completed"), "event enum missing run.completed");
+  assert(schema.$defs.event.properties.type.enum.includes("room.status.changed"), "event enum missing room.status.changed");
   assert(schema.$defs.event.properties.type.enum.includes("policy.denied"), "event enum missing policy.denied");
   assert(schema.$defs.runStatus.enum.includes("queued"), "run status enum missing queued");
   assert(schema.$defs.terminalRunStatus.enum.includes("completed"), "terminal run status enum missing completed");

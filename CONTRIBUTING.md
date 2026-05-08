@@ -64,6 +64,7 @@ npm run diagnostics:redaction:smoke -- --json
 npm run compose:smoke -- --json
 npm run adapter:preset:smoke -- --json # fake Codex/OpenClaw/Hermes/Ollama preset contracts
 npm run trace:smoke -- --json         # trace export/show behavior
+npm run fixture:room-replay -- --json # public event replay fixture across CLI/SDKs
 npm run smoke:central-restart -- --json
 npm run sdk:python:smoke -- --json
 npm run smoke:python-room-agent -- --json

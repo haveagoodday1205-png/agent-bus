@@ -33,7 +33,7 @@ The SDK intentionally stays small:
 - OpenAI-compatible agent calls: `agentChat()`, `agentResponse()`
 - replay fixtures: `exportRoomEvents()`, `roomEventBundle()`, `replayRoomEvents()`
 
-Room event bundles include stable event `sequence` numbers and `export_metadata` so SDK examples and support tools can verify replay order without depending only on array position.
+Room event bundles include stable event `sequence` numbers and `export_metadata` so SDK examples and support tools can verify replay order without depending only on array position. Public fixtures live under `docs/fixtures/` and can be checked with `npm run fixture:room-replay`.
 
 Pass `prompt_cache_key`, `metadata.agent_bus_cache_scope`, or `agent_bus.cache_scope` in `agentChat()`/`agentResponse()` options when otherwise separate model-replacement calls should reuse the same Agent Bus session/cache scope.
 

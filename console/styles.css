@@ -263,6 +263,17 @@ button[type="submit"],
   margin-bottom: 12px;
 }
 
+.compact-section-head {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.compact-section-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
 .table-wrap,
 .tool-surface {
   background: var(--surface);
@@ -358,6 +369,14 @@ tbody tr:last-child td {
 .edge-join-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.pair-code-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.75fr) minmax(116px, 0.65fr) auto;
   gap: 10px;
   align-items: end;
   margin-bottom: 12px;
@@ -662,6 +681,7 @@ tbody tr:last-child td {
   .form-row,
   .model-options-grid,
   .edge-join-form,
+  .pair-code-form,
   .edge-token-row,
   .message-form,
   .summary-grid {

@@ -7,6 +7,8 @@ const state = {
   rooms: [],
   edgeTokens: [],
   edgeJoinCommand: "",
+  pairJoinCommand: "",
+  pairCode: null,
   selectedAgents: new Set(),
   currentThreadId: null,
   currentThread: null,
@@ -34,6 +36,7 @@ const messages = {
     activity: "Activity",
     apiEndpoint: "API",
     autonomousRoom: "Autonomous Room",
+    autoDetect: "Auto Detect",
     broadcast: "broadcast",
     busy: "busy",
     capabilities: "Capabilities",
@@ -53,6 +56,7 @@ const messages = {
     gateway: "Gateway",
     groupChat: "group chat",
     groupNeedsAgents: "group chat needs at least two selected agents",
+    createPairCode: "Create Code",
     createRoom: "Create Room",
     goal: "Goal",
     healthFailed: "health failed: {message}",
@@ -75,6 +79,7 @@ const messages = {
     plugins: "Plugins",
     pluginsLoaded: "loaded plugin status",
     pluginsLoadFailed: "plugins failed: {message}",
+    preset: "Preset",
     telegramBot: "Telegram Bot",
     enabled: "enabled",
     disabled: "disabled",
@@ -94,6 +99,10 @@ const messages = {
     offline: "offline",
     online: "online",
     orchestrate: "orchestrate",
+    pairCode: "Pair Code",
+    pairCodeCreated: "pair code created",
+    pairCodeFailed: "pair code failed: {message}",
+    pairJoinPlaceholder: "Create a pair code",
     completed: "completed",
     failed: "failed",
     finishing: "finishing",
@@ -169,6 +178,7 @@ const messages = {
     tokenSaved: "Saved for this browser tab",
     tokenSavedLog: "token saved; refreshing authorized data",
     tokenSaving: "Saved. Loading agents...",
+    ttlSeconds: "TTL Seconds",
     timeoutSeconds: "Timeout (s)",
     trace: "Trace",
     traceFailed: "trace failed: {message}",
@@ -200,6 +210,7 @@ const messages = {
     activity: "活动",
     apiEndpoint: "接口",
     autonomousRoom: "自主房间",
+    autoDetect: "自动检测",
     broadcast: "广播给全部",
     busy: "忙碌",
     capabilities: "能力",
@@ -219,6 +230,7 @@ const messages = {
     gateway: "网关",
     groupChat: "群聊",
     groupNeedsAgents: "群聊至少需要选择两个智能体",
+    createPairCode: "生成短码",
     createRoom: "创建房间",
     goal: "目标",
     healthFailed: "健康检查失败：{message}",
@@ -241,6 +253,7 @@ const messages = {
     plugins: "插件",
     pluginsLoaded: "已加载插件状态",
     pluginsLoadFailed: "插件加载失败：{message}",
+    preset: "预设",
     telegramBot: "Telegram Bot",
     enabled: "已启用",
     disabled: "未启用",
@@ -260,6 +273,10 @@ const messages = {
     offline: "离线",
     online: "在线",
     orchestrate: "自动编排",
+    pairCode: "Pair Code",
+    pairCodeCreated: "Pair Code 已生成",
+    pairCodeFailed: "Pair Code 生成失败：{message}",
+    pairJoinPlaceholder: "生成短期接入码",
     completed: "已完成",
     failed: "失败",
     finishing: "收尾中",
@@ -335,6 +352,7 @@ const messages = {
     tokenSaved: "已保存到当前浏览器标签页",
     tokenSavedLog: "token 已保存，正在刷新授权数据",
     tokenSaving: "已保存，正在加载智能体...",
+    ttlSeconds: "有效期（秒）",
     timeoutSeconds: "超时（秒）",
     trace: "Trace",
     traceFailed: "trace 加载失败：{message}",
@@ -380,6 +398,8 @@ $("refreshButton").addEventListener("click", refreshAll);
 $("copyStatusCommandButton").addEventListener("click", copyStatusCommand);
 $("copyEdgeJoinButton").addEventListener("click", copyEdgeJoinCommand);
 $("edgeJoinForm").addEventListener("submit", createEdgeJoin);
+$("copyPairJoinButton").addEventListener("click", copyPairJoinCommand);
+$("pairCodeForm").addEventListener("submit", createPairCode);
 $("loadNodesButton").addEventListener("click", loadNodes);
 $("loadAgentsButton").addEventListener("click", loadAgents);
 $("loadPluginsButton").addEventListener("click", loadManifest);
@@ -435,8 +455,11 @@ async function saveToken() {
     sessionStorage.removeItem("agentBusToken");
     state.edgeTokens = [];
     state.edgeJoinCommand = "";
+    state.pairJoinCommand = "";
+    state.pairCode = null;
     setTokenStatus("tokenRequiredShort", "failed");
     renderEdgeJoin();
+    renderPairJoin();
     renderAuthError(new Error(t("missingToken")));
     return;
   }
@@ -757,6 +780,7 @@ function renderEdgeJoin() {
   $("edgeJoinCommand").textContent = command || t("edgeJoinPlaceholder");
   $("copyEdgeJoinButton").disabled = !command;
   renderEdgeTokenList();
+  renderPairJoin();
 }
 
 function edgeJoinCommand(token) {
@@ -822,6 +846,64 @@ async function revokeEdgeToken(id) {
   } catch (err) {
     logEvent(t("edgeTokenRevokeFailed", { message: err.message }));
   }
+}
+
+async function createPairCode(event) {
+  event.preventDefault();
+  const label = $("pairCodeLabel").value.trim();
+  const preset = $("pairCodePreset").value.trim();
+  const ttlSeconds = Math.max(30, Math.min(86400, Number.parseInt($("pairCodeTtl").value || "600", 10) || 600));
+  $("pairCodeTtl").value = String(ttlSeconds);
+  try {
+    const data = await request("v1/agent-bus/pair-codes", {
+      method: "POST",
+      body: {
+        gatewayUrl: apiBase.href.replace(/\/$/, ""),
+        ttlSeconds,
+        ...(label ? { label } : {}),
+        ...(preset ? { agentPreset: preset } : {})
+      }
+    });
+    state.pairCode = data;
+    state.pairJoinCommand = pairJoinCommand(data);
+    renderPairJoin();
+    logEvent(t("pairCodeCreated"));
+  } catch (err) {
+    logEvent(t("pairCodeFailed", { message: err.message }));
+  }
+}
+
+function renderPairJoin() {
+  const command = state.pairJoinCommand || "";
+  const code = state.pairCode?.code || "";
+  const expires = state.pairCode?.expires_at || "";
+  $("pairCodeSummary").textContent = code ? `${code} / ${expires}` : t("pairJoinPlaceholder");
+  $("pairJoinCommand").textContent = command || t("pairJoinPlaceholder");
+  $("copyPairJoinButton").disabled = !command;
+}
+
+function pairJoinCommand(data = {}) {
+  const gateway = String(data.gatewayUrl || apiBase.href).replace(/\/$/, "");
+  const code = data.code || "ABCD-2345";
+  const preset = data.agentPreset ? ` --preset ${data.agentPreset}` : "";
+  return `agent-bus setup edge --gateway ${gateway} --code ${code}${preset} --auto --service auto --out edge.config.json`;
+}
+
+async function copyPairJoinCommand() {
+  if (!state.pairJoinCommand) {
+    $("pairJoinCommand").focus();
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(state.pairJoinCommand);
+    } else {
+      $("pairJoinCommand").focus();
+    }
+  } catch {
+    $("pairJoinCommand").focus();
+  }
+  logEvent(t("copied"));
 }
 
 async function routeTask() {

@@ -36,6 +36,7 @@
 - Adds an opt-in Telegram control webhook for `/status`, `/agents`, and `/run agent-id task`, guarded by Telegram secret tokens and chat allowlists.
 - Makes `agent-bus setup central` generate and print a first scoped edge token plus a copy/paste `setup edge --token ...` command, while still supporting pair-code onboarding.
 - Adds a Web Console Edge Join panel that creates, lists, and revokes scoped edge tokens while copying a ready-to-run `agent-bus setup edge --gateway ... --token ...` command.
+- Adds Web Console pair-code onboarding so operators can create short-lived codes and copy `agent-bus setup edge --gateway ... --code ...` commands without exposing admin tokens.
 - Makes the bundled `compose.yaml` fail fast when `AGENT_BUS_TOKEN` is unset instead of silently starting a public central gateway with a placeholder token.
 - Adds `npm run compose:smoke` plus Docker preflight docs so the single-service Python central deployment, persistent-volume story, and "database optional later" guidance stay aligned.
 - Shows room-specific recovery recommendations in `agent-bus room inspect` human output so stale/orphan run recovery can be copy/pasted without substituting `ROOM_ID`.

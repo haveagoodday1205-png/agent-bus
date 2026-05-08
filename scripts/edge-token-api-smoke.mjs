@@ -120,6 +120,40 @@ async function centralSmoke({ runtime, command, argsForConfig }) {
   assert(tokensAfterRevoke.some((item) => item.id === created.edgeToken.id && item.status === "revoked"), `${runtime} token list did not keep revoked metadata`);
   assert(!JSON.stringify(tokensAfterRevoke).includes(created.token), `${runtime} token list leaked the raw edge token after revoke`);
 
+  const pair = await requestJson(`${gateway}/v1/agent-bus/pair-codes`, {
+    method: "POST",
+    headers: authJsonHeaders(adminToken),
+    body: JSON.stringify({
+      gatewayUrl: gateway,
+      ttlSeconds: 600,
+      label: "web-console-pair-smoke",
+      agentPreset: "echo"
+    })
+  });
+  assert(pair.ok === true, `${runtime} central did not report pair code creation ok`);
+  assert(/^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/.test(pair.code || ""), `${runtime} central returned an invalid pair code`);
+  assert(pair.agentPreset === "echo", `${runtime} central did not return pair preset`);
+  const pairCommand = pairJoinCommand(gateway, pair);
+  assert(pairCommand.includes(`--gateway ${gateway}`), `${runtime} pair command missing gateway`);
+  assert(pairCommand.includes(`--code ${pair.code}`), `${runtime} pair command missing code`);
+  assert(pairCommand.includes("--preset echo"), `${runtime} pair command missing preset`);
+
+  const redeemed = await requestJson(`${gateway}/edge/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: pair.code, nodeId: `${runtime}-pair-edge` })
+  });
+  assert(redeemed.ok === true, `${runtime} central did not redeem pair code`);
+  assert(String(redeemed.token || "").startsWith("abt_edge_"), `${runtime} central did not return a scoped edge token from pair redemption`);
+  assert(redeemed.tokenScope === "edge", `${runtime} pair redemption token scope was not edge`);
+  assert(redeemed.agentPreset === "echo", `${runtime} pair redemption did not preserve preset`);
+  const secondRedeemStatus = await requestStatus(`${gateway}/edge/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: pair.code, nodeId: `${runtime}-pair-edge-2` })
+  });
+  assert(secondRedeemStatus === 404, `${runtime} pair code could be redeemed twice: ${secondRedeemStatus}`);
+
   if (!central.killed) central.kill("SIGTERM");
   await waitForExit(central);
   return {
@@ -127,12 +161,19 @@ async function centralSmoke({ runtime, command, argsForConfig }) {
     gateway,
     token_id: created.edgeToken.id,
     token_prefix: created.token.slice(0, 12),
-    command: joinCommand.replace(created.token, "abt_edge_...")
+    command: joinCommand.replace(created.token, "abt_edge_..."),
+    pair_command: pairCommand.replace(pair.code, "ABCD-2345"),
+    pair_redeemed_token_prefix: redeemed.token.slice(0, 12)
   };
 }
 
 function edgeJoinCommand(gateway, token) {
   return `agent-bus setup edge --gateway ${gateway.replace(/\/$/, "")} --token ${token} --auto --service auto --out edge.config.json`;
+}
+
+function pairJoinCommand(gateway, data = {}) {
+  const preset = data.agentPreset ? ` --preset ${data.agentPreset}` : "";
+  return `agent-bus setup edge --gateway ${gateway.replace(/\/$/, "")} --code ${data.code}${preset} --auto --service auto --out edge.config.json`;
 }
 
 function start(command, args, env = {}) {

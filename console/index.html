@@ -93,6 +93,33 @@
             <div id="edgeTokenSummary" class="muted">-</div>
             <div id="edgeTokenList" class="edge-token-list"></div>
             <pre id="edgeJoinCommand" class="compact-output" tabindex="0"></pre>
+            <div class="section-head compact-section-head">
+              <h3 data-i18n="pairCode">Pair Code</h3>
+              <button id="copyPairJoinButton" type="button" data-i18n="copyJoin">Copy Join</button>
+            </div>
+            <form id="pairCodeForm" class="pair-code-form">
+              <label>
+                <span data-i18n="edgeLabel">Edge Label</span>
+                <input id="pairCodeLabel" type="text" autocomplete="off" placeholder="teammate-laptop" data-i18n-placeholder="edgeLabelPlaceholder" />
+              </label>
+              <label>
+                <span data-i18n="preset">Preset</span>
+                <select id="pairCodePreset">
+                  <option value="" data-i18n="autoDetect">Auto Detect</option>
+                  <option value="codex">Codex</option>
+                  <option value="openclaw">OpenClaw</option>
+                  <option value="hermes">Hermes</option>
+                  <option value="echo">Echo</option>
+                </select>
+              </label>
+              <label>
+                <span data-i18n="ttlSeconds">TTL Seconds</span>
+                <input id="pairCodeTtl" type="number" min="30" max="86400" step="30" value="600" />
+              </label>
+              <button type="submit" data-i18n="createPairCode">Create Code</button>
+            </form>
+            <div id="pairCodeSummary" class="muted">-</div>
+            <pre id="pairJoinCommand" class="compact-output" tabindex="0"></pre>
           </div>
           <div class="tool-surface">
             <div class="section-head">

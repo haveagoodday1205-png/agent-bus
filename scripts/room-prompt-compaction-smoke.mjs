@@ -236,6 +236,7 @@ function freePort() {
 
 function findPython() {
   const candidates = [
+    process.env.AGENT_BUS_PYTHON,
     process.env.PYTHON,
     ...commonBundledPythonPaths(),
     process.platform === "win32" ? "python.exe" : "python3",

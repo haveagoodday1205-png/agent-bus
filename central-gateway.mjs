@@ -1816,6 +1816,30 @@ function telegramExtractMentions(text) {
 }
 
 function telegramProcessPrompt(thread, latestMessage) {
+  const itemLimit = promptLimit("AGENT_BUS_TELEGRAM_PROMPT_MESSAGE_CHARS", 1800, 200, 12000);
+  const itemCount = promptLimit("AGENT_BUS_TELEGRAM_PROMPT_MESSAGE_COUNT", 8, 1, 20);
+  const latestLimit = promptLimit("AGENT_BUS_TELEGRAM_PROMPT_LATEST_CHARS", 4000, 500, 24000);
+  const maxBytes = promptLimit("AGENT_BUS_TELEGRAM_PROMPT_MAX_BYTES", 20000, 4000, 120000);
+  const conversation = thread.conversation || [];
+  const recent = [];
+  for (const item of conversation.slice(-itemCount)) {
+    const speaker = item.speaker || item.role || "unknown";
+    const content = truncateForPrompt(item.content || "", itemLimit);
+    if (content) recent.push({ speaker, content });
+  }
+  const latest = truncateForPrompt(String(latestMessage || "").trim(), latestLimit);
+  let items = recent;
+  let omitted = Math.max(0, conversation.length - items.length);
+  while (items.length) {
+    const prompt = renderTelegramProcessPrompt(thread, items, omitted, latest);
+    if (Buffer.byteLength(prompt, "utf8") <= maxBytes) return prompt;
+    items = items.slice(1);
+    omitted += 1;
+  }
+  return renderTelegramProcessPrompt(thread, [], omitted, latest);
+}
+
+function renderTelegramProcessPrompt(thread, items, omitted, latest) {
   const lines = [
     "You are continuing a Telegram Agent Bus process.",
     `Process: ${telegramThreadLabel(thread)}`,
@@ -1825,13 +1849,22 @@ function telegramProcessPrompt(thread, latestMessage) {
     "",
     "Recent process messages:"
   ];
-  for (const item of (thread.conversation || []).slice(-12)) {
-    const speaker = item.speaker || item.role || "unknown";
-    const content = trimOutput(item.content || "");
-    if (content) lines.push(`${speaker}: ${content}`);
-  }
-  lines.push("", "Latest user message:", String(latestMessage || "").trim());
+  if (omitted) lines.push(`[${omitted} older process messages omitted to keep the prompt compact]`);
+  for (const item of items) lines.push(`${item.speaker}: ${item.content}`);
+  lines.push("", "Latest user message:", latest);
   return lines.join("\n");
+}
+
+function promptLimit(name, defaultValue, lower, upper) {
+  const raw = Number.parseInt(process.env[name] || String(defaultValue), 10);
+  const value = Number.isFinite(raw) ? raw : defaultValue;
+  return Math.max(lower, Math.min(value, upper));
+}
+
+function truncateForPrompt(value, limit) {
+  const text = String(value || "");
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit).trimEnd()}\n[truncated ${text.length - limit} chars]`;
 }
 
 function telegramSessionAgents(config, control, session, thread = null, mentions = []) {

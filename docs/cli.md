@@ -301,6 +301,8 @@ Telegram conversation mode is process-oriented. A chat keeps one active Agent Bu
 
 The first plain message names the process, `/resume` lists or switches prior Telegram processes, `/agent` sets or adds process agents, and a leading `@agent-id` targets that message while adding the agent to the active process. Agent replies are prefixed with `[agent-id]` so multi-agent Telegram replies stay attributable.
 
+Conversation prompts are compacted before dispatch so long Telegram threads do not explode every selected agent's context window. Tune `AGENT_BUS_TELEGRAM_PROMPT_MAX_BYTES`, `AGENT_BUS_TELEGRAM_PROMPT_MESSAGE_COUNT`, `AGENT_BUS_TELEGRAM_PROMPT_MESSAGE_CHARS`, and `AGENT_BUS_TELEGRAM_PROMPT_LATEST_CHARS` if a central needs more or less retained context.
+
 When Telegram cannot reach the public webhook because the Central is local-only, behind NAT, or protected by a WAF such as Cloudflare, run the polling bridge on the Central host instead:
 
 ```bash

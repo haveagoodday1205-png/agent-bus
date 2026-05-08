@@ -2655,22 +2655,44 @@ def telegram_extract_mentions(text):
 
 
 def telegram_process_prompt(thread, latest_message):
-    lines = [
-        "You are continuing a Telegram Agent Bus process.",
-        f"Process: {telegram_thread_label(thread)}",
-        f"Thread: {thread.get('id')}",
-        "Answer the latest user message directly. Keep continuity with the prior messages.",
-        "Do not claim to be another agent. Your agent id will be added outside your reply.",
-        "",
-        "Recent process messages:",
-    ]
-    for item in (thread.get("conversation") or [])[-12:]:
+    item_limit = room_prompt_limit("AGENT_BUS_TELEGRAM_PROMPT_MESSAGE_CHARS", 1800, 200, 12000)
+    item_count = room_prompt_limit("AGENT_BUS_TELEGRAM_PROMPT_MESSAGE_COUNT", 8, 1, 20)
+    latest_limit = room_prompt_limit("AGENT_BUS_TELEGRAM_PROMPT_LATEST_CHARS", 4000, 500, 24000)
+    max_bytes = room_prompt_limit("AGENT_BUS_TELEGRAM_PROMPT_MAX_BYTES", 20000, 4000, 120000)
+    recent = []
+    for item in (thread.get("conversation") or [])[-item_count:]:
         speaker = item.get("speaker") or item.get("role") or "unknown"
-        content = trim(item.get("content") or "")
+        content = truncate_for_room_prompt(item.get("content") or "", item_limit)
         if content:
+            recent.append((speaker, content))
+    latest = truncate_for_room_prompt(str(latest_message or "").strip(), latest_limit)
+
+    def render(items, omitted):
+        lines = [
+            "You are continuing a Telegram Agent Bus process.",
+            f"Process: {telegram_thread_label(thread)}",
+            f"Thread: {thread.get('id')}",
+            "Answer the latest user message directly. Keep continuity with the prior messages.",
+            "Do not claim to be another agent. Your agent id will be added outside your reply.",
+            "",
+            "Recent process messages:",
+        ]
+        if omitted:
+            lines.append(f"[{omitted} older process messages omitted to keep the prompt compact]")
+        for speaker, content in items:
             lines.append(f"{speaker}: {content}")
-    lines.extend(["", "Latest user message:", str(latest_message or "").strip()])
-    return "\n".join(lines)
+        lines.extend(["", "Latest user message:", latest])
+        return "\n".join(lines)
+
+    items = list(recent)
+    omitted = max(0, len((thread.get("conversation") or [])) - len(items))
+    while items:
+        prompt = render(items, omitted)
+        if len(prompt.encode("utf-8")) <= max_bytes:
+            return prompt
+        items = items[1:]
+        omitted += 1
+    return render([], omitted)
 
 
 def telegram_session_agents(config, control, session, thread=None, mentions=None):

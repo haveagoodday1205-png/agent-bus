@@ -30,6 +30,7 @@ const messages = {
     agentsLogFailed: "agents failed: {message}",
     activeRooms: "Active Rooms",
     activeRuns: "active runs",
+    active: "active",
     activity: "Activity",
     apiEndpoint: "API",
     autonomousRoom: "Autonomous Room",
@@ -108,6 +109,8 @@ const messages = {
     edgeTokens: "Edge Tokens",
     edgeTokensLoaded: "loaded {count} edge tokens",
     edgeTokensLoadFailed: "edge tokens failed: {message}",
+    edgeTokenRevoked: "edge token revoked",
+    edgeTokenRevokeFailed: "edge token revoke failed: {message}",
     prompt: "Prompt",
     queued: "Queued",
     quickstart: "Quickstart",
@@ -118,6 +121,8 @@ const messages = {
     reports: "reports",
     response: "Response",
     responsesApi: "Responses",
+    revoked: "revoked",
+    revoke: "Revoke",
     role: "Role",
     route: "Route",
     routeFailed: "route failed: {message}",
@@ -191,6 +196,7 @@ const messages = {
     agentsLogFailed: "智能体加载失败：{message}",
     activeRooms: "活跃房间",
     activeRuns: "活跃运行",
+    active: "活跃",
     activity: "活动",
     apiEndpoint: "接口",
     autonomousRoom: "自主房间",
@@ -269,6 +275,8 @@ const messages = {
     edgeTokens: "Edge Token",
     edgeTokensLoaded: "已加载 {count} 个 Edge Token",
     edgeTokensLoadFailed: "Edge Token 加载失败：{message}",
+    edgeTokenRevoked: "Edge Token 已撤销",
+    edgeTokenRevokeFailed: "Edge Token 撤销失败：{message}",
     prompt: "提示词",
     queued: "队列",
     quickstart: "快速状态",
@@ -279,6 +287,8 @@ const messages = {
     reports: "报告",
     response: "响应",
     responsesApi: "Responses",
+    revoked: "已撤销",
+    revoke: "撤销",
     role: "角色",
     route: "路由",
     routeFailed: "路由失败：{message}",
@@ -746,6 +756,7 @@ function renderEdgeJoin() {
     : t("tokenRequiredShort");
   $("edgeJoinCommand").textContent = command || t("edgeJoinPlaceholder");
   $("copyEdgeJoinButton").disabled = !command;
+  renderEdgeTokenList();
 }
 
 function edgeJoinCommand(token) {
@@ -774,6 +785,43 @@ function upsertEdgeToken(edgeToken) {
   const id = edgeToken?.id;
   if (!id) return;
   state.edgeTokens = [edgeToken, ...state.edgeTokens.filter((item) => item.id !== id)];
+}
+
+function renderEdgeTokenList() {
+  const list = $("edgeTokenList");
+  list.textContent = "";
+  for (const token of state.edgeTokens.slice(0, 8)) {
+    const status = String(token.status || "active").toLowerCase();
+    const row = document.createElement("div");
+    row.className = "edge-token-row";
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(token.label || token.id || "-")}</strong>
+        <span class="muted">${escapeHtml(token.id || "")}</span>
+      </div>
+      <span class="status ${escapeHtml(status)}">${escapeHtml(statusText(status))}</span>
+      <span class="muted">${escapeHtml(token.created_at || "")}</span>
+      <button type="button" class="danger-button" data-edge-token-id="${escapeHtml(token.id || "")}" ${status === "revoked" ? "disabled" : ""}>${escapeHtml(t("revoke"))}</button>
+    `;
+    const button = row.querySelector("button");
+    button.addEventListener("click", () => revokeEdgeToken(token.id));
+    list.append(row);
+  }
+}
+
+async function revokeEdgeToken(id) {
+  if (!id) return;
+  try {
+    const data = await request("v1/agent-bus/edge-tokens/revoke", {
+      method: "POST",
+      body: { id }
+    });
+    if (data.edgeToken) upsertEdgeToken(data.edgeToken);
+    renderEdgeJoin();
+    logEvent(t("edgeTokenRevoked"));
+  } catch (err) {
+    logEvent(t("edgeTokenRevokeFailed", { message: err.message }));
+  }
 }
 
 async function routeTask() {

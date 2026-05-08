@@ -363,6 +363,31 @@ tbody tr:last-child td {
   margin-bottom: 12px;
 }
 
+.edge-token-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.edge-token-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto minmax(132px, 0.8fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.edge-token-row strong,
+.edge-token-row .muted {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .agent-name {
   overflow-wrap: anywhere;
   font-weight: 760;
@@ -637,6 +662,7 @@ tbody tr:last-child td {
   .form-row,
   .model-options-grid,
   .edge-join-form,
+  .edge-token-row,
   .message-form,
   .summary-grid {
     grid-template-columns: 1fr;

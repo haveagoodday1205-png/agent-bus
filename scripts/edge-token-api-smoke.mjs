@@ -107,6 +107,19 @@ async function centralSmoke({ runtime, command, argsForConfig }) {
   });
   assert(edgeListStatus === 401, `${runtime} edge token could list admin edge-token metadata: ${edgeListStatus}`);
 
+  const revoked = await requestJson(`${gateway}/v1/agent-bus/edge-tokens/revoke`, {
+    method: "POST",
+    headers: authJsonHeaders(adminToken),
+    body: JSON.stringify({ id: created.edgeToken.id })
+  });
+  assert(revoked.ok === true, `${runtime} central did not report edge token revoke ok`);
+  assert(revoked.edgeToken?.status === "revoked", `${runtime} central did not mark the edge token revoked`);
+  const tokensAfterRevoke = await requestJson(`${gateway}/v1/agent-bus/edge-tokens`, {
+    headers: authHeaders(adminToken)
+  });
+  assert(tokensAfterRevoke.some((item) => item.id === created.edgeToken.id && item.status === "revoked"), `${runtime} token list did not keep revoked metadata`);
+  assert(!JSON.stringify(tokensAfterRevoke).includes(created.token), `${runtime} token list leaked the raw edge token after revoke`);
+
   if (!central.killed) central.kill("SIGTERM");
   await waitForExit(central);
   return {

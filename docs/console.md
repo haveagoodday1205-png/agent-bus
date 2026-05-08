@@ -10,7 +10,7 @@ https://YOUR-GATEWAY-DOMAIN/agent-bus/console/
 The console can:
 
 - Show a quickstart checklist for gateway health, token state, nodes, agents, rooms, and model-router discovery.
-- Create a scoped edge token and copy a ready-to-run `agent-bus setup edge --gateway ... --token ...` join command.
+- Create, audit, and revoke scoped edge tokens while copying ready-to-run `agent-bus setup edge --gateway ... --token ...` join commands.
 - Show gateway health, registered nodes, and agents.
 - Select agents and submit tasks.
 - Preview routing decisions.

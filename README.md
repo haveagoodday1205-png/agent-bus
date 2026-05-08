@@ -51,6 +51,17 @@ High-impact contribution lanes right now are adapter presets, SDK examples, web 
 
 ## Quick Start
 
+### First no-quota proof
+
+If you are evaluating Agent Bus for the first time, start with the offline checks before configuring real machines, GitHub, Telegram, or model providers:
+
+```bash
+npm run smoke:offline
+npm run demo:no-quota-room-replay -- --json
+```
+
+This path starts only temporary local services with fake tokens and deterministic command agents. It proves central/edge registration, room delegation, directive parsing, room inspection, event export, and offline replay without API keys or model quota. It does not prove that a real model provider, remote SSH/systemd deployment, or production auth policy is ready for your environment.
+
 Run the local smoke test:
 
 ```bash

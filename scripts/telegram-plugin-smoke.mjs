@@ -120,6 +120,13 @@ async function main() {
 
   const statusWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/status");
   assert(statusWebhook.ok === true && statusWebhook.command === "status", "telegram /status webhook failed");
+  assertInlineButton(statusWebhook.reply_markup, "/agents", "telegram /status did not include Agents inline button");
+  const statusNotification = await waitForNotification(dataDir, (item) => item.event === "telegram.command" && item.payload?.command === "status");
+  assertInlineButton(statusNotification.reply_markup, "/status", "telegram dry-run notification did not persist inline buttons");
+  const callbackAgentsWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/agents");
+  assert(callbackAgentsWebhook.ok === true && callbackAgentsWebhook.command === "agents", "telegram /agents callback failed");
+  assert(callbackAgentsWebhook.callback_answer?.status === "dry_run", "telegram callback answer did not stay in dry-run mode");
+  assertInlineButton(callbackAgentsWebhook.reply_markup, "/agent telegram-smoke-agent", "telegram /agents callback did not include agent selection button");
   const agentsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/agents");
   assert(agentsWebhook.ok === true && agentsWebhook.command === "agents", "telegram /agents webhook failed");
   const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-smoke-agent Run webhook command smoke.");
@@ -158,6 +165,9 @@ async function main() {
   const resumeWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/resume");
   assert(resumeWebhook.ok === true && resumeWebhook.command === "resume", "telegram /resume webhook failed");
   assert(/Recent Agent Bus processes/.test(resumeWebhook.reply || ""), "telegram /resume did not list processes");
+  assertInlineButton(resumeWebhook.reply_markup, `/resume ${chatWebhook.thread.id}`, "telegram /resume did not include process resume button");
+  const resumeCallbackWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, `/resume ${chatWebhook.thread.id}`);
+  assert(resumeCallbackWebhook.command === "resume" && resumeCallbackWebhook.thread?.id === chatWebhook.thread.id, "telegram resume callback did not switch process");
   const newWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/new");
   assert(newWebhook.ok === true && newWebhook.command === "new", "telegram /new webhook failed");
   const newChatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Start a fresh Telegram process.");
@@ -207,7 +217,7 @@ async function main() {
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, newWebhook.command, newChatWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, newChatWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,
@@ -307,6 +317,13 @@ async function nodeGatewayPluginSmoke() {
 
   const statusWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/status");
   assert(statusWebhook.ok === true && statusWebhook.command === "status", "node telegram /status webhook failed");
+  assertInlineButton(statusWebhook.reply_markup, "/agents", "node telegram /status did not include Agents inline button");
+  const statusNotification = await waitForNotification(dataDir, (item) => item.event === "telegram.command" && item.payload?.command === "status");
+  assertInlineButton(statusNotification.reply_markup, "/status", "node telegram dry-run notification did not persist inline buttons");
+  const callbackAgentsWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/agents");
+  assert(callbackAgentsWebhook.command === "agents", "node telegram /agents callback failed");
+  assert(callbackAgentsWebhook.callback_answer?.status === "dry_run", "node telegram callback answer did not stay in dry-run mode");
+  assertInlineButton(callbackAgentsWebhook.reply_markup, `/agent ${agentId}`, "node telegram /agents callback did not include agent selection button");
   const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-node-smoke-agent Run node webhook command smoke.");
   assert(runWebhook.thread?.runs?.length === 1, "node telegram /run webhook did not queue a thread run");
   const webhookTask = await pollTask(gateway, edgeToken, nodeId);
@@ -339,6 +356,9 @@ async function nodeGatewayPluginSmoke() {
 
   const resumeWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/resume");
   assert(resumeWebhook.command === "resume" && /Recent Agent Bus processes/.test(resumeWebhook.reply || ""), "node telegram /resume did not list processes");
+  assertInlineButton(resumeWebhook.reply_markup, `/resume ${chatWebhook.thread.id}`, "node telegram /resume did not include process resume button");
+  const resumeCallbackWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, `/resume ${chatWebhook.thread.id}`);
+  assert(resumeCallbackWebhook.command === "resume" && resumeCallbackWebhook.thread?.id === chatWebhook.thread.id, "node telegram resume callback did not switch process");
   const newWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/new");
   assert(newWebhook.command === "new", "node telegram /new webhook failed");
   const newChatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Start a fresh node Telegram process.");
@@ -363,7 +383,7 @@ async function nodeGatewayPluginSmoke() {
   return {
     ok: true,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, newWebhook.command, newChatWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, newChatWebhook.command],
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,
     notifications: notifications.length
@@ -383,6 +403,28 @@ function telegramWebhook(gateway, secret, chatId, text) {
         message_id: 1,
         chat: { id: chatId, type: "private" },
         text
+      }
+    })
+  });
+}
+
+function telegramCallbackWebhook(gateway, secret, chatId, data) {
+  return requestJson(`${gateway}/v1/agent-bus/plugins/telegram/webhook`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": secret
+    },
+    body: JSON.stringify({
+      update_id: 1001,
+      callback_query: {
+        id: `callback-${Date.now()}`,
+        data,
+        message: {
+          message_id: 2,
+          chat: { id: chatId, type: "private" },
+          text: "button"
+        }
       }
     })
   });
@@ -436,6 +478,18 @@ async function waitForNotificationMessage(dataDir, pattern, timeoutMs = 10000) {
     await delay(100);
   }
   throw new Error(`Timed out waiting for notification message: ${pattern}`);
+}
+
+async function waitForNotification(dataDir, predicate, timeoutMs = 10000) {
+  const started = Date.now();
+  const file = path.join(dataDir, "notifications.jsonl");
+  while (Date.now() - started < timeoutMs) {
+    const events = readJsonl(file);
+    const match = events.find(predicate);
+    if (match) return match;
+    await delay(100);
+  }
+  throw new Error("Timed out waiting for matching notification");
 }
 
 function readJsonl(file) {
@@ -578,4 +632,9 @@ function delay(ms) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function assertInlineButton(replyMarkup, callbackData, message) {
+  const buttons = (replyMarkup?.inline_keyboard || []).flat();
+  assert(buttons.some((button) => button?.callback_data === callbackData), message);
 }

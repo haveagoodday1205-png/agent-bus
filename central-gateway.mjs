@@ -12,6 +12,7 @@ const configPath = optionValue("--config") || path.join(__dirname, "central.conf
 const NODE_STALE_SECONDS = intEnv("AGENT_BUS_NODE_STALE_SECONDS", 180);
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped"]);
 const TELEGRAM_DEFAULT_EVENTS = ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test", "telegram.command"];
+const CLIENT_DISCONNECT_CODES = new Set(["EPIPE", "ECONNRESET", "ECONNABORTED", "ERR_STREAM_DESTROYED"]);
 
 const state = {
   nodes: new Map(),
@@ -27,6 +28,10 @@ main().catch((err) => {
   console.error(err.stack || err.message || String(err));
   process.exitCode = 1;
 });
+
+function isClientDisconnect(err) {
+  return err && CLIENT_DISCONNECT_CODES.has(err.code);
+}
 
 async function main() {
   if (argv.includes("--help") || argv.includes("-h") || command === "help") {
@@ -393,6 +398,7 @@ async function serve(config) {
 
       return sendJson(res, { error: "not_found" }, 404);
     } catch (err) {
+      if (isClientDisconnect(err) || res.destroyed || res.writableEnded) return;
       return sendJson(res, { error: err.message || "internal_error" }, err.statusCode || 500);
     }
   });
@@ -783,22 +789,27 @@ async function proxyChatCompletions(config, req, res, body) {
     }, 502);
   }
 
-  res.writeHead(upstream.status, {
-    "content-type": upstream.headers.get("content-type") || "application/json",
-    "cache-control": "no-store",
-    "x-agent-bus-backend": backend.id || "backend"
-  });
-  if (!upstream.body) {
+  try {
+    res.writeHead(upstream.status, {
+      "content-type": upstream.headers.get("content-type") || "application/json",
+      "cache-control": "no-store",
+      "x-agent-bus-backend": backend.id || "backend"
+    });
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+    const reader = upstream.body.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
     res.end();
-    return;
+  } catch (err) {
+    if (isClientDisconnect(err)) return;
+    throw err;
   }
-  const reader = upstream.body.getReader();
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    res.write(Buffer.from(value));
-  }
-  res.end();
 }
 
 async function proxyResponses(config, req, res, body) {
@@ -840,22 +851,27 @@ async function proxyResponses(config, req, res, body) {
     }, 502);
   }
 
-  res.writeHead(upstream.status, {
-    "content-type": upstream.headers.get("content-type") || "application/json",
-    "cache-control": "no-store",
-    "x-agent-bus-backend": backend.id || "backend"
-  });
-  if (!upstream.body) {
+  try {
+    res.writeHead(upstream.status, {
+      "content-type": upstream.headers.get("content-type") || "application/json",
+      "cache-control": "no-store",
+      "x-agent-bus-backend": backend.id || "backend"
+    });
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+    const reader = upstream.body.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
     res.end();
-    return;
+  } catch (err) {
+    if (isClientDisconnect(err)) return;
+    throw err;
   }
-  const reader = upstream.body.getReader();
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    res.write(Buffer.from(value));
-  }
-  res.end();
 }
 
 function chatCompletionScopes(config, body) {
@@ -1543,13 +1559,19 @@ function readJson(req) {
 }
 
 function sendJson(res, value, status = 200, options = {}) {
+  if (res.destroyed || res.writableEnded) return;
   const payload = options.redact === false ? value : redactObject(value);
   const body = `${JSON.stringify(payload, null, 2)}\n`;
-  res.writeHead(status, {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
-  });
-  res.end(body);
+  try {
+    res.writeHead(status, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    });
+    res.end(body);
+  } catch (err) {
+    if (isClientDisconnect(err)) return;
+    throw err;
+  }
 }
 
 function sendConsoleAsset(res, pathname) {
@@ -1898,6 +1920,128 @@ function telegramChatAllowed(plugin, chatId) {
   return !allowed.length || allowed.includes(String(chatId));
 }
 
+function telegramPluginDryRun(plugin) {
+  return plugin.dryRun === true || plugin.dry_run === true;
+}
+
+function telegramShortLabel(value, limit = 34) {
+  const text = String(value || "").trim().split(/\s+/).join(" ");
+  return text.length <= limit ? text : `${text.slice(0, Math.max(1, limit - 3)).trimEnd()}...`;
+}
+
+function telegramCallbackButton(text, callbackData) {
+  const data = String(callbackData || "").trim();
+  if (!data || Buffer.byteLength(data, "utf8") > 64) return null;
+  return {
+    text: telegramShortLabel(text, 40),
+    callback_data: data
+  };
+}
+
+function telegramButtonRows(buttons, width = 2) {
+  const rows = [];
+  let row = [];
+  for (const button of buttons) {
+    if (!button) continue;
+    row.push(button);
+    if (row.length >= width) {
+      rows.push(row);
+      row = [];
+    }
+  }
+  if (row.length) rows.push(row);
+  return rows;
+}
+
+function telegramBaseKeyboardRows() {
+  return [
+    [
+      telegramCallbackButton("Status", "/status"),
+      telegramCallbackButton("Agents", "/agents")
+    ],
+    [
+      telegramCallbackButton("New process", "/new"),
+      telegramCallbackButton("Resume", "/resume")
+    ]
+  ];
+}
+
+function telegramAgentKeyboardRows(config, chatId) {
+  const agents = publicAgents().sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+  if (!agents.length) return [];
+  const session = chatId ? readTelegramSession(config, chatId) : { agents: [] };
+  const active = chatId ? telegramActiveThread(config, chatId, session) : null;
+  const current = new Set(session.agents?.length ? session.agents : telegramThreadAgentIds(active));
+  const buttons = [];
+  if (current.size) buttons.push(telegramCallbackButton("Auto route", "/agent clear"));
+  for (const agent of agents.slice(0, 10)) {
+    const agentId = String(agent.id || "").trim();
+    if (!agentId) continue;
+    const selected = current.has(agentId);
+    const command = active ? `/agent add ${agentId}` : `/agent ${agentId}`;
+    buttons.push(telegramCallbackButton(`${selected ? "* " : (active ? "+ " : "")}${agentId}`, command));
+  }
+  return telegramButtonRows(buttons, 2);
+}
+
+function telegramProcessKeyboardRows(config, chatId) {
+  if (!chatId) return [];
+  const session = readTelegramSession(config, chatId);
+  const activeId = session.active_thread_id;
+  const buttons = telegramChatThreads(config, chatId).slice(0, 6).map((thread) => {
+    const threadId = String(thread.id || "");
+    const prefix = threadId === activeId ? "* " : "";
+    return telegramCallbackButton(`${prefix}${telegramThreadLabel(thread)}`, `/resume ${threadId}`);
+  });
+  return telegramButtonRows(buttons, 1);
+}
+
+function telegramReplyMarkup(config, commandResult = {}, chatId = "") {
+  const rows = telegramBaseKeyboardRows().filter((row) => row.length);
+  const command = String(commandResult.command || "").toLowerCase();
+  if (["agents", "agent", "start", "help", "status", "chat", "new", "message", "unknown"].includes(command)) {
+    rows.push(...telegramAgentKeyboardRows(config, chatId));
+  }
+  if (command === "resume") {
+    rows.push(...telegramProcessKeyboardRows(config, chatId));
+  }
+  return { inline_keyboard: rows };
+}
+
+function answerTelegramCallback(config, plugin, callbackQueryId) {
+  const id = String(callbackQueryId || "").trim();
+  if (!id) return null;
+  const token = telegramBotToken(plugin);
+  const dryRun = telegramPluginDryRun(plugin);
+  const status = dryRun ? "dry_run" : (token ? "queued" : "missing_config");
+  appendJsonl(config, "notifications.jsonl", {
+    at: new Date().toISOString(),
+    plugin: "telegramBot",
+    event: "telegram.callback_answer",
+    status,
+    callback_query_id: id
+  });
+  if (dryRun || !token) {
+    return {
+      ok: dryRun,
+      plugin: "telegramBot",
+      event: "telegram.callback_answer",
+      status,
+      configured: Boolean(token),
+      dry_run: dryRun
+    };
+  }
+  sendTelegramCallbackAnswer(config, plugin, token, id);
+  return {
+    ok: true,
+    plugin: "telegramBot",
+    event: "telegram.callback_answer",
+    status,
+    configured: true,
+    dry_run: false
+  };
+}
+
 function notifyPlugin(config, event, payload = {}, options = {}) {
   const plugin = telegramPluginConfig(config);
   if (plugin.enabled !== true) {
@@ -1920,15 +2064,17 @@ function notifyPlugin(config, event, payload = {}, options = {}) {
   const token = telegramBotToken(plugin);
   const chatId = String(options.chatIdOverride || telegramChatId(plugin)).trim();
   const dryRun = options.dryRunOverride === undefined
-    ? (plugin.dryRun === true || plugin.dry_run === true)
+    ? telegramPluginDryRun(plugin)
     : options.dryRunOverride === true;
+  const replyMarkup = options.replyMarkup || payload.reply_markup || null;
   appendJsonl(config, "notifications.jsonl", {
     at: new Date().toISOString(),
     plugin: "telegramBot",
     event,
     status: dryRun ? "dry_run" : (token && chatId ? "queued" : "missing_config"),
     message: text,
-    payload
+    payload,
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {})
   });
   if (dryRun || !token || !chatId) {
     return {
@@ -1937,17 +2083,19 @@ function notifyPlugin(config, event, payload = {}, options = {}) {
       event,
       status: dryRun ? "dry_run" : "missing_config",
       configured: Boolean(token && chatId),
-      dry_run: dryRun
+      dry_run: dryRun,
+      reply_markup: replyMarkup
     };
   }
-  sendTelegramNotification(config, plugin, token, chatId, text);
+  sendTelegramNotification(config, plugin, token, chatId, text, replyMarkup);
   return {
     ok: true,
     plugin: "telegramBot",
     event,
     status: "queued",
     configured: true,
-    dry_run: false
+    dry_run: false,
+    reply_markup: replyMarkup
   };
 }
 
@@ -1995,7 +2143,9 @@ function telegramWebhook(config, body = {}, req) {
     err.statusCode = 403;
     throw err;
   }
+  const callbackAnswer = answerTelegramCallback(config, plugin, message._callback_query_id);
   const command = telegramHandleCommand(config, plugin, control, text, chatId);
+  const replyMarkup = telegramReplyMarkup(config, command, chatId);
   const replyStatus = notifyPlugin(config, "telegram.command", {
     command: command.command,
     reply: command.reply,
@@ -2003,13 +2153,16 @@ function telegramWebhook(config, body = {}, req) {
     thread_id: command.thread?.id
   }, {
     eventFilter: false,
-    chatIdOverride: chatId
+    chatIdOverride: chatId,
+    replyMarkup
   });
   return {
     ok: true,
     command: command.command,
     reply: command.reply,
     reply_status: replyStatus,
+    reply_markup: replyMarkup,
+    callback_answer: callbackAnswer,
     thread: command.thread
   };
 }
@@ -2018,7 +2171,11 @@ function telegramUpdateMessage(body = {}) {
   if (body.message && typeof body.message === "object") return body.message;
   if (body.edited_message && typeof body.edited_message === "object") return body.edited_message;
   if (body.callback_query?.message) {
-    return { ...body.callback_query.message, text: body.callback_query.data || body.callback_query.message.text || "" };
+    return {
+      ...body.callback_query.message,
+      text: body.callback_query.data || body.callback_query.message.text || "",
+      _callback_query_id: body.callback_query.id
+    };
   }
   return {};
 }
@@ -2245,6 +2402,10 @@ function notifyTelegramConversationResult(config, run) {
   if (!chatId) return false;
   recordTelegramConversationReply(config, thread, run);
   const reply = telegramConversationReplyText(run);
+  const replyMarkup = telegramReplyMarkup(config, {
+    command: "chat",
+    thread: { id: threadId }
+  }, chatId);
   notifyPlugin(config, "telegram.command", {
     command: "chat",
     reply,
@@ -2253,7 +2414,8 @@ function notifyTelegramConversationResult(config, run) {
     run_id: run.id
   }, {
     eventFilter: false,
-    chatIdOverride: chatId
+    chatIdOverride: chatId,
+    replyMarkup
   });
   return true;
 }
@@ -2376,7 +2538,7 @@ function telegramNotificationText(event, payload) {
   return `Agent Bus event: ${event}\n${JSON.stringify(payload)}`;
 }
 
-function sendTelegramNotification(config, plugin, token, chatId, text) {
+function sendTelegramNotification(config, plugin, token, chatId, text, replyMarkup = null) {
   const timeoutMs = Math.max(1000, Math.min(Number(plugin.timeoutSeconds || 5) * 1000, 30000));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -2385,6 +2547,7 @@ function sendTelegramNotification(config, plugin, token, chatId, text) {
     text,
     disable_web_page_preview: "true"
   });
+  if (replyMarkup) body.set("reply_markup", JSON.stringify(replyMarkup));
   fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -2405,6 +2568,41 @@ function sendTelegramNotification(config, plugin, token, chatId, text) {
       at: new Date().toISOString(),
       plugin: "telegramBot",
       event: "send.failed",
+      status: "failed",
+      error: err.message || String(err)
+    });
+  });
+}
+
+function sendTelegramCallbackAnswer(config, plugin, token, callbackQueryId) {
+  const timeoutMs = Math.max(1000, Math.min(Number(plugin.timeoutSeconds || 5) * 1000, 30000));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const body = new URLSearchParams({
+    callback_query_id: callbackQueryId,
+    text: "Agent Bus command received.",
+    cache_time: "1"
+  });
+  fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+    signal: controller.signal
+  }).then((res) => {
+    clearTimeout(timer);
+    appendJsonl(config, "notifications.jsonl", {
+      at: new Date().toISOString(),
+      plugin: "telegramBot",
+      event: res.ok ? "telegram.callback_answer.completed" : "telegram.callback_answer.failed",
+      status: res.ok ? "completed" : "failed",
+      http_status: res.status
+    });
+  }).catch((err) => {
+    clearTimeout(timer);
+    appendJsonl(config, "notifications.jsonl", {
+      at: new Date().toISOString(),
+      plugin: "telegramBot",
+      event: "telegram.callback_answer.failed",
       status: "failed",
       error: err.message || String(err)
     });

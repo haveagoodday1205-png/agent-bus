@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import calendar
+import errno
 import hashlib
 import json
 import mimetypes
@@ -47,6 +48,13 @@ def int_env(name, default):
 
 
 NODE_STALE_SECONDS = max(1, int_env("AGENT_BUS_NODE_STALE_SECONDS", 180))
+CLIENT_DISCONNECT_ERRNOS = {errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED}
+
+
+def is_client_disconnect(exc):
+    return isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)) or (
+        isinstance(exc, OSError) and getattr(exc, "errno", None) in CLIENT_DISCONNECT_ERRNOS
+    )
 
 
 class AgentBusHTTPServer(ThreadingHTTPServer):
@@ -452,6 +460,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(item or {"error": "not_found"}, 200 if item else 404)
             return self.json({"error": "not_found"}, 404)
         except Exception as exc:
+            if is_client_disconnect(exc):
+                return
             return self.json({"error": str(exc)}, getattr(exc, "status_code", 500))
 
     def do_POST(self):
@@ -513,6 +523,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(add_room_reminder(self.config, parts[1], body), 201)
             return self.json({"error": "not_found"}, 404)
         except Exception as exc:
+            if is_client_disconnect(exc):
+                return
             return self.json({"error": str(exc)}, getattr(exc, "status_code", 500))
 
     @property
@@ -544,12 +556,17 @@ class Handler(BaseHTTPRequestHandler):
     def json(self, value, status=200, redact_value=True):
         payload = redact(value) if redact_value else value
         data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
-        self.send_response(status)
-        self.send_header("content-type", "application/json; charset=utf-8")
-        self.send_header("cache-control", "no-store")
-        self.send_header("content-length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("content-type", "application/json; charset=utf-8")
+            self.send_header("cache-control", "no-store")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as exc:
+            if is_client_disconnect(exc):
+                return
+            raise
 
     def console_asset(self, request_path):
         root = Path(__file__).resolve().parent / "console"
@@ -561,12 +578,17 @@ class Handler(BaseHTTPRequestHandler):
         if file_path.suffix == ".js":
             content_type = "text/javascript"
         data = file_path.read_bytes()
-        self.send_response(200)
-        self.send_header("content-type", content_type + ("; charset=utf-8" if content_type.startswith("text/") else ""))
-        self.send_header("cache-control", "no-store" if file_path.name == "index.html" else "public, max-age=60")
-        self.send_header("content-length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(200)
+            self.send_header("content-type", content_type + ("; charset=utf-8" if content_type.startswith("text/") else ""))
+            self.send_header("cache-control", "no-store" if file_path.name == "index.html" else "public, max-age=60")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as exc:
+            if is_client_disconnect(exc):
+                return
+            raise
 
     def proxy_chat_completions(self, body):
         trace_id = self.request_trace_id(body)
@@ -592,26 +614,38 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with urlopen(req, timeout=int(backend.get("timeoutSeconds", 600))) as res:
                 content_type = res.headers.get("content-type", "application/json")
-                self.send_response(res.status)
-                self.send_header("content-type", content_type)
+                try:
+                    self.send_response(res.status)
+                    self.send_header("content-type", content_type)
+                    self.send_header("cache-control", "no-store")
+                    self.send_header("x-agent-bus-backend", backend["id"])
+                    self.end_headers()
+                    while True:
+                        chunk = res.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except Exception as exc:
+                    if is_client_disconnect(exc):
+                        return
+                    raise
+        except HTTPError as exc:
+            payload = exc.read()
+            try:
+                self.send_response(exc.code)
+                self.send_header("content-type", exc.headers.get("content-type", "application/json"))
                 self.send_header("cache-control", "no-store")
                 self.send_header("x-agent-bus-backend", backend["id"])
                 self.end_headers()
-                while True:
-                    chunk = res.read(65536)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-        except HTTPError as exc:
-            payload = exc.read()
-            self.send_response(exc.code)
-            self.send_header("content-type", exc.headers.get("content-type", "application/json"))
-            self.send_header("cache-control", "no-store")
-            self.send_header("x-agent-bus-backend", backend["id"])
-            self.end_headers()
-            self.wfile.write(payload or json.dumps({"error": {"message": str(exc)}}).encode("utf-8"))
+                self.wfile.write(payload or json.dumps({"error": {"message": str(exc)}}).encode("utf-8"))
+            except Exception as write_exc:
+                if is_client_disconnect(write_exc):
+                    return
+                raise
         except Exception as exc:
+            if is_client_disconnect(exc):
+                return
             self.json({
                 "error": {
                     "message": str(exc),
@@ -644,26 +678,38 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with urlopen(req, timeout=int(backend.get("timeoutSeconds", 600))) as res:
                 content_type = res.headers.get("content-type", "application/json")
-                self.send_response(res.status)
-                self.send_header("content-type", content_type)
+                try:
+                    self.send_response(res.status)
+                    self.send_header("content-type", content_type)
+                    self.send_header("cache-control", "no-store")
+                    self.send_header("x-agent-bus-backend", backend["id"])
+                    self.end_headers()
+                    while True:
+                        chunk = res.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except Exception as exc:
+                    if is_client_disconnect(exc):
+                        return
+                    raise
+        except HTTPError as exc:
+            payload = exc.read()
+            try:
+                self.send_response(exc.code)
+                self.send_header("content-type", exc.headers.get("content-type", "application/json"))
                 self.send_header("cache-control", "no-store")
                 self.send_header("x-agent-bus-backend", backend["id"])
                 self.end_headers()
-                while True:
-                    chunk = res.read(65536)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-        except HTTPError as exc:
-            payload = exc.read()
-            self.send_response(exc.code)
-            self.send_header("content-type", exc.headers.get("content-type", "application/json"))
-            self.send_header("cache-control", "no-store")
-            self.send_header("x-agent-bus-backend", backend["id"])
-            self.end_headers()
-            self.wfile.write(payload or json.dumps({"error": {"message": str(exc)}}).encode("utf-8"))
+                self.wfile.write(payload or json.dumps({"error": {"message": str(exc)}}).encode("utf-8"))
+            except Exception as write_exc:
+                if is_client_disconnect(write_exc):
+                    return
+                raise
         except Exception as exc:
+            if is_client_disconnect(exc):
+                return
             self.json({
                 "error": {
                     "message": str(exc),
@@ -3122,7 +3168,137 @@ def telegram_chat_allowed(plugin, chat_id):
     return not allowed or str(chat_id) in set(allowed)
 
 
-def notify_plugin(config, event, payload, dry_run_override=None, event_filter=True, chat_id_override=None):
+def telegram_plugin_dry_run(plugin):
+    return plugin.get("dryRun") is True or plugin.get("dry_run") is True
+
+
+def telegram_short_label(value, limit=34):
+    text = " ".join(str(value or "").strip().split())
+    if len(text) <= limit:
+        return text
+    return text[:max(1, limit - 3)].rstrip() + "..."
+
+
+def telegram_callback_button(text, callback_data):
+    data = str(callback_data or "").strip()
+    if not data or len(data.encode("utf-8")) > 64:
+        return None
+    return {
+        "text": telegram_short_label(text, 40),
+        "callback_data": data,
+    }
+
+
+def telegram_button_rows(buttons, width=2):
+    rows = []
+    row = []
+    for button in buttons:
+        if not button:
+            continue
+        row.append(button)
+        if len(row) >= width:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return rows
+
+
+def telegram_base_keyboard_rows():
+    return [
+        [
+            telegram_callback_button("Status", "/status"),
+            telegram_callback_button("Agents", "/agents"),
+        ],
+        [
+            telegram_callback_button("New process", "/new"),
+            telegram_callback_button("Resume", "/resume"),
+        ],
+    ]
+
+
+def telegram_agent_keyboard_rows(config, chat_id):
+    agents = sorted(public_agents(), key=lambda item: str(item.get("id") or ""))
+    if not agents:
+        return []
+    session = read_telegram_session(config, chat_id) if chat_id else {"agents": []}
+    active = telegram_active_thread(config, chat_id, session) if chat_id else None
+    current = set(session.get("agents") or telegram_thread_agent_ids(active))
+    buttons = []
+    if current:
+        buttons.append(telegram_callback_button("Auto route", "/agent clear"))
+    for agent in agents[:10]:
+        agent_id = str(agent.get("id") or "").strip()
+        if not agent_id:
+            continue
+        label_prefix = "+ " if active else ""
+        command = f"/agent add {agent_id}" if active else f"/agent {agent_id}"
+        if agent_id in current:
+            label_prefix = "* "
+        buttons.append(telegram_callback_button(label_prefix + agent_id, command))
+    return telegram_button_rows(buttons, width=2)
+
+
+def telegram_process_keyboard_rows(config, chat_id):
+    if not chat_id:
+        return []
+    session = read_telegram_session(config, chat_id)
+    active_id = session.get("active_thread_id")
+    buttons = []
+    for thread in telegram_chat_threads(config, chat_id)[:6]:
+        thread_id = str(thread.get("id") or "")
+        label = telegram_thread_label(thread)
+        prefix = "* " if thread_id == active_id else ""
+        buttons.append(telegram_callback_button(prefix + label, f"/resume {thread_id}"))
+    return telegram_button_rows(buttons, width=1)
+
+
+def telegram_reply_markup(config, command_result=None, chat_id=None):
+    result = command_result if isinstance(command_result, dict) else {}
+    rows = [row for row in telegram_base_keyboard_rows() if row]
+    command = str(result.get("command") or "").lower()
+    if command in ("agents", "agent", "start", "help", "status", "chat", "new", "message", "unknown"):
+        rows.extend(telegram_agent_keyboard_rows(config, chat_id))
+    if command == "resume":
+        rows.extend(telegram_process_keyboard_rows(config, chat_id))
+    return {"inline_keyboard": rows}
+
+
+def answer_telegram_callback(config, plugin, callback_query_id):
+    callback_query_id = str(callback_query_id or "").strip()
+    if not callback_query_id:
+        return None
+    token = telegram_bot_token(plugin)
+    dry_run = telegram_plugin_dry_run(plugin)
+    status = "dry_run" if dry_run else ("queued" if token else "missing_config")
+    append_jsonl(config, "notifications.jsonl", {
+        "at": now(),
+        "plugin": "telegramBot",
+        "event": "telegram.callback_answer",
+        "status": status,
+        "callback_query_id": callback_query_id,
+    })
+    if dry_run or not token:
+        return {
+            "ok": bool(dry_run),
+            "plugin": "telegramBot",
+            "event": "telegram.callback_answer",
+            "status": status,
+            "configured": bool(token),
+            "dry_run": bool(dry_run),
+        }
+    threading.Thread(target=send_telegram_callback_answer, args=(config, token, callback_query_id), daemon=True).start()
+    return {
+        "ok": True,
+        "plugin": "telegramBot",
+        "event": "telegram.callback_answer",
+        "status": status,
+        "configured": True,
+        "dry_run": False,
+    }
+
+
+def notify_plugin(config, event, payload, dry_run_override=None, event_filter=True, chat_id_override=None, reply_markup=None):
     plugin = telegram_plugin_config(config)
     if plugin.get("enabled") is not True:
         return {
@@ -3141,8 +3317,9 @@ def notify_plugin(config, event, payload, dry_run_override=None, event_filter=Tr
     text = telegram_notification_text(event, payload)
     token = telegram_bot_token(plugin)
     chat_id = str(chat_id_override or telegram_chat_id(plugin)).strip()
-    dry_run = dry_run_override if dry_run_override is not None else (plugin.get("dryRun") is True or plugin.get("dry_run") is True)
+    dry_run = dry_run_override if dry_run_override is not None else telegram_plugin_dry_run(plugin)
     status = "dry_run" if dry_run else ("queued" if token and chat_id else "missing_config")
+    markup = reply_markup or (payload.get("reply_markup") if isinstance(payload, dict) else None)
     record = {
         "at": now(),
         "plugin": "telegramBot",
@@ -3151,6 +3328,8 @@ def notify_plugin(config, event, payload, dry_run_override=None, event_filter=Tr
         "message": text,
         "payload": payload,
     }
+    if markup:
+        record["reply_markup"] = markup
     append_jsonl(config, "notifications.jsonl", record)
     if dry_run or not token or not chat_id:
         return {
@@ -3160,8 +3339,9 @@ def notify_plugin(config, event, payload, dry_run_override=None, event_filter=Tr
             "status": status,
             "configured": bool(token and chat_id),
             "dry_run": bool(dry_run),
+            "reply_markup": markup,
         }
-    threading.Thread(target=send_telegram_notification, args=(config, token, chat_id, text), daemon=True).start()
+    threading.Thread(target=send_telegram_notification, args=(config, token, chat_id, text, markup), daemon=True).start()
     return {
         "ok": True,
         "plugin": "telegramBot",
@@ -3169,6 +3349,7 @@ def notify_plugin(config, event, payload, dry_run_override=None, event_filter=Tr
         "status": status,
         "configured": True,
         "dry_run": False,
+        "reply_markup": markup,
     }
 
 
@@ -3211,18 +3392,22 @@ def telegram_webhook(config, body, handler):
         err = Exception("telegram chat is not allowed")
         err.status_code = 403
         raise err
+    callback_answer = answer_telegram_callback(config, plugin, message.get("_callback_query_id"))
     command_result = telegram_handle_command(config, plugin, control, text, chat_id)
+    reply_markup = telegram_reply_markup(config, command_result, chat_id)
     reply_result = notify_plugin(config, "telegram.command", {
         "command": command_result["command"],
         "reply": command_result["reply"],
         "chat_id": chat_id,
         "thread_id": command_result.get("thread", {}).get("id"),
-    }, event_filter=False, chat_id_override=chat_id)
+    }, event_filter=False, chat_id_override=chat_id, reply_markup=reply_markup)
     return {
         "ok": True,
         "command": command_result["command"],
         "reply": command_result["reply"],
         "reply_status": reply_result,
+        "reply_markup": reply_markup,
+        "callback_answer": callback_answer,
         "thread": command_result.get("thread"),
     }
 
@@ -3236,6 +3421,7 @@ def telegram_update_message(body):
     if isinstance(callback, dict) and isinstance(callback.get("message"), dict):
         item = dict(callback["message"])
         item["text"] = callback.get("data") or item.get("text") or ""
+        item["_callback_query_id"] = callback.get("id")
         return item
     return {}
 
@@ -3467,13 +3653,17 @@ def notify_telegram_conversation_result(config, run):
         return False
     record_telegram_conversation_reply(config, thread, run)
     reply = telegram_conversation_reply_text(run)
+    reply_markup = telegram_reply_markup(config, {
+        "command": "chat",
+        "thread": {"id": thread_id},
+    }, chat_id)
     notify_plugin(config, "telegram.command", {
         "command": "chat",
         "reply": reply,
         "chat_id": chat_id,
         "thread_id": thread_id,
         "run_id": run.get("id"),
-    }, event_filter=False, chat_id_override=chat_id)
+    }, event_filter=False, chat_id_override=chat_id, reply_markup=reply_markup)
     return True
 
 
@@ -3603,13 +3793,16 @@ def telegram_notification_text(event, payload):
     return f"Agent Bus event: {event}\n{json.dumps(payload, ensure_ascii=False)}"
 
 
-def send_telegram_notification(config, token, chat_id, text):
+def send_telegram_notification(config, token, chat_id, text, reply_markup=None):
     try:
-        data = urlencode({
+        fields = {
             "chat_id": chat_id,
             "text": text,
             "disable_web_page_preview": "true",
-        }).encode("utf-8")
+        }
+        if reply_markup:
+            fields["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        data = urlencode(fields).encode("utf-8")
         req = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data, method="POST")
         req.add_header("content-type", "application/x-www-form-urlencoded")
         timeout = float(telegram_plugin_config(config).get("timeoutSeconds") or 5)
@@ -3626,6 +3819,34 @@ def send_telegram_notification(config, token, chat_id, text):
             "at": now(),
             "plugin": "telegramBot",
             "event": "send.failed",
+            "status": "failed",
+            "error": str(exc),
+        })
+
+
+def send_telegram_callback_answer(config, token, callback_query_id):
+    try:
+        data = urlencode({
+            "callback_query_id": callback_query_id,
+            "text": "Agent Bus command received.",
+            "cache_time": "1",
+        }).encode("utf-8")
+        req = Request(f"https://api.telegram.org/bot{token}/answerCallbackQuery", data=data, method="POST")
+        req.add_header("content-type", "application/x-www-form-urlencoded")
+        timeout = float(telegram_plugin_config(config).get("timeoutSeconds") or 5)
+        with urlopen(req, timeout=max(1, min(timeout, 30))) as response:
+            response.read()
+        append_jsonl(config, "notifications.jsonl", {
+            "at": now(),
+            "plugin": "telegramBot",
+            "event": "telegram.callback_answer.completed",
+            "status": "completed",
+        })
+    except Exception as exc:
+        append_jsonl(config, "notifications.jsonl", {
+            "at": now(),
+            "plugin": "telegramBot",
+            "event": "telegram.callback_answer.failed",
             "status": "failed",
             "error": str(exc),
         })

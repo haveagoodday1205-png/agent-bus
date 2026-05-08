@@ -161,6 +161,8 @@ async function main() {
   assert(runningInspect.analysis?.summary === "live", "room inspect should classify the running room as live");
   assert(runningInspect.analysis?.live_running_runs?.some((run) => run.agent_id === "slow-planner"), "room inspect did not expose the live planner run");
   assert(runningInspect.analysis?.node_inventory_available === true, "room inspect should use node inventory when the gateway supports it");
+  assert(runningInspect.room?.trace_id, "room inspect JSON did not surface the room trace id");
+  assert(runningInspect.operator_hints?.some((hint) => hint.kind === "inspect_trace" && hint.command === `agent-bus trace show ${runningInspect.room.trace_id}`), "room inspect JSON did not include the trace inspection hint for an active room");
   await waitForRunStatus(gateway, token, room.id, "slow-planner", "running");
 
   await requestJson(`${gateway}/edge/register`, {
@@ -216,6 +218,7 @@ async function main() {
   assert(inspectJson.analysis?.stale_queued_runs?.length === 1, "room inspect did not expose the stale queued run in analysis");
   assert(inspectJson.analysis?.recommendations?.some((item) => item.command?.includes(`agent-bus room recover ${orphanRoom.id} --yes --queued-run-stale-seconds 1`)), "room inspect did not recommend guarded recovery with the tuned stale threshold");
   assert(inspectJson.analysis?.recommendations?.some((item) => item.command?.includes(`agent-bus room pause ${orphanRoom.id}`)), "room inspect did not include the explicit pause option");
+  assert(inspectJson.operator_hints?.some((hint) => hint.kind === "recover_room" && hint.command?.includes(`agent-bus room recover ${orphanRoom.id} --yes --queued-run-stale-seconds 1`)), "room inspect JSON did not include the structured recover hint");
   const inspectHuman = await runCliText(["room", "inspect", orphanRoom.id, "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(inspectHuman.includes(`Agent Bus room inspect: ${orphanRoom.id}`), "room inspect human output did not include the room id");
   assert(inspectHuman.includes("stale_queued_recovery_candidate"), "room inspect human output did not include the stale queued summary");

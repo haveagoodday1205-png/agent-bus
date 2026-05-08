@@ -1862,6 +1862,7 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
     otherNonTerminalRuns,
     queuedRunStaleSeconds
   });
+  const operatorHints = roomInspectionOperatorHints(recommendations);
   return {
     room: {
       id: room?.id || "",
@@ -1885,7 +1886,8 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
       stale_queued_runs: staleQueuedRuns,
       orphaned_running_runs: orphanedRunningRuns,
       other_non_terminal_runs: otherNonTerminalRuns,
-      recommendations
+      recommendations,
+      operator_hints: operatorHints
     },
     thresholds: { queued_run_stale_seconds: queuedRunStaleSeconds, node_stale_seconds: staleSeconds },
     counts: {
@@ -1896,7 +1898,8 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
     },
     active_runs: nonTerminalRuns,
     stale_queued_runs: staleQueuedRuns,
-    recommendation: legacyRoomInspectionRecommendation(summary, nonTerminalRuns, staleQueuedRuns)
+    recommendation: legacyRoomInspectionRecommendation(summary, nonTerminalRuns, staleQueuedRuns),
+    operator_hints: operatorHints
   };
 }
 
@@ -2035,7 +2038,16 @@ function roomInspectionRecommendations({
     return out;
   }
   if (liveRunningRuns.length || liveQueuedRuns.length || otherNonTerminalRuns.length) {
+    if (room?.trace_id) {
+      out.push({
+        kind: "inspect_trace",
+        level: "info",
+        message: "Inspect the room trace before pausing live work.",
+        command: `agent-bus trace show ${room.trace_id}`
+      });
+    }
     out.push({
+      kind: "wait_for_live_runs",
       level: "info",
       message: "Room still has live work. Prefer waiting or tracing the active run before intervening."
     });
@@ -2047,6 +2059,26 @@ function roomInspectionRecommendations({
     });
   }
   return out;
+}
+
+function roomInspectionOperatorHints(recommendations) {
+  return (Array.isArray(recommendations) ? recommendations : []).map((item) => ({
+    kind: item.kind || roomInspectionHintKind(item),
+    level: item.level || "info",
+    message: item.message || "",
+    ...(item.command ? { command: item.command } : {})
+  }));
+}
+
+function roomInspectionHintKind(item) {
+  const command = String(item?.command || "");
+  if (command.includes(" trace show ")) return "inspect_trace";
+  if (command.includes(" room recover ")) return "recover_room";
+  if (command.includes(" room pause ")) return "pause_room";
+  if (command.includes(" room export ")) return "export_room_summary";
+  if (command.includes(" room wake ")) return "wake_room";
+  if (command.includes(" room message ")) return "message_room";
+  return "operator_note";
 }
 
 function formatRoomStateInspection(result) {

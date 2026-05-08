@@ -89,6 +89,7 @@ agent-bus demo agent-model
 npm run demo:agent-model
 
 # Show the issue-to-PR flagship demo skeleton and export patch/PR artifacts.
+# Proves local room coordination; does not contact GitHub or open a real PR yet.
 agent-bus demo issue
 npm run demo:issue
 

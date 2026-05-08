@@ -26,6 +26,8 @@ agent-bus demo issue
 
 `agent-bus demo issue` is the local flagship demo skeleton: it starts planner/coder/reviewer fake agents, turns a GitHub-style issue into a room, and writes shareable report, event replay, patch, and PR draft artifacts without contacting GitHub or a model provider.
 
+Maturity note: the demo proves the no-quota room workflow, agent handoff directives, reports-only export, event replay, patch artifact, and PR draft artifact. It does not yet prove live GitHub issue ingestion, branch creation, commits, opening a real PR, real model/tool execution, or maintainer approval flow.
+
 Portable release bundles are published on GitHub Releases. Unpack one and run `./agent-bus --help` on Linux/macOS or `.\agent-bus.cmd --help` on Windows. Each release includes `SHA256SUMS` and a release manifest so users can verify what they downloaded. See `docs/release.md` for the npm-vs-portable install matrix and release verification checklist.
 
 ## JS/TS SDK

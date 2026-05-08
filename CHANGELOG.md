@@ -60,6 +60,7 @@
 - Adds a stable public room event fixture plus `npm run fixture:room-replay`, checking CLI, JS SDK, and Python SDK replay compatibility without a gateway or model quota.
 - Adds JS/Python SDK event bundle validators and CLI `agent-bus room replay --strict` so shared room archives can fail fast on bad sequence metadata before replay.
 - Brings JS and Python SDK replay output accounting into parity with the CLI for `run.output` events, started timestamps, exit codes, and stable run ordering.
+- Clarifies the issue-to-PR demo maturity boundary so operators can distinguish the proven no-quota room/artifact workflow from future live GitHub PR automation.
 - Documents a live-update impact matrix for central Python service changes, edge bridge scripts, edge config changes, and operator-only CLI/docs updates.
 - Adds Web Console quickstart recovery commands so stale queued room hints can be copied with the current gateway and redacted token placeholders.
 

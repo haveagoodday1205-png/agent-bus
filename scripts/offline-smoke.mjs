@@ -187,6 +187,9 @@ async function main() {
   const eventBundle = await runCliJson(["room", "export", finalRoom.id, "--format", "events", "--gateway", base, "--token", token]);
   assert(eventBundle.object === "agent_bus.room_event_bundle", "CLI room export --format events did not return an event bundle");
   assert(eventBundle.room?.id === finalRoom.id, "event bundle has the wrong room id");
+  assert(eventBundle.export_metadata?.format === "events", "event bundle did not include export metadata");
+  assert(eventBundle.export_metadata?.event_count === eventBundle.events?.length, "event bundle export metadata has the wrong event count");
+  assert(eventBundle.events?.every((event, index) => event.sequence === index + 1), "event bundle events did not include contiguous sequence numbers");
   assert(eventBundle.events?.some((event) => event.type === "room.created"), "event bundle did not include room.created");
   assert(eventBundle.events?.some((event) => event.type === "run.completed"), "event bundle did not include run.completed");
   assert(eventBundle.events?.some((event) => event.type === "room.report.added"), "event bundle did not include room.report.added");
@@ -196,6 +199,7 @@ async function main() {
   const replayJson = await runCliJson(["room", "replay", "--in", eventBundlePath]);
   assert(replayJson.object === "agent_bus.room_replay", "CLI room replay did not return a replay summary");
   assert(replayJson.room?.id === finalRoom.id, "CLI room replay returned the wrong room id");
+  assert(replayJson.export_metadata?.format === "events", "CLI room replay did not preserve export metadata");
   assert(replayJson.counts?.completed_runs >= 1, "CLI room replay did not count completed runs");
   assert(replayJson.counts?.reports >= 1, "CLI room replay did not count reports");
   const replayMarkdown = await runCliText(["room", "replay", "--in", eventBundlePath, "--format", "markdown"]);

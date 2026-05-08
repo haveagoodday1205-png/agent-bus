@@ -139,6 +139,9 @@ try:
     bundle = room_event_bundle(room, reports_only=True)
     replay = replay_room_events(bundle)
     assert bundle["counts"]["run.completed"] == 1
+    assert bundle["export_metadata"]["event_count"] == len(bundle["events"])
+    assert [event["sequence"] for event in bundle["events"]] == list(range(1, len(bundle["events"]) + 1))
+    assert replay["export_metadata"]["format"] == "events"
     assert replay["counts"]["completed_runs"] == 1
     assert replay["counts"]["reports"] == 1
 

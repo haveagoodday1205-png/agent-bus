@@ -37,6 +37,7 @@
 - Carries a tuned `--queued-run-stale-seconds` threshold into `agent-bus status` recovery hints so copy/pasted inspect/recover commands evaluate the same stale window.
 - Expands `agent-bus room inspect` with node-aware live, queued, stale queued, and orphaned running buckets while keeping guarded `room recover --yes` compatibility.
 - Adds structured `operator_hints` and trace inspection hints to `agent-bus room inspect` JSON so scripts can consume the same operator actions shown in human output.
+- Adds contiguous event `sequence` numbers and `export_metadata` to room event bundles across the CLI, JS SDK, and Python SDK.
 - Documents a live-update impact matrix for central Python service changes, edge bridge scripts, edge config changes, and operator-only CLI/docs updates.
 
 ## 0.5.5 - Compact room session keys

@@ -185,13 +185,25 @@ def room_event_bundle(room: dict[str, Any], *, reports_only: bool = False) -> di
     for index, event in enumerate(sorted(enumerate(events), key=lambda item: (str(item[1].get("at", "")), item[0])), start=1):
         clean = dict(event[1])
         clean["id"] = f"{room_id or 'room'}:event:{index:04d}"
+        clean["sequence"] = index
         sorted_events.append(clean)
+    generated_at = _iso_now()
+    export_metadata = {
+        "format": "events",
+        "source": "room.snapshot",
+        "generated_at": generated_at,
+        "reports_only": reports_only,
+        "event_count": len(sorted_events),
+        "sequence_start": 1 if sorted_events else 0,
+        "sequence_end": len(sorted_events),
+    }
     return {
         "object": "agent_bus.room_event_bundle",
         "protocol": "agent-bus.v1",
-        "generated_at": _iso_now(),
+        "generated_at": generated_at,
         "source": "room.snapshot",
         "reports_only": reports_only,
+        "export_metadata": export_metadata,
         "room": {
             "id": room_id,
             "title": room.get("title", ""),
@@ -213,6 +225,7 @@ def replay_room_events(bundle: dict[str, Any]) -> dict[str, Any]:
         "object": "agent_bus.room_replay",
         "protocol": bundle.get("protocol", "agent-bus.v1"),
         "source": bundle.get("object", "unknown"),
+        "export_metadata": bundle.get("export_metadata"),
         "room": {
             "id": bundle.get("room", {}).get("id", ""),
             "title": bundle.get("room", {}).get("title", ""),

@@ -208,14 +208,26 @@ export function roomEventBundle(room, options = {}) {
     .sort((left, right) => String(left.at).localeCompare(String(right.at)) || left._index - right._index)
     .map((event, index) => {
       const { _index, ...clean } = event;
-      return { id: `${roomId || "room"}:event:${String(index + 1).padStart(4, "0")}`, ...clean };
+      const sequence = index + 1;
+      return { ...clean, id: `${roomId || "room"}:event:${String(sequence).padStart(4, "0")}`, sequence };
     });
+  const generatedAt = new Date().toISOString();
+  const exportMetadata = {
+    format: "events",
+    source: "room.snapshot",
+    generated_at: generatedAt,
+    reports_only: reportsOnly,
+    event_count: sorted.length,
+    sequence_start: sorted.length ? 1 : 0,
+    sequence_end: sorted.length
+  };
   return {
     object: "agent_bus.room_event_bundle",
     protocol: "agent-bus.v1",
-    generated_at: new Date().toISOString(),
+    generated_at: generatedAt,
     source: "room.snapshot",
     reports_only: reportsOnly,
+    export_metadata: exportMetadata,
     room: {
       id: roomId,
       title: room?.title || "",
@@ -238,6 +250,7 @@ export function replayRoomEvents(bundle) {
     object: "agent_bus.room_replay",
     protocol: bundle.protocol || "agent-bus.v1",
     source: bundle.object || "unknown",
+    export_metadata: bundle.export_metadata || null,
     room: {
       id: bundle.room?.id || "",
       title: bundle.room?.title || "",

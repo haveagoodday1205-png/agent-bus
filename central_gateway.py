@@ -1797,24 +1797,30 @@ def room_memory_enabled():
 def room_memory_source_items(room):
     recent_count = room_prompt_limit("AGENT_BUS_ROOM_PROMPT_MESSAGE_COUNT", 8, 1, 20)
     items = []
-    for item in (room.get("messages") or [])[:-recent_count]:
+    for index, item in enumerate((room.get("messages") or [])[:-recent_count]):
         if isinstance(item, dict):
-            items.append(item)
-    for item in room.get("reports") or []:
+            items.append(room_memory_source_entry(item, "messages", index))
+    for index, item in enumerate(room.get("reports") or []):
         if isinstance(item, dict):
-            items.append(item)
+            items.append(room_memory_source_entry(item, "reports", index))
     board = room.get("blackboard") if isinstance(room.get("blackboard"), dict) else {}
     for key in ("notes", "reports"):
-        for item in board.get(key) or []:
+        for index, item in enumerate(board.get(key) or []):
             if isinstance(item, dict):
-                items.append(item)
+                items.append(room_memory_source_entry(item, f"blackboard.{key}", index))
     seen = set()
     out = []
     for item in items:
         content = str(item.get("content") or item.get("message") or item.get("text") or "").strip()
         if not content:
             continue
-        dedupe_key = (item.get("run_id") or "", item.get("speaker") or item.get("agent_id") or item.get("role") or "", content[:240])
+        ref = room_memory_item_ref(item)
+        dedupe_key = (
+            ref.get("label") or "",
+            item.get("run_id") or "",
+            item.get("speaker") or item.get("agent_id") or item.get("role") or "",
+            content[:240],
+        )
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
@@ -1822,10 +1828,49 @@ def room_memory_source_items(room):
     return out
 
 
+def room_memory_source_entry(item, source, position):
+    out = dict(item)
+    ref = {
+        "source": source,
+        "position": position,
+        "label": f"{source}[{position}]",
+    }
+    at = item.get("at") or item.get("created_at")
+    if at:
+        ref["at"] = at
+    speaker = item.get("speaker") or item.get("agent_id") or item.get("role")
+    if speaker:
+        ref["speaker"] = speaker
+    run_id = item.get("run_id")
+    if run_id:
+        ref["run_id"] = run_id
+    out["_memory_ref"] = ref
+    return out
+
+
+def room_memory_item_ref(item):
+    ref = item.get("_memory_ref") if isinstance(item.get("_memory_ref"), dict) else {}
+    if ref:
+        return ref
+    source = item.get("source") or "unknown"
+    position = item.get("position")
+    label = item.get("label") or (f"{source}[{position}]" if position is not None else str(source))
+    return {key: value for key, value in {
+        "source": source,
+        "position": position,
+        "label": label,
+        "at": item.get("at") or item.get("created_at"),
+        "speaker": item.get("speaker") or item.get("agent_id") or item.get("role"),
+        "run_id": item.get("run_id"),
+    }.items() if value not in (None, "", [])}
+
+
 def room_memory_source_hash(items):
     digest = hashlib.sha256()
     for item in items:
+        ref = room_memory_item_ref(item)
         content = str(item.get("content") or item.get("message") or item.get("text") or "")
+        digest.update(str(ref.get("label") or "").encode("utf-8"))
         digest.update(str(item.get("run_id") or "").encode("utf-8"))
         digest.update(str(item.get("speaker") or item.get("agent_id") or item.get("role") or "").encode("utf-8"))
         digest.update(content.encode("utf-8", errors="ignore"))
@@ -1869,6 +1914,27 @@ def room_memory_item_score(item, content):
     return score
 
 
+def room_memory_item_title(content, limit=90):
+    title = re.sub(r"\s+", " ", str(content or "")).strip()
+    title = re.sub(r"^(REPORT|BLACKBOARD)\s*:\s*", "", title, flags=re.I)
+    if len(title) <= limit:
+        return title
+    return title[:limit].rstrip() + "..."
+
+
+def room_memory_unique_tokens(tokens, limit):
+    seen = set()
+    out = []
+    for token in tokens:
+        if token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def ensure_room_memory_cache(room):
     if not room_memory_enabled():
         room.pop("memory_cache", None)
@@ -1876,18 +1942,22 @@ def ensure_room_memory_cache(room):
     items = room_memory_source_items(room)
     source_hash = room_memory_source_hash(items)
     existing = room.get("memory_cache") if isinstance(room.get("memory_cache"), dict) else {}
-    if existing.get("source_hash") == source_hash and existing.get("version") == 1:
+    if existing.get("source_hash") == source_hash and existing.get("version") == 2:
         return existing
     snippet_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_SNIPPETS", 10, 0, 40)
     snippet_chars = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_SNIPPET_CHARS", 260, 80, 1000)
     keyword_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_KEYWORDS", 32, 0, 100)
     entity_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_ENTITIES", 20, 0, 80)
+    index_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_INDEX_ENTRIES", 16, 0, 80)
+    topic_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_INDEX_TOPICS", 5, 1, 12)
     token_counts = {}
     entity_sets = {"urls": [], "paths": [], "agents": [], "commands": []}
     snippets = []
+    toc_entries = []
     for index, item in enumerate(items):
         content = redact(str(item.get("content") or item.get("message") or item.get("text") or "").strip())
-        for token in room_memory_tokens(content):
+        tokens = room_memory_tokens(content)
+        for token in tokens:
             token_counts[token] = token_counts.get(token, 0) + 1
         entities = room_memory_entities(content)
         for key, values in entities.items():
@@ -1897,21 +1967,33 @@ def ensure_room_memory_cache(room):
         score = room_memory_item_score(item, content)
         if score <= 0:
             continue
+        ref = room_memory_item_ref(item)
+        topics = room_memory_unique_tokens(tokens, topic_limit)
+        toc_entries.append({
+            "score": score,
+            "index": index,
+            "ref": ref,
+            "title": room_memory_item_title(content),
+            "topics": topics,
+            "preview": truncate_for_room_prompt(content, min(snippet_chars, 180)),
+        })
         snippets.append({
             "score": score,
             "index": index,
-            "at": item.get("at") or item.get("created_at"),
-            "speaker": item.get("speaker") or item.get("agent_id") or item.get("role") or "unknown",
+            "ref": ref,
+            "topics": topics,
             "content": truncate_for_room_prompt(content, snippet_chars),
         })
     snippets = sorted(snippets, key=lambda item: (-item["score"], -item["index"]))[:snippet_limit]
+    toc_entries = sorted(toc_entries, key=lambda item: (-item["score"], item["index"]))[:index_limit]
     keywords = [token for token, _count in sorted(token_counts.items(), key=lambda item: (-item[1], item[0]))[:keyword_limit]]
     memory = {
-        "version": 1,
+        "version": 2,
         "updated_at": now(),
         "source_count": len(items),
         "source_hash": source_hash,
         "keywords": keywords,
+        "table_of_contents": [{key: value for key, value in item.items() if key not in ("score", "index")} for item in toc_entries],
         "snippets": [{key: value for key, value in item.items() if key not in ("score", "index")} for item in snippets],
         "entities": {key: values[:entity_limit] for key, values in entity_sets.items() if values[:entity_limit]},
     }
@@ -1927,15 +2009,42 @@ def room_memory_for_prompt(room, reason):
     query = set(room_memory_tokens(" ".join([str(room.get("goal") or ""), str(reason or "")])))
     snippets = []
     for item in memory.get("snippets") or []:
-        overlap = len(query.intersection(room_memory_tokens(item.get("content") or ""))) if query else 0
+        haystack = " ".join([
+            item.get("content") or "",
+            " ".join(item.get("topics") or []),
+            str((item.get("ref") or {}).get("label") or ""),
+        ])
+        overlap = len(query.intersection(room_memory_tokens(haystack))) if query else 0
         snippets.append((overlap, item))
-    snippets = [item for _score, item in sorted(snippets, key=lambda pair: (-pair[0], str(pair[1].get("at") or "")))]
+    snippets = [
+        item for _score, item in sorted(
+            snippets,
+            key=lambda pair: (
+                -pair[0],
+                str((pair[1].get("ref") or {}).get("at") or ""),
+                str((pair[1].get("ref") or {}).get("label") or ""),
+            ),
+        )
+    ]
     snippet_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_PROMPT_SNIPPETS", 6, 0, 20)
+    index_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_PROMPT_INDEX_ENTRIES", 10, 0, 40)
+    toc_entries = []
+    for item in memory.get("table_of_contents") or []:
+        haystack = " ".join([
+            item.get("title") or "",
+            item.get("preview") or "",
+            " ".join(item.get("topics") or []),
+            str((item.get("ref") or {}).get("label") or ""),
+        ])
+        overlap = len(query.intersection(room_memory_tokens(haystack))) if query else 0
+        toc_entries.append((overlap, item))
+    toc_entries = [item for _score, item in sorted(toc_entries, key=lambda pair: (-pair[0], str((pair[1].get("ref") or {}).get("label") or "")))]
     return {
         "source_count": memory.get("source_count", 0),
         "updated_at": memory.get("updated_at"),
         "keywords": (memory.get("keywords") or [])[:24],
         "entities": memory.get("entities") or {},
+        "table_of_contents": toc_entries[:index_limit],
         "relevant_snippets": snippets[:snippet_limit],
     }
 

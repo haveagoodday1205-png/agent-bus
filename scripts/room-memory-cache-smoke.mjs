@@ -54,7 +54,7 @@ async function main() {
     }]
   }, null, 2)}\n`);
 
-fs.writeFileSync(agentScript, `import fs from "node:fs";\nconst file = process.env.AGENT_MESSAGE_FILE || "";\nconst message = file && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : process.env.AGENT_MESSAGE || "";\nconst memory = message.includes("Local compressed room memory cache");\nconst needle = message.includes("vectorish-memory-cache");\nconst recentOnly = message.includes("Recent room messages");\nconsole.log(\`REPORT: memory_present=\${memory} needle_present=\${needle} recent_section=\${recentOnly} prompt_bytes=\${Buffer.byteLength(message, "utf8")}\`);\n`);
+  fs.writeFileSync(agentScript, `import fs from "node:fs";\nconst file = process.env.AGENT_MESSAGE_FILE || "";\nconst message = file && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : process.env.AGENT_MESSAGE || "";\nconst memory = message.includes("Local compressed room memory cache");\nconst toc = message.includes("table_of_contents") && message.includes("messages[");\nconst needle = message.includes("vectorish-memory-cache");\nconst recentOnly = message.includes("Recent room messages");\nconsole.log(\`REPORT: memory_present=\${memory} toc_present=\${toc} needle_present=\${needle} recent_section=\${recentOnly} prompt_bytes=\${Buffer.byteLength(message, "utf8")}\`);\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "memory-edge",
@@ -83,7 +83,9 @@ fs.writeFileSync(agentScript, `import fs from "node:fs";\nconst file = process.e
     AGENT_BUS_ROOM_MEMORY_CACHE_ENABLED: "true",
     AGENT_BUS_ROOM_PROMPT_MESSAGE_COUNT: "1",
     AGENT_BUS_ROOM_MEMORY_SNIPPETS: "6",
-    AGENT_BUS_ROOM_MEMORY_PROMPT_SNIPPETS: "4"
+    AGENT_BUS_ROOM_MEMORY_PROMPT_SNIPPETS: "4",
+    AGENT_BUS_ROOM_MEMORY_INDEX_ENTRIES: "8",
+    AGENT_BUS_ROOM_MEMORY_PROMPT_INDEX_ENTRIES: "6"
   });
   await waitForJson(`${gateway}/health`);
 
@@ -141,8 +143,10 @@ fs.writeFileSync(agentScript, `import fs from "node:fs";\nconst file = process.e
   const lastRun = finalRoom.runs?.filter((run) => run.agent_id === "memory-agent").at(-1);
   const output = String(lastRun?.stdout || "");
   assert(/memory_present=true/.test(output), "room prompt did not include local memory cache section");
+  assert(/toc_present=true/.test(output), "room prompt did not include memory table of contents");
   assert(/needle_present=true/.test(output), "older high-signal decision was not available in prompt");
   assert(finalRoom.memory_cache?.source_count >= 1, "room snapshot did not persist memory_cache source_count");
+  assert((finalRoom.memory_cache?.table_of_contents || []).some((item) => String(item.ref?.label || "").startsWith("messages[")), "memory_cache did not store source positions in table_of_contents");
   assert((finalRoom.memory_cache?.snippets || []).some((item) => String(item.content || "").includes("vectorish-memory-cache")), "memory_cache did not store the high-signal snippet");
 
   const bytes = Number.parseInt(output.match(/prompt_bytes=(\d+)/)?.[1] || "0", 10);
@@ -151,6 +155,7 @@ fs.writeFileSync(agentScript, `import fs from "node:fs";\nconst file = process.e
     quota: "no_model_calls",
     room_id: finalRoom.id,
     memory_source_count: finalRoom.memory_cache?.source_count || 0,
+    memory_index_entries: finalRoom.memory_cache?.table_of_contents?.length || 0,
     memory_snippets: finalRoom.memory_cache?.snippets?.length || 0,
     prompt_bytes: bytes
   };

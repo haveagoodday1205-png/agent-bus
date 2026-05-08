@@ -164,7 +164,7 @@ Run a central gateway:
 
 ```bash
 agent-bus setup central --gateway https://YOUR-DOMAIN/agent-bus --out central.config.json --service auto
-# setup prints the admin token, the first scoped edge token, and a copy/paste edge join command.
+# setup prints the admin token, the first scoped edge token, a copy/paste edge join command, and an operator checklist.
 # edit modelRouter backends and plugins.telegramBot if needed
 agent-bus serve --runtime python --config central.config.json
 ```
@@ -174,6 +174,7 @@ The shortest manual edge path uses the first scoped edge token printed by `setup
 ```bash
 agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --token abt_edge_... --auto --service auto --out edge.config.json
 agent-bus connect --config edge.config.json
+agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
 ```
 
 To enable Telegram notifications, set `plugins.telegramBot.enabled` in `central.config.json`, then provide `AGENT_BUS_TELEGRAM_BOT_TOKEN` and `AGENT_BUS_TELEGRAM_CHAT_ID` in the central service environment. Verify the wiring with `agent-bus plugin telegram test --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN --dry-run`; `npm run plugin:telegram:smoke` covers the same path without contacting Telegram. The optional Telegram control webhook is off by default; when enabled it accepts `/status`, `/agents`, `/rooms`, `/run agent-id task`, and opt-in plain-text conversation mode through `/v1/agent-bus/plugins/telegram/webhook`. Register Telegram's native `/` autocomplete with `agent-bus plugin telegram commands set`, or let the poller do it on startup with `--set-commands` or `AGENT_BUS_TELEGRAM_SET_COMMANDS=true`. Bot replies use contextual inline buttons: agent choices only appear for `/new`, `/agents`, and `/agent`; process choices appear for `/resume`; room choices appear for `/rooms`, `/room`, and `/room new`. `/room new` opens a room draft where the operator can multi-select agents, pick max autonomous steps, then send the room goal or `/room start <goal>`. Plain text stays in the active Telegram process until `/new`; `/resume` switches processes, `/agent` changes process agents, and `@agent-id message` can add or target an agent mid-process. Conversation prompts are compacted with `AGENT_BUS_TELEGRAM_PROMPT_*` limits before dispatch so long chats do not blow up every selected agent's context. If public webhooks are blocked by Cloudflare, NAT, or local-only deployments, run `agent-bus plugin telegram poll --gateway http://127.0.0.1:8788 --delete-webhook --set-commands` on Central instead.

@@ -452,7 +452,10 @@ async function setup(args) {
     await doctor(["--config", out, ...(gateway ? ["--gateway", gateway] : []), ...(token && !code ? ["--token", token] : [])]);
   }
 
-  console.log(`Next: agent-bus connect --config ${out}`);
+  console.log("\nOperator checklist:");
+  console.log(`1. Validate this edge: agent-bus doctor --config ${out}`);
+  console.log(`2. Start this edge: agent-bus connect --config ${out}`);
+  console.log(`3. Watch it from Central: agent-bus status --gateway ${gateway || "GATEWAY"} --token ADMIN_TOKEN`);
 }
 
 async function setupCentral(args) {
@@ -519,7 +522,17 @@ async function setupCentral(args) {
     console.log(`  agent-bus pair create --gateway ${gateway} --token ${token} --preset ${preset}`);
     console.log("Then run the returned setup edge command on the edge machine.");
   }
-  console.log(`Start local central now: agent-bus serve --runtime python --config ${out}`);
+  console.log("\nOperator checklist:");
+  console.log(`1. Start Central: agent-bus serve --runtime python --config ${out}`);
+  console.log(`2. Open health: ${gatewayEndpoint(gateway, "/health")}`);
+  console.log(`3. Check readiness: agent-bus status --gateway ${gateway} --token ${token}`);
+  if (firstEdgeToken) {
+    console.log(`4. Join the first edge: agent-bus setup edge --gateway ${gateway} --token ${firstEdgeToken} --auto --service auto --out edge.config.json`);
+  } else {
+    console.log(`4. Create an edge join: agent-bus pair create --gateway ${gateway} --token ${token} --preset ${preset}`);
+  }
+  console.log("5. Optional Telegram: agent-bus plugin telegram commands set");
+  console.log("6. If Telegram webhooks are blocked: agent-bus plugin telegram poll --gateway http://127.0.0.1:8788 --delete-webhook --set-commands");
 }
 
 function randomToken(prefix) {
@@ -1433,7 +1446,12 @@ function centralTemplate() {
           enabled: false,
           secretTokenEnv: "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET",
           allowedChatIds: [],
-          allowRun: true
+          allowRun: true,
+          conversation: {
+            enabled: false,
+            agentId: "",
+            agents: []
+          }
         }
       }
     }
@@ -2947,7 +2965,7 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
     .filter((room) => !Array.isArray(room.runs))
     .flatMap((room) => Array.isArray(room.agents) ? room.agents : []));
   const busyAgentIds = new Set([...activeRunsByAgent.keys(), ...fallbackBusyAgentIds]);
-  return {
+  const result = {
     ok: Boolean(health?.ok),
     health,
     summary: {
@@ -3016,6 +3034,94 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
     })),
     warnings: statusWarnings({ authWarning, staleQueuedRuns: runSummary.staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints })
   };
+  result.readiness = statusReadiness(result, authWarning);
+  result.next_actions = statusNextActions(result, authWarning);
+  return result;
+}
+
+function statusReadiness(result, authWarning = "") {
+  const s = result.summary || {};
+  if (!result.health?.ok) {
+    return {
+      level: "critical",
+      status: "central-unhealthy",
+      message: "Central health did not report ok."
+    };
+  }
+  if (authWarning) {
+    return {
+      level: "limited",
+      status: "token-needed",
+      message: "Gateway is reachable, but authenticated agent/node/room details are hidden."
+    };
+  }
+  if (Number(s.nodes || 0) === 0 || Number(s.online_agents || 0) === 0) {
+    return {
+      level: "setup",
+      status: "waiting-for-edge",
+      message: "Central is up, but no online edge agents are ready to receive work."
+    };
+  }
+  if (Number(s.stale_queued_runs || 0) > 0) {
+    return {
+      level: "attention",
+      status: "stale-room-runs",
+      message: "Central is usable, but old queued room runs need operator review."
+    };
+  }
+  if (Number(s.queued || 0) > 0 && Number(s.busy_agents || 0) === 0) {
+    return {
+      level: "attention",
+      status: "queue-needs-agent",
+      message: "Central has queued work, but no agent is currently marked busy."
+    };
+  }
+  if (Number(s.busy_agents || 0) > 0 || Number(s.active_rooms || 0) > 0) {
+    return {
+      level: "active",
+      status: "working",
+      message: "Agents are connected and work is currently active."
+    };
+  }
+  return {
+    level: "ready",
+    status: "ready",
+    message: "Central and edge agents are ready for work."
+  };
+}
+
+function statusNextActions(result, authWarning = "") {
+  const s = result.summary || {};
+  const actions = [];
+  if (!result.health?.ok) {
+    actions.push("Check the Central service logs and restart the central process.");
+  }
+  if (authWarning) {
+    actions.push("Pass --token or set AGENT_BUS_TOKEN to show agents, nodes, rooms, and recovery hints.");
+  }
+  if (!authWarning && Number(s.registered_nodes || 0) === 0) {
+    actions.push("Create the first edge join command with agent-bus setup central or the Web Console Edge Join panel.");
+  }
+  if (!authWarning && Number(s.nodes || 0) === 0 && Number(s.registered_nodes || 0) > 0) {
+    actions.push("Start or restart an edge with agent-bus connect --config edge.config.json.");
+  }
+  if (!authWarning && Number(s.nodes || 0) > 0 && Number(s.online_agents || 0) === 0) {
+    actions.push("Run agent-bus doctor --config edge.config.json on the edge host and restart its service.");
+  }
+  if (!authWarning && Number(s.registered_agents || 0) > Number(s.agents || 0)) {
+    actions.push("Some registered agents are offline or stale; inspect the Nodes section before routing work to them.");
+  }
+  if (Number(s.queued || 0) > 0 && Number(s.busy_agents || 0) === 0) {
+    actions.push("Poll or restart edge services so queued runs can be claimed.");
+  }
+  if (result.recovery_hints?.length) {
+    const hint = result.recovery_hints[0];
+    actions.push(`Inspect stale room work: ${hint.inspect_command}`);
+  }
+  if (!authWarning && Number(s.online_agents || 0) > 0 && Number(s.active_rooms || 0) === 0 && Number(s.queued || 0) === 0) {
+    actions.push("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.");
+  }
+  return unique(actions).slice(0, 6);
 }
 
 async function hydrateStatusRooms(rooms, args) {
@@ -3194,8 +3300,15 @@ function printStatus(result) {
   const s = result.summary || {};
   console.log(`Agent Bus status: ${result.ok ? "OK" : "WARN"}`);
   console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, queued ${s.queued}`);
+  if (result.readiness) {
+    console.log(`Readiness: ${result.readiness.status} (${result.readiness.level}) - ${result.readiness.message}`);
+  }
   if (result.warnings?.length) {
     for (const warning of result.warnings) console.log(`Warning: ${warning}`);
+  }
+  if (result.next_actions?.length) {
+    console.log("\nNext actions:");
+    for (const action of result.next_actions) console.log(`- ${action}`);
   }
   if (result.recovery_hints?.length) {
     console.log("\nRecovery hints:");

@@ -107,6 +107,15 @@ async function main() {
     requiredWarnings: ["gateway rooms"]
   });
 
+  step("Verifying operator status readiness");
+  const statusJson = await runCli(["status", "--gateway", gateway, "--token", token, "--json"]);
+  const status = JSON.parse(statusJson.stdout);
+  assert(status.readiness?.status === "ready", `status readiness mismatch: ${JSON.stringify(status.readiness)}`);
+  assert(Array.isArray(status.next_actions), "status omitted next_actions");
+  const statusHuman = await runCli(["status", "--gateway", gateway, "--token", token]);
+  assert(statusHuman.stdout.includes("Readiness:"), "status human output omitted readiness");
+  assert(statusHuman.stdout.includes("Next actions:"), "status human output omitted next actions");
+
   step("Verifying diagnostics bundle redaction");
   const bundlePath = path.join(tempDir, "diagnostics.json");
   await runDoctor(["--config", edgeConfig, "--json", "--bundle", bundlePath]);
@@ -132,10 +141,12 @@ async function main() {
 
   step("Verifying setup central dry-run path");
   const setupCentralConfig = path.join(tempDir, "setup-central.config.json");
-  await runCli(["setup", "central", "--out", setupCentralConfig, "--gateway", gateway, "--token", "sk-setup-central-smoke-token-000000", "--service", "none"]);
+  const setupCentralOutput = await runCli(["setup", "central", "--out", setupCentralConfig, "--gateway", gateway, "--token", "sk-setup-central-smoke-token-000000", "--service", "none"]);
   const setupConfig = JSON.parse(fs.readFileSync(setupCentralConfig, "utf8"));
   assert(setupConfig.token === "sk-setup-central-smoke-token-000000", "setup central did not write the configured token");
   assert(setupConfig.modelRouter?.enabled === true, "setup central did not keep the model router enabled by default");
+  assert(setupConfig.plugins?.telegramBot?.control?.conversation?.enabled === false, "setup central did not include Telegram conversation defaults");
+  assert(setupCentralOutput.stdout.includes("Operator checklist:"), "setup central did not print operator checklist");
 
   if (!edge.killed) edge.kill("SIGTERM");
   if (!central.killed) central.kill("SIGTERM");

@@ -2326,6 +2326,7 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
   const activeRooms = roomList.filter(isActiveRoom);
   const runSummary = activeRoomRunSummary(activeRooms, { queuedRunStaleSeconds });
+  const recoveryHints = staleRoomRecoveryHints(runSummary.staleQueuedRuns);
   const activeRunsByAgent = runSummary.liveByAgent;
   const fallbackBusyAgentIds = new Set(activeRooms
     .filter((room) => !Array.isArray(room.runs))
@@ -2385,6 +2386,7 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
         last_run_health: lastRunHealth(lastRunStatus)
       };
     }),
+    recovery_hints: recoveryHints,
     rooms: roomList.slice(0, 8).map((room) => ({
       id: room.id,
       status: room.status,
@@ -2397,7 +2399,7 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
       stale_queued_runs: staleQueuedRunsForRoom(room, { queuedRunStaleSeconds })
         .map((run) => run.id)
     })),
-    warnings: statusWarnings({ authWarning, staleQueuedRuns: runSummary.staleQueuedRuns, queuedRunStaleSeconds, health })
+    warnings: statusWarnings({ authWarning, staleQueuedRuns: runSummary.staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints })
   };
 }
 
@@ -2474,6 +2476,25 @@ function activeRoomRunSummary(rooms, options = {}) {
   return { liveRuns, staleQueuedRuns, liveByAgent, staleQueuedByAgent };
 }
 
+function staleRoomRecoveryHints(staleQueuedRuns) {
+  const byRoom = new Map();
+  for (const run of staleQueuedRuns) {
+    const roomId = run.room_id || "";
+    if (!roomId) continue;
+    const hint = byRoom.get(roomId) || {
+      room_id: roomId,
+      stale_queued_runs: [],
+      agents: [],
+      inspect_command: `agent-bus room inspect ${roomId}`,
+      recover_command: `agent-bus room recover ${roomId} --yes`
+    };
+    if (run.id) hint.stale_queued_runs.push(run.id);
+    if (run.agent_id && !hint.agents.includes(run.agent_id)) hint.agents.push(run.agent_id);
+    byRoom.set(roomId, hint);
+  }
+  return [...byRoom.values()].sort((left, right) => left.room_id.localeCompare(right.room_id));
+}
+
 function addRunsByAgent(byAgent, runs) {
   for (const run of runs) {
     if (!run.agent_id) continue;
@@ -2497,12 +2518,13 @@ function isStaleQueuedRun(run, queuedRunStaleSeconds) {
   return (Date.now() - created) / 1000 > queuedRunStaleSeconds;
 }
 
-function statusWarnings({ authWarning, staleQueuedRuns, queuedRunStaleSeconds, health }) {
+function statusWarnings({ authWarning, staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints }) {
   const warnings = authWarning ? [authWarning] : [];
   const count = staleQueuedRuns.length;
   if (count) {
     const queueNote = Number(health?.queued || 0) === 0 ? "; gateway queue is empty" : "";
-    warnings.push(`Ignored ${count} stale queued room run${count === 1 ? "" : "s"} older than ${queuedRunStaleSeconds}s${queueNote}. Inspect or recover the old room.`);
+    const roomNote = recoveryHints?.length ? ` Example: ${recoveryHints[0].inspect_command}` : "";
+    warnings.push(`Ignored ${count} stale queued room run${count === 1 ? "" : "s"} older than ${queuedRunStaleSeconds}s${queueNote}. Inspect or recover the old room.${roomNote}`);
   }
   return warnings;
 }
@@ -2551,6 +2573,12 @@ function printStatus(result) {
   console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, queued ${s.queued}`);
   if (result.warnings?.length) {
     for (const warning of result.warnings) console.log(`Warning: ${warning}`);
+  }
+  if (result.recovery_hints?.length) {
+    console.log("\nRecovery hints:");
+    for (const hint of result.recovery_hints) {
+      console.log(`- ${hint.room_id}: inspect=\`${hint.inspect_command}\`, recover=\`${hint.recover_command}\`, stale_runs=${hint.stale_queued_runs.join(",") || "-"}`);
+    }
   }
   if (result.nodes?.length) {
     console.log("\nNodes:");

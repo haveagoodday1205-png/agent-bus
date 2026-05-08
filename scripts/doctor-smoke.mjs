@@ -107,17 +107,30 @@ async function main() {
     requiredWarnings: ["gateway rooms"]
   });
 
+  step("Verifying local-only doctor summary");
+  const localDoctor = await runCli(["doctor", "--config", edgeConfig, "--local-only"]);
+  assert(localDoctor.stdout.includes("gateway checks skipped"), "local-only doctor did not skip gateway checks");
+  assert(/Doctor: (OK|WARN|FAIL) pass=\d+ warn=\d+ fail=\d+/.test(localDoctor.stdout), "doctor human output omitted summary counts");
+
   step("Verifying operator status readiness");
   const statusJson = await runCli(["status", "--gateway", gateway, "--token", token, "--json"]);
   const status = JSON.parse(statusJson.stdout);
   assert(status.readiness?.status === "ready", `status readiness mismatch: ${JSON.stringify(status.readiness)}`);
   assert(Array.isArray(status.next_actions), "status omitted next_actions");
+  assert(status.status_meta?.room_details, "status omitted room detail hydration metadata");
+  assert(typeof status.status_meta.room_details.hydrated === "number", "status room detail metadata omitted hydrated count");
   const centralStatus = await requestJson(`${gateway}/v1/agent-bus/status`, { headers: authJsonHeaders(token) });
   assert(centralStatus.readiness?.status === "ready", `central status readiness mismatch: ${JSON.stringify(centralStatus.readiness)}`);
   assert(Array.isArray(centralStatus.next_actions), "central status omitted next_actions");
   const statusHuman = await runCli(["status", "--gateway", gateway, "--token", token]);
   assert(statusHuman.stdout.includes("Readiness:"), "status human output omitted readiness");
   assert(statusHuman.stdout.includes("Next actions:"), "status human output omitted next actions");
+
+  step("Verifying gateway request failure guidance");
+  const closedPort = await freePort();
+  const failedStatus = await runCliAllowFailure(["status", "--gateway", `http://127.0.0.1:${closedPort}`, "--gateway-timeout-ms", "250"], 5000);
+  assert(failedStatus.code !== 0, "status against a closed gateway unexpectedly succeeded");
+  assert((failedStatus.stderr + failedStatus.stdout).includes("Gateway request failed"), "closed gateway error omitted actionable guidance");
 
   step("Verifying diagnostics bundle redaction");
   const bundlePath = path.join(tempDir, "diagnostics.json");
@@ -227,6 +240,14 @@ function runDoctor(args, timeoutMs = 20000) {
 }
 
 function runCli(args, timeoutMs = 20000) {
+  return runCliProcess(args, { timeoutMs, allowFailure: false });
+}
+
+function runCliAllowFailure(args, timeoutMs = 20000) {
+  return runCliProcess(args, { timeoutMs, allowFailure: true });
+}
+
+function runCliProcess(args, { timeoutMs = 20000, allowFailure = false } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(node, [path.join(root, "agent-bus.mjs"), ...args], {
       cwd: root,
@@ -248,8 +269,8 @@ function runCli(args, timeoutMs = 20000) {
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code !== 0) return reject(new Error(`agent-bus ${args.join(" ")} exited with ${code}\n${stderr || stdout}`));
-      resolve({ stdout, stderr });
+      if (code !== 0 && !allowFailure) return reject(new Error(`agent-bus ${args.join(" ")} exited with ${code}\n${stderr || stdout}`));
+      resolve({ stdout, stderr, code });
     });
   });
 }

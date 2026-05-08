@@ -669,6 +669,7 @@ async function collectDoctorContext(args) {
   const configPath = optionValue(args, "--config") || "edge.config.json";
   const gatewayArg = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL;
   const tokenArg = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN;
+  const localOnly = args.includes("--local-only");
   const checks = [];
   let config = null;
 
@@ -697,7 +698,11 @@ async function collectDoctorContext(args) {
   validateEdgeConfig(checks, config, gatewayUrl, token, configDir);
   checkConfiguredTools(checks, config, configDir);
 
-  await checkGateway(checks, gatewayUrl, token, config);
+  if (localOnly) {
+    addCheck(checks, "pass", "gateway checks skipped", "--local-only");
+  } else {
+    await checkGateway(checks, gatewayUrl, token, config);
+  }
   await checkLocalProbe(checks, configPath);
 
   return {
@@ -1372,6 +1377,9 @@ function printDoctor(checks) {
     console.log(`${mark.padEnd(4)} ${item.name}${item.detail ? ` - ${item.detail}` : ""}`);
     if (item.hint) console.log(`     hint: ${item.hint}`);
   }
+  const result = doctorResult(checks);
+  const status = result.counts.fail > 0 ? "FAIL" : result.counts.warn > 0 ? "WARN" : "OK";
+  console.log(`Doctor: ${status} pass=${result.counts.pass} warn=${result.counts.warn} fail=${result.counts.fail}`);
 }
 
 function isPlaceholder(value) {
@@ -2894,12 +2902,15 @@ async function status(args) {
   let rooms = [];
   let nodes = [];
   let authWarning = "";
+  let hydrationMeta = null;
 
   if (token) {
     agents = await gatewayJson("/agents", { auth: true, args });
     nodes = await optionalGatewayJson("/nodes", { auth: true, args }, []);
     rooms = await gatewayJson("/rooms", { auth: true, args });
-    rooms = await hydrateStatusRooms(rooms, args);
+    const hydrated = await hydrateStatusRooms(rooms, args);
+    rooms = hydrated.rooms;
+    hydrationMeta = hydrated.meta;
   } else {
     authWarning = "Pass --token or AGENT_BUS_TOKEN to include agents, nodes, and rooms.";
   }
@@ -2907,6 +2918,7 @@ async function status(args) {
   const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
   const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
   const result = summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds, queuedRunStaleSeconds });
+  if (hydrationMeta) result.status_meta = { ...(result.status_meta || {}), room_details: hydrationMeta };
   if (jsonOut) {
     printJson(result);
     return;
@@ -3125,21 +3137,35 @@ function statusNextActions(result, authWarning = "") {
 }
 
 async function hydrateStatusRooms(rooms, args) {
-  if (!Array.isArray(rooms) || args.includes("--no-room-details")) return rooms;
+  const baseMeta = { requested: 0, hydrated: 0, failed: 0, skipped: false, concurrency: 0 };
+  if (!Array.isArray(rooms)) return { rooms, meta: { ...baseMeta, skipped: true } };
+  if (args.includes("--no-room-details")) return { rooms, meta: { ...baseMeta, skipped: true } };
   const limit = positiveIntegerOption(optionValue(args, "--room-detail-limit"), 25, 100);
+  const concurrency = positiveIntegerOption(optionValue(args, "--room-detail-concurrency"), 6, 25);
   const active = rooms.filter(isActiveRoom).filter((room) => room.id).slice(0, limit);
-  if (!active.length) return rooms;
+  const meta = { ...baseMeta, requested: active.length, concurrency };
+  if (!active.length) return { rooms, meta };
   const details = new Map();
-  for (const room of active) {
-    try {
-      const detail = await gatewayJson(`/rooms/${pathPart(room.id)}`, { auth: true, args });
-      details.set(room.id, detail);
-    } catch {
-      // Status should remain useful even if an old gateway cannot hydrate room details.
+  let index = 0;
+  async function worker() {
+    while (index < active.length) {
+      const room = active[index++];
+      try {
+        const detail = await gatewayJson(`/rooms/${pathPart(room.id)}`, { auth: true, args });
+        details.set(room.id, detail);
+        meta.hydrated += 1;
+      } catch {
+        // Status should remain useful even if an old gateway cannot hydrate room details.
+        meta.failed += 1;
+      }
     }
   }
-  if (!details.size) return rooms;
-  return rooms.map((room) => details.has(room.id) ? { ...room, ...details.get(room.id) } : room);
+  await Promise.all(Array.from({ length: Math.min(concurrency, active.length) }, () => worker()));
+  if (!details.size) return { rooms, meta };
+  return {
+    rooms: rooms.map((room) => details.has(room.id) ? { ...room, ...details.get(room.id) } : room),
+    meta
+  };
 }
 
 function isActiveRoom(room) {
@@ -3528,14 +3554,32 @@ async function gatewayJson(pathname, options = {}) {
     throw new Error("This endpoint requires --token or AGENT_BUS_TOKEN.");
   }
   const url = gatewayEndpoint(gateway, pathname);
-  const res = await fetch(url, {
-    method: options.method || "GET",
-    headers: {
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(options.body === undefined ? {} : { "content-type": "application/json" })
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body)
-  });
+  const timeoutMs = positiveIntegerOption(
+    optionValue(args, "--gateway-timeout-ms") || process.env.AGENT_BUS_GATEWAY_TIMEOUT_MS,
+    10000,
+    120000
+  );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: options.method || "GET",
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(options.body === undefined ? {} : { "content-type": "application/json" })
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: controller.signal
+    });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error(`Gateway request timed out after ${timeoutMs}ms: ${url}. Check --gateway, AGENT_BUS_GATEWAY_URL, firewall/NAT, or run agent-bus doctor --local-only for offline checks.`);
+    }
+    throw new Error(`Gateway request failed: ${url}. ${err?.message || err}. Check --gateway, AGENT_BUS_GATEWAY_URL, and whether Central is running.`);
+  } finally {
+    clearTimeout(timer);
+  }
   const text = await res.text();
   if (!res.ok) {
     throw new Error(text || `${res.status} ${res.statusText}`);

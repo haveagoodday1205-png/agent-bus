@@ -153,6 +153,10 @@ async function main() {
   assert(memoryRef.startsWith("messages["), "memory API did not expose a source ref for the high-signal message");
   const expanded = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}/memory/expand?ref=${encodeURIComponent(memoryRef)}&around=1&chars=1200`, { headers: authHeaders(token) });
   assert((expanded.items || []).some((item) => item.selected && String(item.content || "").includes("vectorish-memory-cache")), "memory expand API did not return the selected source content");
+  const cliMemory = runCli(["room", "memory", room.id, "--query", "vectorish-memory-cache", "--gateway", gateway, "--token", token]);
+  assert(cliMemory.includes("Table of contents") && cliMemory.includes(memoryRef), "room memory CLI did not print the memory index");
+  const cliExpand = runCli(["room", "expand", room.id, memoryRef, "--around", "1", "--chars", "1200", "--gateway", gateway, "--token", token]);
+  assert(cliExpand.includes("vectorish-memory-cache") && cliExpand.includes(memoryRef), "room expand CLI did not print selected source content");
 
   const bytes = Number.parseInt(output.match(/prompt_bytes=(\d+)/)?.[1] || "0", 10);
   const result = {
@@ -162,6 +166,7 @@ async function main() {
     memory_source_count: finalRoom.memory_cache?.source_count || 0,
     memory_index_entries: finalRoom.memory_cache?.table_of_contents?.length || 0,
     memory_expand_items: expanded.items?.length || 0,
+    cli_memory_ok: true,
     memory_snippets: finalRoom.memory_cache?.snippets?.length || 0,
     prompt_bytes: bytes
   };
@@ -186,6 +191,19 @@ function start(command, args, env = {}) {
   }
   procs.push(child);
   return child;
+}
+
+function runCli(args) {
+  const result = spawnSync(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+    env: { ...process.env, AGENT_BUS_PYTHON: process.env.AGENT_BUS_PYTHON || "" }
+  });
+  if (result.status !== 0) {
+    throw new Error(`agent-bus ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
+  }
+  return result.stdout || "";
 }
 
 async function waitForRunCount(gateway, token, roomId, count, timeoutMs = 10000) {

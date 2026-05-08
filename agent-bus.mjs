@@ -216,6 +216,8 @@ Usage:
   agent-bus edge-agents --config edge.config.json
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room memory room_xxx --query "cache decision" --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room expand room_xxx 'messages[7]' --around 1 --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
@@ -1663,6 +1665,32 @@ async function room(args) {
     const roomId = requiredPositional(args, 1, "room id");
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args }));
   }
+  if (action === "memory" || action === "index" || action === "toc" || action === "recall") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const query = optionValue(args, "--query") || optionValue(args, "--q") || "";
+    const pathname = `/rooms/${pathPart(roomId)}/memory${query ? `?q=${encodeURIComponent(query)}` : ""}`;
+    const memory = await gatewayJson(pathname, { auth: true, args });
+    if (args.includes("--json")) return printJson(memory);
+    process.stdout.write(formatRoomMemory(memory, {
+      limit: positiveIntegerOption(optionValue(args, "--limit"), 20, 100),
+      snippets: positiveIntegerOption(optionValue(args, "--snippets"), 3, 20),
+      preview: args.includes("--preview")
+    }));
+    return;
+  }
+  if (action === "expand" || action === "open") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const ref = requiredPositional(args, 2, "memory ref");
+    const params = new URLSearchParams({ ref });
+    const around = optionValue(args, "--around");
+    const chars = optionValue(args, "--chars");
+    if (around !== undefined) params.set("around", around);
+    if (chars !== undefined) params.set("chars", chars);
+    const expanded = await gatewayJson(`/rooms/${pathPart(roomId)}/memory/expand?${params.toString()}`, { auth: true, args });
+    if (args.includes("--json")) return printJson(expanded);
+    process.stdout.write(formatRoomMemoryExpand(expanded));
+    return;
+  }
   if (action === "inspect") {
     const roomId = requiredPositional(args, 1, "room id");
     const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
@@ -1790,7 +1818,74 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|inspect|export|replay|create|wake|pause|recover|message [options]");
+  throw new Error("Usage: agent-bus room list|show|memory|expand|inspect|export|replay|create|wake|pause|recover|message [options]");
+}
+
+function formatRoomMemory(value, options = {}) {
+  const memory = value?.memory || {};
+  const promptView = value?.prompt_view || {};
+  const toc = Array.isArray(memory.table_of_contents) ? memory.table_of_contents : [];
+  const promptToc = Array.isArray(promptView.table_of_contents) ? promptView.table_of_contents : [];
+  const entries = toc.length ? toc : promptToc;
+  const limit = Number.isFinite(options.limit) ? options.limit : 20;
+  const snippetLimit = Number.isFinite(options.snippets) ? options.snippets : 3;
+  const lines = [];
+  lines.push(`Room memory ${value?.room_id || "-"} v${value?.version || memory.version || "-"}`);
+  lines.push(`Sources: ${memory.source_count ?? promptView.source_count ?? 0}; index entries: ${toc.length}; snippets: ${(memory.snippets || []).length}; updated: ${memory.updated_at || promptView.updated_at || "-"}`);
+  const keywords = memory.keywords || promptView.keywords || [];
+  if (keywords.length) lines.push(`Keywords: ${keywords.slice(0, 18).join(", ")}`);
+  if (entries.length) {
+    lines.push("");
+    lines.push("Table of contents:");
+    for (const item of entries.slice(0, limit)) {
+      const ref = item.ref || {};
+      const meta = [ref.speaker, ref.at, ref.run_id].filter(Boolean).join(" ");
+      const topics = Array.isArray(item.topics) && item.topics.length ? ` topics=${item.topics.slice(0, 6).join(",")}` : "";
+      lines.push(`- ${ref.label || "-"}${meta ? ` ${meta}` : ""}${topics}`);
+      if (item.title) lines.push(`  ${truncateOneLine(item.title, 140)}`);
+      if (item.preview && options.preview) lines.push(`  ${truncateOneLine(item.preview, 180)}`);
+    }
+    if (entries.length > limit) lines.push(`... ${entries.length - limit} more entries. Re-run with --limit ${entries.length} or use --json.`);
+  }
+  const snippets = promptView.relevant_snippets || memory.snippets || [];
+  if (snippetLimit > 0 && snippets.length) {
+    lines.push("");
+    lines.push("Relevant snippets:");
+    for (const item of snippets.slice(0, snippetLimit)) {
+      const ref = item.ref || {};
+      lines.push(`- ${ref.label || "-"}: ${truncateOneLine(item.content || item.preview || "", 220)}`);
+    }
+  }
+  const endpoint = value?.expand?.endpoint;
+  if (endpoint) {
+    lines.push("");
+    lines.push("Expand with: agent-bus room expand ROOM_ID 'messages[7]' --around 1");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatRoomMemoryExpand(value) {
+  const lines = [];
+  lines.push(`Room memory expand ${value?.room_id || "-"} ${value?.ref || "-"}`);
+  lines.push(`Around: ${value?.around ?? 0}; source items: ${value?.source_count ?? 0}`);
+  if (value?.toc_entry?.title) lines.push(`Title: ${value.toc_entry.title}`);
+  lines.push("");
+  for (const item of value?.items || []) {
+    const ref = item.ref || {};
+    const marker = item.selected ? "*" : "-";
+    const meta = [ref.label, ref.speaker, ref.at, ref.run_id].filter(Boolean).join(" ");
+    lines.push(`${marker} ${meta || "-"}`);
+    if (item.topics?.length) lines.push(`  topics: ${item.topics.join(", ")}`);
+    lines.push(markdownFence(item.content || ""));
+    lines.push("");
+  }
+  return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
+function truncateOneLine(value, limit = 120) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
 }
 
 function inspectRoomRecovery(room, { queuedRunStaleSeconds = 21600 } = {}) {
@@ -3410,8 +3505,13 @@ function materializeScript(name) {
 
 function gatewayEndpoint(gatewayUrl, pathname) {
   const url = new URL(gatewayUrl);
+  const rawPath = String(pathname || "");
+  const queryIndex = rawPath.indexOf("?");
+  const pathOnly = queryIndex === -1 ? rawPath : rawPath.slice(0, queryIndex);
+  const query = queryIndex === -1 ? "" : rawPath.slice(queryIndex + 1);
   const prefix = url.pathname.replace(/\/$/, "");
-  url.pathname = `${prefix}${pathname}`.replace(/\/{2,}/g, "/");
+  url.pathname = `${prefix}${pathOnly}`.replace(/\/{2,}/g, "/");
+  if (query) url.search = query;
   return url;
 }
 

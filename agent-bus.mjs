@@ -176,6 +176,10 @@ async function main() {
     await status(argv.slice(1));
     return;
   }
+  if (command === "plugin" || command === "plugins") {
+    await plugin(argv.slice(1));
+    return;
+  }
   if (command === "health") {
     await getJson("/health", { auth: false });
     return;
@@ -226,6 +230,8 @@ Usage:
   agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus trace export trace_xxx --format markdown --out trace.md
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
+  agent-bus plugin status --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus plugin telegram test --message "hello" --gateway https://YOUR-DOMAIN/agent-bus --token ...
 
 Gateway queries:
   agent-bus well-known --gateway https://YOUR-DOMAIN/agent-bus
@@ -1418,7 +1424,7 @@ function centralTemplate() {
         botTokenEnv: "AGENT_BUS_TELEGRAM_BOT_TOKEN",
         chatIdEnv: "AGENT_BUS_TELEGRAM_CHAT_ID",
         dryRun: false,
-        events: ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"]
+        events: ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test"]
       }
     }
   };
@@ -2785,6 +2791,35 @@ async function status(args) {
     return;
   }
   printStatus(result);
+}
+
+async function plugin(args) {
+  const action = args[0] || "status";
+  if (action === "status" || action === "list" || action === "ls") {
+    return printJson(await gatewayJson("/v1/agent-bus/plugins", { auth: true, args }));
+  }
+  if (action === "telegram") {
+    const subcommand = args[1] || "status";
+    const rest = args.slice(2);
+    if (subcommand === "status") {
+      const plugins = await gatewayJson("/v1/agent-bus/plugins", { auth: true, args });
+      return printJson(plugins.telegramBot || {});
+    }
+    if (subcommand === "test") {
+      const dryRun = booleanOption(rest, "--dry-run", "--live");
+      const body = {
+        message: optionValue(rest, "--message") || optionValue(rest, "-m") || "Agent Bus Telegram plugin test.",
+        ...(dryRun === undefined ? {} : { dryRun })
+      };
+      return printJson(await gatewayJson("/v1/agent-bus/plugins/telegram/test", {
+        auth: true,
+        args,
+        method: "POST",
+        body
+      }));
+    }
+  }
+  throw new Error("Usage: agent-bus plugin status | agent-bus plugin telegram status | agent-bus plugin telegram test [--message text] [--dry-run|--live]");
 }
 
 function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds = 180, queuedRunStaleSeconds = 21600 }) {

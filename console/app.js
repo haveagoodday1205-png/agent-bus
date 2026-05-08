@@ -1,5 +1,6 @@
 const state = {
   health: null,
+  manifest: null,
   nodes: [],
   agents: [],
   models: [],
@@ -68,6 +69,14 @@ const messages = {
     maxSteps: "Max Steps (0 = unlimited)",
     modelsCheck: "Model router",
     modelsLoaded: "loaded {count} models",
+    plugins: "Plugins",
+    pluginsLoaded: "loaded plugin status",
+    pluginsLoadFailed: "plugins failed: {message}",
+    telegramBot: "Telegram Bot",
+    enabled: "enabled",
+    disabled: "disabled",
+    configured: "configured",
+    dry_run: "dry-run",
     nodesLoaded: "loaded {count} nodes",
     nodesLoadFailed: "nodes failed: {message}",
     noNodes: "No registered nodes.",
@@ -210,6 +219,14 @@ const messages = {
     maxSteps: "最大步数（0 = 不限制）",
     modelsCheck: "模型路由",
     modelsLoaded: "已加载 {count} 个模型",
+    plugins: "插件",
+    pluginsLoaded: "已加载插件状态",
+    pluginsLoadFailed: "插件加载失败：{message}",
+    telegramBot: "Telegram Bot",
+    enabled: "已启用",
+    disabled: "未启用",
+    configured: "已配置",
+    dry_run: "dry-run",
     nodesLoaded: "已加载 {count} 个节点",
     nodesLoadFailed: "节点加载失败：{message}",
     noNodes: "没有已注册的节点。",
@@ -329,6 +346,7 @@ $("refreshButton").addEventListener("click", refreshAll);
 $("copyStatusCommandButton").addEventListener("click", copyStatusCommand);
 $("loadNodesButton").addEventListener("click", loadNodes);
 $("loadAgentsButton").addEventListener("click", loadAgents);
+$("loadPluginsButton").addEventListener("click", loadManifest);
 $("loadRoomsButton").addEventListener("click", loadRooms);
 $("roomForm").addEventListener("submit", createRoom);
 $("roomTraceButton").addEventListener("click", openCurrentRoomTrace);
@@ -366,6 +384,7 @@ function activateTab(name) {
 
 async function refreshAll() {
   await loadHealth();
+  await loadManifest();
   await loadNodes();
   await loadAgents();
   await loadRooms();
@@ -421,6 +440,26 @@ async function loadNodes() {
   }
 }
 
+async function loadManifest() {
+  if (!currentToken()) {
+    state.manifest = null;
+    renderPlugins();
+    renderOverview();
+    return;
+  }
+  try {
+    state.manifest = await request("v1/agent-bus/manifest");
+    renderPlugins();
+    renderOverview();
+    logEvent(t("pluginsLoaded"));
+  } catch (err) {
+    state.manifest = null;
+    renderPlugins();
+    renderOverview();
+    logEvent(t("pluginsLoadFailed", { message: err.message }));
+  }
+}
+
 async function loadAgents() {
   try {
     state.agents = await request("agents");
@@ -439,6 +478,34 @@ async function loadAgents() {
     renderAuthError(err);
     renderOverview();
   }
+}
+
+function renderPlugins() {
+  const list = $("pluginsList");
+  list.textContent = "";
+  const telegram = state.manifest?.plugins?.telegramBot;
+  if (!telegram) {
+    const row = document.createElement("div");
+    row.className = "check-row";
+    row.innerHTML = `
+      <span class="status unknown">--</span>
+      <strong>${escapeHtml(t("telegramBot"))}</strong>
+      <span>${escapeHtml(currentToken() ? t("unknown") : t("tokenRequiredShort"))}</span>
+    `;
+    list.append(row);
+    return;
+  }
+  const detail = telegram.enabled
+    ? `${telegram.configured ? t("configured") : t("not_configured")}${telegram.dry_run ? ` / ${t("dry_run")}` : ""}`
+    : t("disabled");
+  const row = document.createElement("div");
+  row.className = "check-row";
+  row.innerHTML = `
+    <span class="status ${telegram.enabled ? (telegram.configured || telegram.dry_run ? "online" : "paused") : "unknown"}">${escapeHtml(telegram.enabled ? "OK" : "--")}</span>
+    <strong>${escapeHtml(t("telegramBot"))}</strong>
+    <span>${escapeHtml(detail)}</span>
+  `;
+  list.append(row);
 }
 
 function renderAgents() {
@@ -528,6 +595,7 @@ function quickstartChecks() {
   const onlineNodes = state.nodes.filter((node) => String(node.status || node.node_status || "").toLowerCase() === "online");
   const onlineAgents = state.agents.filter((agent) => String(agent.status || agent.node_status || "").toLowerCase() === "online");
   const activeRooms = state.rooms.filter((room) => ["active", "running", "finishing"].includes(String(room.status || "").toLowerCase()));
+  const telegram = state.manifest?.plugins?.telegramBot;
   return [
     {
       label: t("gateway"),
@@ -563,6 +631,12 @@ function quickstartChecks() {
       ok: state.models.length > 0,
       warn: !state.models.length,
       detail: `${state.models.length} ${t("models")}`
+    },
+    {
+      label: t("telegramBot"),
+      ok: Boolean(telegram?.enabled && (telegram.configured || telegram.dry_run)),
+      warn: Boolean(telegram?.enabled),
+      detail: telegram ? (telegram.enabled ? `${telegram.configured ? t("configured") : t("not_configured")}${telegram.dry_run ? ` / ${t("dry_run")}` : ""}` : t("disabled")) : t("unknown")
     }
   ];
 }
@@ -1177,6 +1251,7 @@ function applyLanguage() {
   const gatewayKey = $("gatewayStatus").dataset.statusKey;
   if (gatewayKey) $("gatewayStatus").textContent = t(gatewayKey);
   renderNodes();
+  renderPlugins();
   renderOverview();
   renderRooms();
   if (state.currentRoom) renderRoom(state.currentRoom);

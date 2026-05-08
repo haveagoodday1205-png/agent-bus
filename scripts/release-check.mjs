@@ -20,6 +20,7 @@ const jsFiles = [
   "agent-bus.mjs",
   "central-gateway.mjs",
   "edge-node.mjs",
+  "console/app.js",
   "mock-openai-backend.mjs",
   "windows-openai-proxy.mjs",
   "sdk/js/agent-bus-sdk.mjs",

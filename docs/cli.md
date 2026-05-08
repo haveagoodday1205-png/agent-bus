@@ -244,13 +244,22 @@ Central supports optional notification plugins under `plugins` in `central.confi
       "enabled": true,
       "botTokenEnv": "AGENT_BUS_TELEGRAM_BOT_TOKEN",
       "chatIdEnv": "AGENT_BUS_TELEGRAM_CHAT_ID",
-      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"]
+      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test"]
     }
   }
 }
 ```
 
-Keep the bot token in the central service environment, not in room prompts or edge configs. Use `dryRun: true` or `npm run plugin:telegram:smoke -- --json` to verify notification routing without contacting Telegram.
+Keep the bot token in the central service environment, not in room prompts or edge configs. Use `dryRun: true`, `npm run plugin:telegram:smoke -- --json`, or the admin CLI self-test to verify notification routing without contacting Telegram:
+
+```bash
+agent-bus plugin status --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
+agent-bus plugin telegram test \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --token ADMIN_TOKEN \
+  --message "Agent Bus is wired to Telegram" \
+  --dry-run
+```
 
 Agent-backed model replacement uses the same OpenAI-compatible endpoint:
 

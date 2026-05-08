@@ -68,6 +68,22 @@ async function main() {
   assert(manifest.plugins?.telegramBot?.enabled === true, "manifest did not expose enabled telegram plugin");
   assert(manifest.plugins?.telegramBot?.dry_run === true, "manifest did not expose telegram dry-run mode");
 
+  const pluginTest = runAgentBus([
+    "plugin",
+    "telegram",
+    "test",
+    "--gateway",
+    gateway,
+    "--token",
+    adminToken,
+    "--message",
+    "Telegram dry-run self test from smoke.",
+    "--dry-run"
+  ]);
+  assert(pluginTest.ok === true, "telegram plugin CLI test did not report ok");
+  assert(pluginTest.notification?.event === "telegram.test", "telegram plugin CLI test did not emit telegram.test");
+  assert(pluginTest.notification?.status === "dry_run", "telegram plugin CLI test did not stay in dry-run mode");
+
   await requestJson(`${gateway}/edge/register`, {
     method: "POST",
     headers: authJsonHeaders(edgeToken),
@@ -112,9 +128,10 @@ async function main() {
   const roomTask = await pollTask(gateway, edgeToken);
   await completeRun(gateway, edgeToken, roomTask.task.run_id, "REPORT: Telegram plugin room dry-run ok.\nDONE\n");
 
-  const notifications = await waitForNotifications(dataDir, ["central.started", "edge.registered", "run.completed", "room.completed"]);
+  const notifications = await waitForNotifications(dataDir, ["central.started", "telegram.test", "edge.registered", "run.completed", "room.completed"]);
   const roomAfter = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}`, { headers: authHeaders(adminToken) });
   assert(roomAfter.status === "completed", "room did not complete");
+  const nodeGateway = await nodeGatewayPluginSmoke();
 
   const result = {
     ok: true,
@@ -124,6 +141,8 @@ async function main() {
     mode: "dry_run",
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
+    plugin_test_status: pluginTest.notification.status,
+    node_gateway_plugin_test_status: nodeGateway.plugin_test_status,
     thread_run_id: threadTask.task.run_id,
     room_id: room.id
   };
@@ -135,22 +154,107 @@ async function main() {
   }
 }
 
-async function pollTask(gateway, token) {
+async function nodeGatewayPluginSmoke() {
+  const port = await freePort();
+  const gateway = `http://127.0.0.1:${port}`;
+  const adminToken = "sk-telegram-node-plugin-smoke-token-000000";
+  const edgeToken = "abt_edge_telegram_node_plugin_smoke_000000";
+  const nodeId = "telegram-node-smoke-edge";
+  const agentId = "telegram-node-smoke-agent";
+  const dataDir = path.join(tempDir, "node-data");
+  const configPath = path.join(tempDir, "node-central.config.json");
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    host: "127.0.0.1",
+    port,
+    gatewayUrl: gateway,
+    dataDir,
+    token: adminToken,
+    defaults: { mode: "orchestrate", pollTimeoutMs: 1000 },
+    edgeTokens: [{ token: edgeToken, label: "telegram node smoke edge" }],
+    plugins: {
+      telegramBot: {
+        enabled: true,
+        dryRun: true,
+        events: ["central.started", "edge.registered", "run.completed", "run.failed", "telegram.test"]
+      }
+    },
+    modelRouter: { enabled: false, agentModels: true, backends: [] }
+  }, null, 2)}\n`);
+
+  const central = start(process.execPath, [path.join(root, "central-gateway.mjs"), "serve", "--config", configPath]);
+  await waitForJson(`${gateway}/health`);
+  await waitForOutput(central, "Agent Bus join endpoint");
+
+  const manifest = await requestJson(`${gateway}/v1/agent-bus/manifest`, { headers: authHeaders(adminToken) });
+  assert(manifest.plugins?.telegramBot?.enabled === true, "node manifest did not expose enabled telegram plugin");
+
+  const pluginTest = runAgentBus([
+    "plugin",
+    "telegram",
+    "test",
+    "--gateway",
+    gateway,
+    "--token",
+    adminToken,
+    "--message",
+    "Node central Telegram dry-run self test.",
+    "--dry-run"
+  ]);
+  assert(pluginTest.notification?.status === "dry_run", "node telegram plugin CLI test did not stay in dry-run mode");
+
+  await requestJson(`${gateway}/edge/register`, {
+    method: "POST",
+    headers: authJsonHeaders(edgeToken),
+    body: JSON.stringify({
+      node_id: nodeId,
+      hostname: "telegram-node-smoke",
+      agents: [{
+        id: agentId,
+        kind: "echo",
+        role: "executor",
+        enabled: true,
+        capabilities: ["smoke", "telegram", "node"]
+      }]
+    })
+  });
+
+  const thread = await requestJson(`${gateway}/threads`, {
+    method: "POST",
+    headers: authJsonHeaders(adminToken),
+    body: JSON.stringify({
+      message: "Run node telegram plugin smoke.",
+      agents: [agentId],
+      mode: "orchestrate"
+    })
+  });
+  const threadTask = await pollTask(gateway, edgeToken, nodeId);
+  assert(threadTask.task?.run_id === thread.runs?.[0]?.id, "node thread task run_id mismatch");
+  await completeRun(gateway, edgeToken, threadTask.task.run_id, "REPORT: Node Telegram plugin dry-run ok.\n", nodeId);
+
+  const notifications = await waitForNotifications(dataDir, ["central.started", "telegram.test", "edge.registered", "run.completed"]);
+  return {
+    ok: true,
+    plugin_test_status: pluginTest.notification.status,
+    notifications: notifications.length
+  };
+}
+
+async function pollTask(gateway, token, nodeId = "telegram-smoke-edge") {
   const result = await requestJson(`${gateway}/edge/poll`, {
     method: "POST",
     headers: authJsonHeaders(token),
-    body: JSON.stringify({ node_id: "telegram-smoke-edge", timeout_ms: 1000 })
+    body: JSON.stringify({ node_id: nodeId, timeout_ms: 1000 })
   });
   assert(result.type === "task", `expected edge task, got ${result.type}`);
   return result;
 }
 
-function completeRun(gateway, token, runId, stdout) {
+function completeRun(gateway, token, runId, stdout, nodeId = "telegram-smoke-edge") {
   return requestJson(`${gateway}/edge/complete`, {
     method: "POST",
     headers: authJsonHeaders(token),
     body: JSON.stringify({
-      node_id: "telegram-smoke-edge",
+      node_id: nodeId,
       run_id: runId,
       result: {
         status: "completed",
@@ -193,6 +297,19 @@ function start(command, args, env = {}) {
   child.stderr.on("data", (chunk) => { child._agentBusOutput += chunk.toString("utf8"); });
   children.push(child);
   return child;
+}
+
+function runAgentBus(args) {
+  const result = spawnSync(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`agent-bus ${args.join(" ")} failed with ${result.status}: ${result.stderr || result.stdout}`);
+  }
+  return JSON.parse(result.stdout);
 }
 
 async function waitForOutput(child, pattern, timeoutMs = 10000) {

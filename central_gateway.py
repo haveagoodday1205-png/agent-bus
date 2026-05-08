@@ -22,6 +22,7 @@ TELEGRAM_DEFAULT_EVENTS = {
     "run.completed",
     "run.failed",
     "room.completed",
+    "telegram.test",
 }
 
 STATE = {
@@ -413,6 +414,9 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/manifest", "/v1/agent-bus/manifest"):
                 self.require_auth(("admin", "edge"))
                 return self.json(agent_bus_manifest(self.config))
+            if path in ("/plugins", "/v1/agent-bus/plugins"):
+                self.require_auth(("admin",))
+                return self.json(public_plugins_status(self.config))
             if path in ("/edge/tokens", "/v1/agent-bus/edge-tokens"):
                 self.require_auth(("admin",))
                 return self.json(list_edge_tokens())
@@ -456,6 +460,9 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/edge/tokens/revoke", "/v1/agent-bus/edge-tokens/revoke"):
                 self.require_auth(("admin",))
                 return self.json(revoke_edge_token(self.config, body))
+            if path in ("/plugins/telegram/test", "/v1/agent-bus/plugins/telegram/test"):
+                self.require_auth(("admin",))
+                return self.json(telegram_plugin_test(self.config, body))
             if path in ("/edge/register", "/edge/poll", "/edge/events", "/edge/complete"):
                 self.require_auth(("admin", "edge"))
                 if path == "/edge/register":
@@ -2413,6 +2420,12 @@ def public_telegram_plugin_status(config):
     }
 
 
+def public_plugins_status(config):
+    return {
+        "telegramBot": public_telegram_plugin_status(config),
+    }
+
+
 def plugin_events(plugin):
     events = plugin.get("events")
     if not isinstance(events, list) or not events:
@@ -2430,28 +2443,70 @@ def telegram_chat_id(plugin):
     return str(os.environ.get(env_name) or plugin.get("chatId") or plugin.get("chat_id") or "").strip()
 
 
-def notify_plugin(config, event, payload):
+def notify_plugin(config, event, payload, dry_run_override=None, event_filter=True):
     plugin = telegram_plugin_config(config)
     if plugin.get("enabled") is not True:
-        return
-    if event not in set(plugin_events(plugin)):
-        return
+        return {
+            "ok": False,
+            "plugin": "telegramBot",
+            "event": event,
+            "status": "disabled",
+        }
+    if event_filter and event not in set(plugin_events(plugin)):
+        return {
+            "ok": False,
+            "plugin": "telegramBot",
+            "event": event,
+            "status": "event_disabled",
+        }
     text = telegram_notification_text(event, payload)
     token = telegram_bot_token(plugin)
     chat_id = telegram_chat_id(plugin)
-    dry_run = plugin.get("dryRun") is True or plugin.get("dry_run") is True
+    dry_run = dry_run_override if dry_run_override is not None else (plugin.get("dryRun") is True or plugin.get("dry_run") is True)
     status = "dry_run" if dry_run else ("queued" if token and chat_id else "missing_config")
-    append_jsonl(config, "notifications.jsonl", {
+    record = {
         "at": now(),
         "plugin": "telegramBot",
         "event": event,
         "status": status,
         "message": text,
         "payload": payload,
-    })
+    }
+    append_jsonl(config, "notifications.jsonl", record)
     if dry_run or not token or not chat_id:
-        return
+        return {
+            "ok": bool(dry_run),
+            "plugin": "telegramBot",
+            "event": event,
+            "status": status,
+            "configured": bool(token and chat_id),
+            "dry_run": bool(dry_run),
+        }
     threading.Thread(target=send_telegram_notification, args=(config, token, chat_id, text), daemon=True).start()
+    return {
+        "ok": True,
+        "plugin": "telegramBot",
+        "event": event,
+        "status": status,
+        "configured": True,
+        "dry_run": False,
+    }
+
+
+def telegram_plugin_test(config, body):
+    message = str(body.get("message") or "Agent Bus Telegram plugin test.").strip()
+    dry_run = body.get("dryRun") if "dryRun" in body else body.get("dry_run")
+    if dry_run is not None:
+        dry_run = dry_run is True or str(dry_run).strip().lower() in ("1", "true", "yes", "on")
+    result = notify_plugin(config, "telegram.test", {
+        "message": message,
+        "gateway": public_gateway_url(config),
+    }, dry_run_override=dry_run, event_filter=False)
+    return {
+        "ok": result.get("ok") is True,
+        "plugin": public_telegram_plugin_status(config),
+        "notification": result,
+    }
 
 
 def telegram_notification_text(event, payload):
@@ -2464,6 +2519,8 @@ def telegram_notification_text(event, payload):
         return f"Agent Bus run {payload.get('status')}\nRun: {payload.get('run_id')}\nAgent: {payload.get('agent_id')}\nNode: {payload.get('node_id')}"
     if event == "room.completed":
         return f"Agent Bus room completed\nRoom: {payload.get('room_id')}\nTitle: {payload.get('title')}\nReports: {payload.get('reports')}"
+    if event == "telegram.test":
+        return f"Agent Bus Telegram test\n{payload.get('message')}\nGateway: {payload.get('gateway')}"
     return f"Agent Bus event: {event}\n{json.dumps(payload, ensure_ascii=False)}"
 
 

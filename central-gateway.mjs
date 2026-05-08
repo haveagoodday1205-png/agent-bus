@@ -11,7 +11,7 @@ const command = argv[0] || "serve";
 const configPath = optionValue("--config") || path.join(__dirname, "central.config.json");
 const NODE_STALE_SECONDS = intEnv("AGENT_BUS_NODE_STALE_SECONDS", 180);
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped"]);
-const TELEGRAM_DEFAULT_EVENTS = ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"];
+const TELEGRAM_DEFAULT_EVENTS = ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test"];
 
 const state = {
   nodes: new Map(),
@@ -288,6 +288,10 @@ async function serve(config) {
         requireAuth(req, config, ["admin", "edge"]);
         return sendJson(res, agentBusManifest(config));
       }
+      if (req.method === "GET" && (url.pathname === "/plugins" || url.pathname === "/v1/agent-bus/plugins")) {
+        requireAuth(req, config, ["admin"]);
+        return sendJson(res, publicPluginsStatus(config));
+      }
       if (req.method === "GET" && (url.pathname === "/edge/tokens" || url.pathname === "/v1/agent-bus/edge-tokens")) {
         requireAuth(req, config, ["admin"]);
         return sendJson(res, listEdgeTokens());
@@ -301,6 +305,11 @@ async function serve(config) {
         requireAuth(req, config, ["admin"]);
         const body = await readJson(req);
         return sendJson(res, revokeEdgeToken(config, body));
+      }
+      if (req.method === "POST" && (url.pathname === "/plugins/telegram/test" || url.pathname === "/v1/agent-bus/plugins/telegram/test")) {
+        requireAuth(req, config, ["admin"]);
+        const body = await readJson(req);
+        return sendJson(res, telegramPluginTest(config, body));
       }
       if (req.method === "POST" && url.pathname === "/edge/register") {
         requireAuth(req, config, ["admin", "edge"]);
@@ -1588,6 +1597,12 @@ function publicTelegramPluginStatus(config) {
   };
 }
 
+function publicPluginsStatus(config) {
+  return {
+    telegramBot: publicTelegramPluginStatus(config)
+  };
+}
+
 function pluginEvents(plugin) {
   return Array.isArray(plugin.events) && plugin.events.length
     ? plugin.events.map((event) => String(event))
@@ -1602,14 +1617,30 @@ function telegramChatId(plugin) {
   return String(process.env[plugin.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID"] || plugin.chatId || plugin.chat_id || "").trim();
 }
 
-function notifyPlugin(config, event, payload = {}) {
+function notifyPlugin(config, event, payload = {}, options = {}) {
   const plugin = telegramPluginConfig(config);
-  if (plugin.enabled !== true) return;
-  if (!new Set(pluginEvents(plugin)).has(event)) return;
+  if (plugin.enabled !== true) {
+    return {
+      ok: false,
+      plugin: "telegramBot",
+      event,
+      status: "disabled"
+    };
+  }
+  if (options.eventFilter !== false && !new Set(pluginEvents(plugin)).has(event)) {
+    return {
+      ok: false,
+      plugin: "telegramBot",
+      event,
+      status: "event_disabled"
+    };
+  }
   const text = telegramNotificationText(event, payload);
   const token = telegramBotToken(plugin);
   const chatId = telegramChatId(plugin);
-  const dryRun = plugin.dryRun === true || plugin.dry_run === true;
+  const dryRun = options.dryRunOverride === undefined
+    ? (plugin.dryRun === true || plugin.dry_run === true)
+    : options.dryRunOverride === true;
   appendJsonl(config, "notifications.jsonl", {
     at: new Date().toISOString(),
     plugin: "telegramBot",
@@ -1618,8 +1649,42 @@ function notifyPlugin(config, event, payload = {}) {
     message: text,
     payload
   });
-  if (dryRun || !token || !chatId) return;
+  if (dryRun || !token || !chatId) {
+    return {
+      ok: dryRun,
+      plugin: "telegramBot",
+      event,
+      status: dryRun ? "dry_run" : "missing_config",
+      configured: Boolean(token && chatId),
+      dry_run: dryRun
+    };
+  }
   sendTelegramNotification(config, plugin, token, chatId, text);
+  return {
+    ok: true,
+    plugin: "telegramBot",
+    event,
+    status: "queued",
+    configured: true,
+    dry_run: false
+  };
+}
+
+function telegramPluginTest(config, body = {}) {
+  const message = String(body.message || "Agent Bus Telegram plugin test.").trim();
+  const dryRunValue = body.dryRun ?? body.dry_run;
+  const result = notifyPlugin(config, "telegram.test", {
+    message,
+    gateway: publicGatewayUrl(config)
+  }, {
+    dryRunOverride: dryRunValue === undefined ? undefined : /^(1|true|yes|on)$/i.test(String(dryRunValue)),
+    eventFilter: false
+  });
+  return {
+    ok: result.ok === true,
+    plugin: publicTelegramPluginStatus(config),
+    notification: result
+  };
 }
 
 function telegramNotificationText(event, payload) {
@@ -1634,6 +1699,9 @@ function telegramNotificationText(event, payload) {
   }
   if (event === "room.completed") {
     return `Agent Bus room completed\nRoom: ${payload.room_id || ""}\nTitle: ${payload.title || ""}\nReports: ${payload.reports || 0}`;
+  }
+  if (event === "telegram.test") {
+    return `Agent Bus Telegram test\n${payload.message || ""}\nGateway: ${payload.gateway || ""}`;
   }
   return `Agent Bus event: ${event}\n${JSON.stringify(payload)}`;
 }

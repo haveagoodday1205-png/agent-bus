@@ -280,10 +280,11 @@ Telegram control is intentionally disabled by default. After setting `control.en
 ```text
 /status
 /agents
+/rooms
 /run openclaw-hk check disk usage and report back
 ```
 
-Every command reply includes an inline keyboard for `/status`, `/agents`, `/new`, and `/resume`. Agent list replies add one-tap agent selection buttons, and `/resume` replies add one-tap process buttons. Telegram callback queries go through the same webhook handler as typed commands; dry-run mode records the `reply_markup` in `notifications.jsonl` so deployments can test the UX without contacting Telegram.
+Telegram buttons are contextual instead of being attached to every reply. `/status` and `/help` show a compact menu, `/new`, `/agents`, and `/agent` show multi-select agent buttons for the active process, `/resume` shows process/thread buttons, and `/rooms` shows room buttons. Telegram callback queries go through the same webhook handler as typed commands; dry-run mode records the `reply_markup` in `notifications.jsonl` so deployments can test the UX without contacting Telegram.
 
 Set `control.conversation.enabled: true` or `AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true` when plain Telegram messages should behave like a chat with Agent Bus. Use `control.conversation.agentId`, `control.conversation.agents`, `AGENT_BUS_TELEGRAM_CONVERSATION_AGENT`, or `AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS` to pin the chat to Hermes, OpenClaw, Codex, or another agent; otherwise Central uses normal Agent Bus routing.
 
@@ -297,6 +298,7 @@ Telegram conversation mode is process-oriented. A chat keeps one active Agent Bu
 /agent
 /agent hermes-hk
 /agent add openclaw-hk
+/agent toggle openclaw-hk
 /agent clear
 @codex-120 review the latest code path
 ```

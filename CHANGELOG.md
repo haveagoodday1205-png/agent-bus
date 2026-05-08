@@ -37,7 +37,7 @@
 - Adds opt-in Telegram conversational mode so plain webhook messages can route to configured Agent Bus agents and return agent output to the same Telegram chat.
 - Adds `agent-bus plugin telegram poll` as a Central-side polling bridge for deployments where public Telegram webhooks are blocked by Cloudflare, NAT, or local-only networking.
 - Makes Telegram conversation mode process-oriented: plain messages stay on the active thread until `/new`, `/resume` can switch processes, `/agent` manages process agents, and `@agent-id` can add or target agents mid-process.
-- Adds Telegram inline keyboards for status, agent selection, new/resume process controls, callback query handling, and dry-run `reply_markup` smoke coverage.
+- Adds contextual Telegram inline keyboards for status, multi-select agent selection, new/resume process controls, room controls, callback query handling, and dry-run `reply_markup` smoke coverage.
 - Makes the Telegram polling bridge request and forward `callback_query` updates so inline buttons work when public webhooks are disabled.
 - Makes `agent-bus setup central` generate and print a first scoped edge token plus a copy/paste `setup edge --token ...` command, while still supporting pair-code onboarding.
 - Adds a Web Console Edge Join panel that creates, lists, and revokes scoped edge tokens while copying a ready-to-run `agent-bus setup edge --gateway ... --token ...` command.

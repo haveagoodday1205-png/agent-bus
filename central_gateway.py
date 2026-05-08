@@ -3061,20 +3061,26 @@ def telegram_thread_agent_ids(thread):
     return [str(item) for item in ((thread or {}).get("selection", {}) or {}).get("agents") or [] if str(item or "").strip()]
 
 
-def update_telegram_thread_agents(config, thread, agent_ids):
+def set_telegram_thread_agents(config, thread, agent_ids):
     values = validate_agent_ids(agent_ids)
-    if not thread or not values:
+    if not thread:
         return []
-    current = telegram_thread_agent_ids(thread)
-    merged = []
-    for item in [*current, *values]:
-        if item not in merged:
-            merged.append(item)
-    thread.setdefault("selection", {})["agents"] = merged
+    thread.setdefault("selection", {})["agents"] = values
     thread["updated_at"] = now()
     STATE["threads"][thread["id"]] = thread
     write_snapshot(config, "threads", thread["id"], thread)
-    return merged
+    return values
+
+
+def update_telegram_thread_agents(config, thread, agent_ids):
+    if not thread:
+        return []
+    current = telegram_thread_agent_ids(thread)
+    merged = []
+    for item in [*current, *validate_agent_ids(agent_ids)]:
+        if item not in merged:
+            merged.append(item)
+    return set_telegram_thread_agents(config, thread, merged)
 
 
 def telegram_extract_mentions(text):
@@ -3214,6 +3220,9 @@ def telegram_base_keyboard_rows():
             telegram_callback_button("New process", "/new"),
             telegram_callback_button("Resume", "/resume"),
         ],
+        [
+            telegram_callback_button("Rooms", "/rooms"),
+        ],
     ]
 
 
@@ -3232,7 +3241,7 @@ def telegram_agent_keyboard_rows(config, chat_id):
         if not agent_id:
             continue
         label_prefix = "+ " if active else ""
-        command = f"/agent add {agent_id}" if active else f"/agent {agent_id}"
+        command = f"/agent toggle {agent_id}"
         if agent_id in current:
             label_prefix = "* "
         buttons.append(telegram_callback_button(label_prefix + agent_id, command))
@@ -3253,15 +3262,74 @@ def telegram_process_keyboard_rows(config, chat_id):
     return telegram_button_rows(buttons, width=1)
 
 
+def telegram_active_room_status(room):
+    return str((room or {}).get("status") or "").lower() in ("active", "running", "finishing")
+
+
+def telegram_room_label(room):
+    if not room:
+        return "unknown room"
+    title = str(room.get("title") or room.get("goal") or room.get("id") or "").strip()
+    status = str(room.get("status") or "unknown").strip()
+    return telegram_short_label(f"{status}: {title}", 38)
+
+
+def telegram_room_match(config, query):
+    text = str(query or "").strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    for room in list_rooms(config):
+        room_id = str(room.get("id") or "")
+        title = str(room.get("title") or room.get("goal") or "").lower()
+        if room_id == text or room_id.endswith(text) or text in room_id or lowered in title:
+            return room
+    return None
+
+
+def telegram_room_keyboard_rows(config):
+    buttons = []
+    for room in list_rooms(config)[:6]:
+        room_id = str(room.get("id") or "")
+        if room_id:
+            buttons.append(telegram_callback_button(telegram_room_label(room), f"/room {room_id}"))
+    return telegram_button_rows(buttons, width=1)
+
+
+def telegram_room_action_keyboard_rows(room):
+    if not room:
+        return []
+    room_id = str(room.get("id") or "")
+    if not room_id:
+        return []
+    rows = [[telegram_callback_button("Rooms", "/rooms")]]
+    status = str(room.get("status") or "").lower()
+    if telegram_active_room_status(room):
+        rows.append([
+            telegram_callback_button("Wake next", f"/room wake {room_id}"),
+            telegram_callback_button("Pause", f"/room pause {room_id}"),
+        ])
+    elif status == "paused":
+        rows.append([telegram_callback_button("Resume room", f"/room wake {room_id}")])
+    return [row for row in rows if row and all(row)]
+
+
 def telegram_reply_markup(config, command_result=None, chat_id=None):
     result = command_result if isinstance(command_result, dict) else {}
-    rows = [row for row in telegram_base_keyboard_rows() if row]
+    rows = []
     command = str(result.get("command") or "").lower()
-    if command in ("agents", "agent", "start", "help", "status", "chat", "new", "message", "unknown"):
+    if command in ("start", "help", "status", "unknown", "message"):
+        rows.extend(telegram_base_keyboard_rows())
+    if command in ("agents", "agent", "new"):
         rows.extend(telegram_agent_keyboard_rows(config, chat_id))
     if command == "resume":
         rows.extend(telegram_process_keyboard_rows(config, chat_id))
-    return {"inline_keyboard": rows}
+    if command == "rooms":
+        rows.extend(telegram_room_keyboard_rows(config))
+    if command == "room":
+        rows.extend(telegram_room_action_keyboard_rows(result.get("room")))
+    rows = [row for row in rows if row]
+    return {"inline_keyboard": rows} if rows else None
 
 
 def answer_telegram_callback(config, plugin, callback_query_id):
@@ -3435,6 +3503,12 @@ def telegram_handle_command(config, plugin, control, text, chat_id=None):
         return telegram_resume_command(config, chat_id, rest)
     if is_command and command == "agent":
         return telegram_agent_command(config, chat_id, rest)
+    if is_command and command == "agents":
+        return {"command": command, "reply": telegram_agents_text()}
+    if is_command and command == "rooms":
+        return telegram_rooms_command(config, rest)
+    if is_command and command == "room":
+        return telegram_room_command(config, rest)
     if not is_command:
         if telegram_conversation_enabled(control):
             return telegram_conversation_command(config, control, chat_id, text)
@@ -3446,8 +3520,6 @@ def telegram_handle_command(config, plugin, control, text, chat_id=None):
         return {"command": command, "reply": telegram_help_text()}
     if command == "status":
         return {"command": command, "reply": telegram_status_text(config)}
-    if command == "agents":
-        return {"command": command, "reply": telegram_agents_text()}
     if command == "run":
         if control.get("allowRun") is False or control.get("allow_run") is False:
             return {"command": command, "reply": "Run commands are disabled for this Telegram bot."}
@@ -3465,7 +3537,7 @@ def telegram_new_command(config, chat_id, rest):
         return telegram_conversation_command(config, telegram_control_config(plugin), chat_id, rest)
     return {
         "command": "new",
-        "reply": "Started a new Agent Bus process. Send the first message to name it.",
+        "reply": "Started a new Agent Bus process. Tap agents to preselect one or more, or send the first message for automatic routing.",
     }
 
 
@@ -3522,6 +3594,8 @@ def telegram_agent_command(config, chat_id, rest):
     action = parts[0].lower()
     if action in ("clear", "auto"):
         session["agents"] = []
+        if active:
+            set_telegram_thread_agents(config, active, [])
         write_telegram_session(config, chat_id, session)
         return {"command": "agent", "reply": "Agent selection cleared. The process will use Agent Bus routing."}
     if action in ("add", "+"):
@@ -3537,6 +3611,24 @@ def telegram_agent_command(config, chat_id, rest):
         session["agents"] = merged
         write_telegram_session(config, chat_id, session)
         return {"command": "agent", "reply": "Agents for this process: " + ", ".join(merged)}
+    if action in ("toggle", "pick"):
+        values = validate_agent_ids(parts[1:])
+        if not values:
+            return {"command": "agent", "reply": "Usage: /agent toggle <agent-id> [agent-id...]"}
+        current = []
+        for item in (session.get("agents") or telegram_thread_agent_ids(active)):
+            if item not in current:
+                current.append(item)
+        for item in values:
+            if item in current:
+                current.remove(item)
+            else:
+                current.append(item)
+        if active:
+            set_telegram_thread_agents(config, active, current)
+        session["agents"] = current
+        write_telegram_session(config, chat_id, session)
+        return {"command": "agent", "reply": "Agents for this process: " + (", ".join(current) or "auto")}
     if action in ("set", "="):
         values = validate_agent_ids(parts[1:])
     else:
@@ -3720,6 +3812,8 @@ def telegram_help_text(prefix=""):
         "/new - end the current Telegram process and start a new one",
         "/resume [thread-id or title] - list or resume Telegram processes",
         "/agent [add|set|clear] <agent-id> - choose agents for this process",
+        "/rooms - list Agent Bus rooms",
+        "/room <room-id> - inspect, wake, or pause a room",
         "@agent-id message - add or target an agent for this message",
         "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled",
     ])
@@ -3749,6 +3843,101 @@ def telegram_agents_text():
     lines = ["Online Agent Bus agents:"]
     for agent in agents:
         lines.append(f"- {agent.get('id')} ({agent.get('kind')}/{agent.get('role')}) on {agent.get('node_id')}")
+    return "\n".join(lines)
+
+
+def telegram_rooms_command(config, rest=""):
+    query = str(rest or "").strip()
+    if query:
+        return telegram_room_command(config, query)
+    rooms = list_rooms(config)
+    if not rooms:
+        return {
+            "command": "rooms",
+            "reply": "No Agent Bus rooms found. Use the CLI or web console to create a room.",
+        }
+    lines = ["Recent Agent Bus rooms:"]
+    for room in rooms[:8]:
+        agents = ", ".join(room.get("agents") or []) or "auto"
+        steps = f"{room.get('steps', 0)}/{room.get('max_steps', 0) or 'unlimited'}"
+        lines.append(f"- {room.get('id')} - {room.get('status')} - {telegram_thread_title(room.get('title') or room.get('goal'))} [{agents}, steps {steps}]")
+    lines.append("Tap a room to inspect it, or use /room <room-id>.")
+    return {
+        "command": "rooms",
+        "reply": "\n".join(lines),
+    }
+
+
+def telegram_room_command(config, rest=""):
+    parts = str(rest or "").strip().split()
+    if not parts:
+        return telegram_rooms_command(config)
+    action = parts[0].lower()
+    if action in ("wake", "resume", "pause"):
+        query = " ".join(parts[1:]).strip()
+    elif action in ("show", "open"):
+        query = " ".join(parts[1:]).strip()
+        action = "show"
+    else:
+        query = " ".join(parts).strip()
+        action = "show"
+    match = telegram_room_match(config, query)
+    if not match:
+        return {
+            "command": "room",
+            "reply": f"No matching Agent Bus room for: {query or rest}",
+        }
+    room = get_room(config, match["id"])
+    if action == "pause":
+        room = pause_room(config, room["id"], {"reason": "Paused from Telegram."})
+        return {
+            "command": "room",
+            "reply": "Paused room.\n" + telegram_room_detail_text(room),
+            "room": room_summary(room),
+        }
+    if action in ("wake", "resume"):
+        if str(room.get("status") or "").lower() == "completed":
+            return {
+                "command": "room",
+                "reply": "Room is already completed.\n" + telegram_room_detail_text(room),
+                "room": room_summary(room),
+            }
+        if str(room.get("status") or "").lower() == "paused":
+            room["status"] = "active"
+            room.pop("pause", None)
+            write_room(config, room)
+        room = wake_room(config, room["id"], {"reason": "Woken from Telegram."})
+        return {
+            "command": "room",
+            "reply": "Woke room.\n" + telegram_room_detail_text(room),
+            "room": room_summary(room),
+        }
+    return {
+        "command": "room",
+        "reply": telegram_room_detail_text(room),
+        "room": room_summary(room),
+    }
+
+
+def telegram_room_detail_text(room):
+    summary = room_summary(room)
+    agents = ", ".join(summary.get("agents") or []) or "auto"
+    steps = f"{summary.get('steps', 0)}/{summary.get('max_steps', 0) or 'unlimited'}"
+    lines = [
+        "Agent Bus room",
+        f"Room: {summary.get('id')}",
+        f"Title: {summary.get('title') or 'untitled'}",
+        f"Status: {summary.get('status')}",
+        f"Agents: {agents}",
+        f"Steps: {steps}",
+        f"Messages: {summary.get('message_count', 0)}",
+        f"Reports: {summary.get('report_count', 0)}",
+    ]
+    reports = room.get("reports") or []
+    if reports:
+        latest = trim(str(reports[-1].get("content") or reports[-1].get("summary") or ""))
+        if latest:
+            lines.extend(["Latest report:", latest[:800]])
     return "\n".join(lines)
 
 

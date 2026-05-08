@@ -127,7 +127,7 @@ async function main() {
   const callbackAgentsWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/agents");
   assert(callbackAgentsWebhook.ok === true && callbackAgentsWebhook.command === "agents", "telegram /agents callback failed");
   assert(callbackAgentsWebhook.callback_answer?.status === "dry_run", "telegram callback answer did not stay in dry-run mode");
-  assertInlineButton(callbackAgentsWebhook.reply_markup, "/agent telegram-smoke-agent", "telegram /agents callback did not include agent selection button");
+  assertInlineButton(callbackAgentsWebhook.reply_markup, "/agent toggle telegram-smoke-agent", "telegram /agents callback did not include agent selection button");
   const pollerCallback = await runPollerCallbackSmoke(gateway, webhookSecret, telegramChatId, "/status", dataDir);
   assert(pollerCallback.ok === true && pollerCallback.handled === 1, "telegram poller did not forward callback query");
   assert(pollerCallback.allowedUpdates.includes("callback_query"), "telegram poller did not request callback_query updates");
@@ -143,6 +143,7 @@ async function main() {
   const chatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Please answer like a Telegram conversational assistant.");
   assert(chatWebhook.ok === true && chatWebhook.command === "chat", "telegram conversational webhook failed");
   assert(chatWebhook.thread?.runs?.length === 1, "telegram conversational webhook did not queue a thread run");
+  assertNoInlineKeyboard(chatWebhook.reply_markup, "telegram conversational webhook should not show selection buttons");
   const chatTask = await pollTask(gateway, edgeToken);
   assert(chatTask.task?.run_id === chatWebhook.thread.runs[0], "telegram conversational task run_id mismatch");
   assert(chatTask.task?.agent_id === "telegram-smoke-agent", "telegram conversational task did not target configured agent");
@@ -174,9 +175,14 @@ async function main() {
   assert(resumeCallbackWebhook.command === "resume" && resumeCallbackWebhook.thread?.id === chatWebhook.thread.id, "telegram resume callback did not switch process");
   const newWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/new");
   assert(newWebhook.ok === true && newWebhook.command === "new", "telegram /new webhook failed");
+  assertInlineButton(newWebhook.reply_markup, "/agent toggle telegram-smoke-helper", "telegram /new did not include multi-select agent button");
+  const preselectWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/agent toggle telegram-smoke-helper");
+  assert(preselectWebhook.command === "agent" && /telegram-smoke-helper/.test(preselectWebhook.reply || ""), "telegram /new agent preselect callback failed");
   const newChatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Start a fresh Telegram process.");
   assert(newChatWebhook.thread?.id && newChatWebhook.thread.id !== chatWebhook.thread.id, "telegram /new did not start a fresh thread");
+  assert(newChatWebhook.thread?.agents?.includes("telegram-smoke-helper"), "telegram preselected agent was not used for fresh process");
   const newChatTask = await pollTask(gateway, edgeToken);
+  assert(newChatTask.task?.agent_id === "telegram-smoke-helper", "telegram fresh process did not target preselected helper");
   await completeRun(gateway, edgeToken, newChatTask.task.run_id, "Telegram fresh process reply ok.\n");
 
   const thread = await requestJson(`${gateway}/threads`, {
@@ -210,6 +216,11 @@ async function main() {
   const notifications = await waitForNotifications(dataDir, ["central.started", "telegram.test", "telegram.command", "edge.registered", "run.completed", "room.completed"]);
   const roomAfter = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}`, { headers: authHeaders(adminToken) });
   assert(roomAfter.status === "completed", "room did not complete");
+  const roomsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/rooms");
+  assert(roomsWebhook.command === "rooms" && /Recent Agent Bus rooms/.test(roomsWebhook.reply || ""), "telegram /rooms did not list rooms");
+  assertInlineButton(roomsWebhook.reply_markup, `/room ${room.id}`, "telegram /rooms did not include room inspect button");
+  const roomWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, `/room ${room.id}`);
+  assert(roomWebhook.command === "room" && /Agent Bus room/.test(roomWebhook.reply || ""), "telegram /room callback did not inspect room");
   const nodeGateway = await nodeGatewayPluginSmoke();
 
   const result = {
@@ -221,7 +232,7 @@ async function main() {
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, newChatWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,
@@ -327,7 +338,7 @@ async function nodeGatewayPluginSmoke() {
   const callbackAgentsWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/agents");
   assert(callbackAgentsWebhook.command === "agents", "node telegram /agents callback failed");
   assert(callbackAgentsWebhook.callback_answer?.status === "dry_run", "node telegram callback answer did not stay in dry-run mode");
-  assertInlineButton(callbackAgentsWebhook.reply_markup, `/agent ${agentId}`, "node telegram /agents callback did not include agent selection button");
+  assertInlineButton(callbackAgentsWebhook.reply_markup, `/agent toggle ${agentId}`, "node telegram /agents callback did not include agent selection button");
   const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-node-smoke-agent Run node webhook command smoke.");
   assert(runWebhook.thread?.runs?.length === 1, "node telegram /run webhook did not queue a thread run");
   const webhookTask = await pollTask(gateway, edgeToken, nodeId);
@@ -337,6 +348,7 @@ async function nodeGatewayPluginSmoke() {
   const chatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Please answer through node central conversational mode.");
   assert(chatWebhook.ok === true && chatWebhook.command === "chat", "node telegram conversational webhook failed");
   assert(chatWebhook.thread?.runs?.length === 1, "node telegram conversational webhook did not queue a thread run");
+  assertNoInlineKeyboard(chatWebhook.reply_markup, "node telegram conversational webhook should not show selection buttons");
   const chatTask = await pollTask(gateway, edgeToken, nodeId);
   assert(chatTask.task?.run_id === chatWebhook.thread.runs[0], "node telegram conversational task run_id mismatch");
   assert(chatTask.task?.agent_id === agentId, "node telegram conversational task did not target configured agent");
@@ -365,9 +377,14 @@ async function nodeGatewayPluginSmoke() {
   assert(resumeCallbackWebhook.command === "resume" && resumeCallbackWebhook.thread?.id === chatWebhook.thread.id, "node telegram resume callback did not switch process");
   const newWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/new");
   assert(newWebhook.command === "new", "node telegram /new webhook failed");
+  assertInlineButton(newWebhook.reply_markup, "/agent toggle telegram-node-helper-agent", "node telegram /new did not include multi-select agent button");
+  const preselectWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/agent toggle telegram-node-helper-agent");
+  assert(preselectWebhook.command === "agent" && /telegram-node-helper-agent/.test(preselectWebhook.reply || ""), "node telegram /new agent preselect callback failed");
   const newChatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Start a fresh node Telegram process.");
   assert(newChatWebhook.thread?.id && newChatWebhook.thread.id !== chatWebhook.thread.id, "node telegram /new did not start a fresh thread");
+  assert(newChatWebhook.thread?.agents?.includes("telegram-node-helper-agent"), "node telegram preselected agent was not used for fresh process");
   const newChatTask = await pollTask(gateway, edgeToken, nodeId);
+  assert(newChatTask.task?.agent_id === "telegram-node-helper-agent", "node telegram fresh process did not target preselected helper");
   await completeRun(gateway, edgeToken, newChatTask.task.run_id, "Node Telegram fresh process reply ok.\n", nodeId);
 
   const thread = await requestJson(`${gateway}/threads`, {
@@ -387,7 +404,7 @@ async function nodeGatewayPluginSmoke() {
   return {
     ok: true,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, newChatWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command],
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,
     notifications: notifications.length
@@ -746,6 +763,11 @@ function assert(condition, message) {
 function assertInlineButton(replyMarkup, callbackData, message) {
   const buttons = (replyMarkup?.inline_keyboard || []).flat();
   assert(buttons.some((button) => button?.callback_data === callbackData), message);
+}
+
+function assertNoInlineKeyboard(replyMarkup, message) {
+  const buttons = (replyMarkup?.inline_keyboard || []).flat();
+  assert(buttons.length === 0, message);
 }
 
 function parseJson(text) {

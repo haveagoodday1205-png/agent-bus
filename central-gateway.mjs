@@ -1810,19 +1810,24 @@ function telegramThreadAgentIds(thread) {
   return ((thread?.selection || {}).agents || []).map((item) => String(item)).filter(Boolean);
 }
 
-function updateTelegramThreadAgents(config, thread, agentIds) {
+function setTelegramThreadAgents(config, thread, agentIds) {
   const values = validateAgentIds(agentIds);
-  if (!thread || !values.length) return [];
-  const merged = [];
-  for (const item of [...telegramThreadAgentIds(thread), ...values]) {
-    if (!merged.includes(item)) merged.push(item);
-  }
+  if (!thread) return [];
   thread.selection ||= {};
-  thread.selection.agents = merged;
+  thread.selection.agents = values;
   thread.updated_at = new Date().toISOString();
   state.threads.set(thread.id, thread);
   writeSnapshot(config, "threads", thread.id, thread);
-  return merged;
+  return values;
+}
+
+function updateTelegramThreadAgents(config, thread, agentIds) {
+  if (!thread) return [];
+  const merged = [];
+  for (const item of [...telegramThreadAgentIds(thread), ...validateAgentIds(agentIds)]) {
+    if (!merged.includes(item)) merged.push(item);
+  }
+  return setTelegramThreadAgents(config, thread, merged);
 }
 
 function telegramExtractMentions(text) {
@@ -1962,6 +1967,9 @@ function telegramBaseKeyboardRows() {
     [
       telegramCallbackButton("New process", "/new"),
       telegramCallbackButton("Resume", "/resume")
+    ],
+    [
+      telegramCallbackButton("Rooms", "/rooms")
     ]
   ];
 }
@@ -1978,7 +1986,7 @@ function telegramAgentKeyboardRows(config, chatId) {
     const agentId = String(agent.id || "").trim();
     if (!agentId) continue;
     const selected = current.has(agentId);
-    const command = active ? `/agent add ${agentId}` : `/agent ${agentId}`;
+    const command = `/agent toggle ${agentId}`;
     buttons.push(telegramCallbackButton(`${selected ? "* " : (active ? "+ " : "")}${agentId}`, command));
   }
   return telegramButtonRows(buttons, 2);
@@ -1996,16 +2004,91 @@ function telegramProcessKeyboardRows(config, chatId) {
   return telegramButtonRows(buttons, 1);
 }
 
+function telegramActiveRoomStatus(room) {
+  return ["active", "running", "finishing"].includes(String(room?.status || "").toLowerCase());
+}
+
+function telegramRoomLabel(room) {
+  const title = String(room?.title || room?.goal || room?.id || "").trim();
+  const status = String(room?.status || "unknown").trim();
+  return telegramShortLabel(`${status}: ${title}`, 38);
+}
+
+function listTelegramRooms(config) {
+  const byId = new Map();
+  for (const room of readSnapshots(config, "rooms")) {
+    if (room?.id) byId.set(room.id, telegramRoomSummary(room));
+  }
+  return [...byId.values()].sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+}
+
+function telegramRoomSummary(room) {
+  return {
+    id: room.id,
+    title: room.title,
+    goal: room.goal,
+    status: room.status,
+    agents: room.agents || [],
+    steps: room.autonomy?.steps || 0,
+    max_steps: room.autonomy?.max_steps || 0,
+    message_count: (room.messages || []).length,
+    report_count: (room.reports || []).length,
+    updated_at: room.updated_at
+  };
+}
+
+function telegramRoomMatch(config, query) {
+  const text = String(query || "").trim();
+  if (!text) return null;
+  const lowered = text.toLowerCase();
+  return listTelegramRooms(config).find((room) => {
+    const roomId = String(room.id || "");
+    const title = String(room.title || room.goal || "").toLowerCase();
+    return roomId === text || roomId.endsWith(text) || roomId.includes(text) || title.includes(lowered);
+  }) || null;
+}
+
+function telegramRoomKeyboardRows(config) {
+  const buttons = listTelegramRooms(config).slice(0, 6).map((room) => (
+    telegramCallbackButton(telegramRoomLabel(room), `/room ${room.id}`)
+  ));
+  return telegramButtonRows(buttons, 1);
+}
+
+function telegramRoomActionKeyboardRows(room) {
+  if (!room?.id) return [];
+  const rows = [[telegramCallbackButton("Rooms", "/rooms")]];
+  if (telegramActiveRoomStatus(room)) {
+    rows.push([
+      telegramCallbackButton("Wake next", `/room wake ${room.id}`),
+      telegramCallbackButton("Pause", `/room pause ${room.id}`)
+    ]);
+  } else if (String(room.status || "").toLowerCase() === "paused") {
+    rows.push([telegramCallbackButton("Resume room", `/room wake ${room.id}`)]);
+  }
+  return rows.filter((row) => row.length && row.every(Boolean));
+}
+
 function telegramReplyMarkup(config, commandResult = {}, chatId = "") {
-  const rows = telegramBaseKeyboardRows().filter((row) => row.length);
+  const rows = [];
   const command = String(commandResult.command || "").toLowerCase();
-  if (["agents", "agent", "start", "help", "status", "chat", "new", "message", "unknown"].includes(command)) {
+  if (["start", "help", "status", "message", "unknown"].includes(command)) {
+    rows.push(...telegramBaseKeyboardRows());
+  }
+  if (["agents", "agent", "new"].includes(command)) {
     rows.push(...telegramAgentKeyboardRows(config, chatId));
   }
   if (command === "resume") {
     rows.push(...telegramProcessKeyboardRows(config, chatId));
   }
-  return { inline_keyboard: rows };
+  if (command === "rooms") {
+    rows.push(...telegramRoomKeyboardRows(config));
+  }
+  if (command === "room") {
+    rows.push(...telegramRoomActionKeyboardRows(commandResult.room));
+  }
+  const kept = rows.filter((row) => row.length);
+  return kept.length ? { inline_keyboard: kept } : null;
 }
 
 function answerTelegramCallback(config, plugin, callbackQueryId) {
@@ -2186,6 +2269,9 @@ function telegramHandleCommand(config, plugin, control, text, chatId = "") {
   if (isCommand && command === "new") return telegramNewCommand(config, chatId, rest);
   if (isCommand && command === "resume") return telegramResumeCommand(config, chatId, rest);
   if (isCommand && command === "agent") return telegramAgentCommand(config, chatId, rest);
+  if (isCommand && command === "agents") return { command, reply: telegramAgentsText() };
+  if (isCommand && command === "rooms") return telegramRoomsCommand(config, rest);
+  if (isCommand && command === "room") return telegramRoomCommand(config, rest);
   if (!isCommand) {
     if (telegramConversationEnabled(control)) {
       return telegramConversationCommand(config, control, chatId, text);
@@ -2197,7 +2283,6 @@ function telegramHandleCommand(config, plugin, control, text, chatId = "") {
   }
   if (command === "start" || command === "help") return { command, reply: telegramHelpText() };
   if (command === "status") return { command, reply: telegramStatusText(config) };
-  if (command === "agents") return { command, reply: telegramAgentsText() };
   if (command === "run") {
     if (control.allowRun === false || control.allow_run === false) {
       return { command, reply: "Run commands are disabled for this Telegram bot." };
@@ -2218,7 +2303,7 @@ function telegramNewCommand(config, chatId, rest = "") {
   }
   return {
     command: "new",
-    reply: "Started a new Agent Bus process. Send the first message to name it."
+    reply: "Started a new Agent Bus process. Tap agents to preselect one or more, or send the first message for automatic routing."
   };
 }
 
@@ -2273,6 +2358,7 @@ function telegramAgentCommand(config, chatId, rest = "") {
   const action = parts[0].toLowerCase();
   if (["clear", "auto"].includes(action)) {
     session.agents = [];
+    if (active) setTelegramThreadAgents(config, active, []);
     writeTelegramSession(config, chatId, session);
     return { command: "agent", reply: "Agent selection cleared. The process will use Agent Bus routing." };
   }
@@ -2287,6 +2373,23 @@ function telegramAgentCommand(config, chatId, rest = "") {
     session.agents = merged;
     writeTelegramSession(config, chatId, session);
     return { command: "agent", reply: `Agents for this process: ${merged.join(", ")}` };
+  }
+  if (["toggle", "pick"].includes(action)) {
+    const values = validateAgentIds(parts.slice(1));
+    if (!values.length) return { command: "agent", reply: "Usage: /agent toggle <agent-id> [agent-id...]" };
+    const current = [];
+    for (const item of (session.agents?.length ? session.agents : telegramThreadAgentIds(active))) {
+      if (!current.includes(item)) current.push(item);
+    }
+    for (const item of values) {
+      const index = current.indexOf(item);
+      if (index === -1) current.push(item);
+      else current.splice(index, 1);
+    }
+    if (active) setTelegramThreadAgents(config, active, current);
+    session.agents = current;
+    writeTelegramSession(config, chatId, session);
+    return { command: "agent", reply: `Agents for this process: ${current.join(", ") || "auto"}` };
   }
   const values = validateAgentIds(["set", "="].includes(action) ? parts.slice(1) : parts);
   if (!values.length) return { command: "agent", reply: "Usage: /agent <agent-id> [agent-id...]" };
@@ -2466,6 +2569,8 @@ function telegramHelpText(prefix = "") {
     "/new - end the current Telegram process and start a new one",
     "/resume [thread-id or title] - list or resume Telegram processes",
     "/agent [add|set|clear] <agent-id> - choose agents for this process",
+    "/rooms - list Agent Bus rooms",
+    "/room <room-id> - inspect, wake, or pause a room",
     "@agent-id message - add or target an agent for this message",
     "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled"
   ].filter(Boolean).join("\n");
@@ -2492,6 +2597,84 @@ function telegramAgentsText() {
     "Online Agent Bus agents:",
     ...agents.map((agent) => `- ${agent.id} (${agent.kind}/${agent.role}) on ${agent.node_id}`)
   ].join("\n");
+}
+
+function telegramRoomsCommand(config, rest = "") {
+  const query = String(rest || "").trim();
+  if (query) return telegramRoomCommand(config, query);
+  const rooms = listTelegramRooms(config);
+  if (!rooms.length) {
+    return {
+      command: "rooms",
+      reply: "No Agent Bus rooms found. Use the CLI or web console to create a room."
+    };
+  }
+  const lines = ["Recent Agent Bus rooms:"];
+  for (const room of rooms.slice(0, 8)) {
+    const agents = (room.agents || []).join(", ") || "auto";
+    const steps = `${room.steps || 0}/${room.max_steps || "unlimited"}`;
+    lines.push(`- ${room.id} - ${room.status || "unknown"} - ${telegramThreadTitle(room.title || room.goal)} [${agents}, steps ${steps}]`);
+  }
+  lines.push("Tap a room to inspect it, or use /room <room-id>.");
+  return {
+    command: "rooms",
+    reply: lines.join("\n")
+  };
+}
+
+function telegramRoomCommand(config, rest = "") {
+  const parts = String(rest || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return telegramRoomsCommand(config);
+  let action = parts[0].toLowerCase();
+  let query = parts.join(" ");
+  if (["wake", "resume", "pause"].includes(action)) {
+    query = parts.slice(1).join(" ");
+  } else if (["show", "open"].includes(action)) {
+    action = "show";
+    query = parts.slice(1).join(" ");
+  } else {
+    action = "show";
+  }
+  const match = telegramRoomMatch(config, query);
+  if (!match) {
+    return {
+      command: "room",
+      reply: `No matching Agent Bus room for: ${query || rest}`
+    };
+  }
+  const room = readSnapshot(config, "rooms", match.id) || match;
+  if (action === "pause" || action === "wake" || action === "resume") {
+    return {
+      command: "room",
+      reply: "Room action buttons require the Python central runtime. This Node central can inspect room snapshots only.\n" + telegramRoomDetailText(room),
+      room: telegramRoomSummary(room)
+    };
+  }
+  return {
+    command: "room",
+    reply: telegramRoomDetailText(room),
+    room: telegramRoomSummary(room)
+  };
+}
+
+function telegramRoomDetailText(room) {
+  const summary = telegramRoomSummary(room);
+  const agents = (summary.agents || []).join(", ") || "auto";
+  const steps = `${summary.steps || 0}/${summary.max_steps || "unlimited"}`;
+  const lines = [
+    "Agent Bus room",
+    `Room: ${summary.id || ""}`,
+    `Title: ${summary.title || "untitled"}`,
+    `Status: ${summary.status || "unknown"}`,
+    `Agents: ${agents}`,
+    `Steps: ${steps}`,
+    `Messages: ${summary.message_count || 0}`,
+    `Reports: ${summary.report_count || 0}`
+  ];
+  const reports = room.reports || [];
+  const latest = String(reports.at(-1)?.content || reports.at(-1)?.summary || "").trim();
+  if (latest) lines.push("Latest report:", latest.slice(0, 800));
+  return lines.join("\n");
 }
 
 function telegramRunCommand(config, rest) {

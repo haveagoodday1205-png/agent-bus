@@ -2985,6 +2985,7 @@ def read_telegram_session(config, chat_id):
     data["chat_id"] = str(chat_id or "").strip()
     data.setdefault("active_thread_id", None)
     data.setdefault("agents", [])
+    data.setdefault("room_draft", None)
     return data
 
 
@@ -3262,6 +3263,79 @@ def telegram_process_keyboard_rows(config, chat_id):
     return telegram_button_rows(buttons, width=1)
 
 
+def telegram_room_draft(config, chat_id):
+    session = read_telegram_session(config, chat_id)
+    draft = session.get("room_draft")
+    if not isinstance(draft, dict):
+        draft = {}
+    agents = []
+    for item in draft.get("agents") or []:
+        text = str(item or "").strip()
+        if text and text not in agents:
+            agents.append(text)
+    try:
+        max_steps = int(draft.get("max_steps") or draft.get("maxSteps") or 5)
+    except (TypeError, ValueError):
+        max_steps = 5
+    return {
+        "agents": agents,
+        "max_steps": max(1, min(max_steps, 100)),
+        "created_at": draft.get("created_at") or now(),
+    }
+
+
+def write_telegram_room_draft(config, chat_id, draft):
+    session = read_telegram_session(config, chat_id)
+    session["room_draft"] = draft
+    write_telegram_session(config, chat_id, session)
+    return draft
+
+
+def clear_telegram_room_draft(config, chat_id):
+    session = read_telegram_session(config, chat_id)
+    session["room_draft"] = None
+    write_telegram_session(config, chat_id, session)
+
+
+def telegram_room_draft_active(config, chat_id):
+    session = read_telegram_session(config, chat_id)
+    return isinstance(session.get("room_draft"), dict)
+
+
+def telegram_room_draft_keyboard_rows(config, chat_id):
+    draft = telegram_room_draft(config, chat_id)
+    current = set(draft.get("agents") or [])
+    buttons = []
+    for agent in sorted(public_agents(), key=lambda item: str(item.get("id") or ""))[:10]:
+        agent_id = str(agent.get("id") or "").strip()
+        if not agent_id:
+            continue
+        label = ("* " if agent_id in current else "+ ") + agent_id
+        buttons.append(telegram_callback_button(label, f"/room agent toggle {agent_id}"))
+    rows = telegram_button_rows(buttons, width=2)
+    step_buttons = []
+    max_steps = int(draft.get("max_steps") or 5)
+    for value in (2, 5, 10, 20):
+        label = f"* {value} steps" if value == max_steps else f"{value} steps"
+        step_buttons.append(telegram_callback_button(label, f"/room steps {value}"))
+    rows.extend(telegram_button_rows(step_buttons, width=2))
+    rows.append([
+        telegram_callback_button("Cancel", "/room cancel"),
+        telegram_callback_button("Rooms", "/rooms"),
+    ])
+    return rows
+
+
+def telegram_room_draft_text(draft):
+    agents = ", ".join(draft.get("agents") or []) or "auto"
+    return "\n".join([
+        "New Agent Bus room draft",
+        f"Agents: {agents}",
+        f"Max steps: {draft.get('max_steps') or 5}",
+        "Select agents and steps, then send the room goal or use /room start <goal>.",
+    ])
+
+
 def telegram_active_room_status(room):
     return str((room or {}).get("status") or "").lower() in ("active", "running", "finishing")
 
@@ -3288,12 +3362,14 @@ def telegram_room_match(config, query):
 
 
 def telegram_room_keyboard_rows(config):
+    rows = [[telegram_callback_button("New room", "/room new")]]
     buttons = []
     for room in list_rooms(config)[:6]:
         room_id = str(room.get("id") or "")
         if room_id:
             buttons.append(telegram_callback_button(telegram_room_label(room), f"/room {room_id}"))
-    return telegram_button_rows(buttons, width=1)
+    rows.extend(telegram_button_rows(buttons, width=1))
+    return rows
 
 
 def telegram_room_action_keyboard_rows(room):
@@ -3303,6 +3379,7 @@ def telegram_room_action_keyboard_rows(room):
     if not room_id:
         return []
     rows = [[telegram_callback_button("Rooms", "/rooms")]]
+    rows.append([telegram_callback_button("New room", "/room new")])
     status = str(room.get("status") or "").lower()
     if telegram_active_room_status(room):
         rows.append([
@@ -3326,6 +3403,8 @@ def telegram_reply_markup(config, command_result=None, chat_id=None):
         rows.extend(telegram_process_keyboard_rows(config, chat_id))
     if command == "rooms":
         rows.extend(telegram_room_keyboard_rows(config))
+    if command == "room_draft":
+        rows.extend(telegram_room_draft_keyboard_rows(config, chat_id))
     if command == "room":
         rows.extend(telegram_room_action_keyboard_rows(result.get("room")))
     rows = [row for row in rows if row]
@@ -3477,6 +3556,7 @@ def telegram_webhook(config, body, handler):
         "reply_markup": reply_markup,
         "callback_answer": callback_answer,
         "thread": command_result.get("thread"),
+        "room": command_result.get("room"),
     }
 
 
@@ -3506,10 +3586,12 @@ def telegram_handle_command(config, plugin, control, text, chat_id=None):
     if is_command and command == "agents":
         return {"command": command, "reply": telegram_agents_text()}
     if is_command and command == "rooms":
-        return telegram_rooms_command(config, rest)
+        return telegram_rooms_command(config, chat_id, rest)
     if is_command and command == "room":
-        return telegram_room_command(config, rest)
+        return telegram_room_command(config, chat_id, rest)
     if not is_command:
+        if telegram_room_draft_active(config, chat_id):
+            return telegram_room_start_command(config, chat_id, text)
         if telegram_conversation_enabled(control):
             return telegram_conversation_command(config, control, chat_id, text)
         return {
@@ -3814,6 +3896,7 @@ def telegram_help_text(prefix=""):
         "/agent [add|set|clear] <agent-id> - choose agents for this process",
         "/rooms - list Agent Bus rooms",
         "/room <room-id> - inspect, wake, or pause a room",
+        "/room new - draft a room, multi-select agents, and set max steps",
         "@agent-id message - add or target an agent for this message",
         "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled",
     ])
@@ -3846,10 +3929,10 @@ def telegram_agents_text():
     return "\n".join(lines)
 
 
-def telegram_rooms_command(config, rest=""):
+def telegram_rooms_command(config, chat_id=None, rest=""):
     query = str(rest or "").strip()
     if query:
-        return telegram_room_command(config, query)
+        return telegram_room_command(config, chat_id, query)
     rooms = list_rooms(config)
     if not rooms:
         return {
@@ -3868,11 +3951,33 @@ def telegram_rooms_command(config, rest=""):
     }
 
 
-def telegram_room_command(config, rest=""):
+def telegram_room_command(config, chat_id, rest=""):
     parts = str(rest or "").strip().split()
     if not parts:
-        return telegram_rooms_command(config)
+        return telegram_rooms_command(config, chat_id)
     action = parts[0].lower()
+    if action == "new":
+        goal = str(rest or "").strip()[len(parts[0]):].strip()
+        return telegram_room_new_command(config, chat_id, goal)
+    if action == "cancel":
+        clear_telegram_room_draft(config, chat_id)
+        return {
+            "command": "rooms",
+            "reply": "Cancelled the new room draft.",
+        }
+    if action == "agent":
+        return telegram_room_agent_command(config, chat_id, parts[1:])
+    if action in ("steps", "step", "max_steps", "maxsteps"):
+        return telegram_room_steps_command(config, chat_id, parts[1:])
+    if action == "start":
+        goal = str(rest or "").strip()[len(parts[0]):].strip()
+        if not goal:
+            draft = write_telegram_room_draft(config, chat_id, telegram_room_draft(config, chat_id))
+            return {
+                "command": "room_draft",
+                "reply": telegram_room_draft_text(draft),
+            }
+        return telegram_room_start_command(config, chat_id, goal)
     if action in ("wake", "resume", "pause"):
         query = " ".join(parts[1:]).strip()
     elif action in ("show", "open"):
@@ -3915,6 +4020,95 @@ def telegram_room_command(config, rest=""):
     return {
         "command": "room",
         "reply": telegram_room_detail_text(room),
+        "room": room_summary(room),
+    }
+
+
+def telegram_room_new_command(config, chat_id, goal=""):
+    draft = telegram_room_draft(config, chat_id)
+    draft.setdefault("agents", [])
+    draft.setdefault("max_steps", 5)
+    write_telegram_room_draft(config, chat_id, draft)
+    if str(goal or "").strip():
+        return telegram_room_start_command(config, chat_id, goal)
+    return {
+        "command": "room_draft",
+        "reply": telegram_room_draft_text(draft),
+    }
+
+
+def telegram_room_agent_command(config, chat_id, parts):
+    draft = telegram_room_draft(config, chat_id)
+    args = [str(item or "").strip() for item in (parts or []) if str(item or "").strip()]
+    action = args[0].lower() if args else ""
+    if action in ("clear", "auto"):
+        draft["agents"] = []
+    elif action in ("toggle", "pick"):
+        values = validate_agent_ids(args[1:])
+        current = list(draft.get("agents") or [])
+        for item in values:
+            if item in current:
+                current.remove(item)
+            else:
+                current.append(item)
+        draft["agents"] = current
+    elif action in ("add", "+"):
+        current = list(draft.get("agents") or [])
+        for item in validate_agent_ids(args[1:]):
+            if item not in current:
+                current.append(item)
+        draft["agents"] = current
+    else:
+        draft["agents"] = validate_agent_ids(args)
+    write_telegram_room_draft(config, chat_id, draft)
+    return {
+        "command": "room_draft",
+        "reply": telegram_room_draft_text(draft),
+    }
+
+
+def telegram_room_steps_command(config, chat_id, parts):
+    draft = telegram_room_draft(config, chat_id)
+    raw = str((parts or [""])[0] if parts else "").strip()
+    try:
+        steps = int(raw)
+    except (TypeError, ValueError):
+        return {
+            "command": "room_draft",
+            "reply": "Usage: /room steps <1-100>\n" + telegram_room_draft_text(draft),
+        }
+    draft["max_steps"] = max(1, min(steps, 100))
+    write_telegram_room_draft(config, chat_id, draft)
+    return {
+        "command": "room_draft",
+        "reply": telegram_room_draft_text(draft),
+    }
+
+
+def telegram_room_start_command(config, chat_id, goal):
+    draft = telegram_room_draft(config, chat_id)
+    goal = str(goal or "").strip()
+    if not goal:
+        return {
+            "command": "room_draft",
+            "reply": telegram_room_draft_text(draft),
+        }
+    body = {
+        "title": telegram_thread_title(goal),
+        "goal": goal,
+        "source": "telegram",
+        "max_steps": int(draft.get("max_steps") or 5),
+        "auto_rotate": True,
+    }
+    agents = validate_agent_ids(draft.get("agents") or [])
+    if agents:
+        body["agents"] = agents
+        body["wakeAgents"] = [agents[0]]
+    room = create_room(config, body)
+    clear_telegram_room_draft(config, chat_id)
+    return {
+        "command": "room",
+        "reply": "Created room.\n" + telegram_room_detail_text(room),
         "room": room_summary(room),
     }
 

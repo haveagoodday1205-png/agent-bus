@@ -218,9 +218,25 @@ async function main() {
   assert(roomAfter.status === "completed", "room did not complete");
   const roomsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/rooms");
   assert(roomsWebhook.command === "rooms" && /Recent Agent Bus rooms/.test(roomsWebhook.reply || ""), "telegram /rooms did not list rooms");
+  assertInlineButton(roomsWebhook.reply_markup, "/room new", "telegram /rooms did not include new room button");
   assertInlineButton(roomsWebhook.reply_markup, `/room ${room.id}`, "telegram /rooms did not include room inspect button");
   const roomWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, `/room ${room.id}`);
   assert(roomWebhook.command === "room" && /Agent Bus room/.test(roomWebhook.reply || ""), "telegram /room callback did not inspect room");
+  const roomDraftWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room new");
+  assert(roomDraftWebhook.command === "room_draft", "telegram /room new did not start a room draft");
+  assertInlineButton(roomDraftWebhook.reply_markup, "/room agent toggle telegram-smoke-agent", "telegram room draft did not include agent toggle");
+  assertInlineButton(roomDraftWebhook.reply_markup, "/room steps 10", "telegram room draft did not include steps button");
+  await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room agent toggle telegram-smoke-helper");
+  await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room agent toggle telegram-smoke-agent");
+  const roomStepsWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room steps 2");
+  assert(/Max steps: 2/.test(roomStepsWebhook.reply || ""), "telegram room draft did not update max steps");
+  const roomStartWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/room start Build a Telegram-created smoke room.");
+  assert(roomStartWebhook.command === "room" && /Created room/.test(roomStartWebhook.reply || ""), "telegram /room start did not create a room");
+  assert(roomStartWebhook.room?.agents?.includes("telegram-smoke-helper") && roomStartWebhook.room?.agents?.includes("telegram-smoke-agent"), `telegram-created room did not keep selected agents: ${JSON.stringify(roomStartWebhook.room)}`);
+  assert(roomStartWebhook.room?.max_steps === 2, "telegram-created room did not keep selected max steps");
+  const draftRoomTask = await pollTask(gateway, edgeToken);
+  assert(draftRoomTask.task?.agent_id === "telegram-smoke-helper", "telegram-created room did not wake the first selected agent");
+  await completeRun(gateway, edgeToken, draftRoomTask.task.run_id, "REPORT: Telegram-created room dry-run ok.\nDONE\n");
   const nodeGateway = await nodeGatewayPluginSmoke();
 
   const result = {
@@ -232,7 +248,7 @@ async function main() {
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command, roomStartWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,
@@ -386,6 +402,11 @@ async function nodeGatewayPluginSmoke() {
   const newChatTask = await pollTask(gateway, edgeToken, nodeId);
   assert(newChatTask.task?.agent_id === "telegram-node-helper-agent", "node telegram fresh process did not target preselected helper");
   await completeRun(gateway, edgeToken, newChatTask.task.run_id, "Node Telegram fresh process reply ok.\n", nodeId);
+  const roomDraftWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room new");
+  assert(roomDraftWebhook.command === "room_draft", "node telegram /room new did not start a room draft");
+  assertInlineButton(roomDraftWebhook.reply_markup, `/room agent toggle ${agentId}`, "node telegram room draft did not include agent toggle");
+  const roomStepsWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room steps 10");
+  assert(/Max steps: 10/.test(roomStepsWebhook.reply || ""), "node telegram room draft did not update max steps");
 
   const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
@@ -404,7 +425,7 @@ async function nodeGatewayPluginSmoke() {
   return {
     ok: true,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command],
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,
     notifications: notifications.length

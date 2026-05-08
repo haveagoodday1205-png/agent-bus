@@ -1729,6 +1729,7 @@ function readTelegramSession(config, chatId) {
       chat_id: String(chatId || "").trim(),
       active_thread_id: null,
       agents: [],
+      room_draft: null,
       updated_at: null
     };
   }
@@ -1741,6 +1742,7 @@ function readTelegramSession(config, chatId) {
   data.chat_id = String(chatId || "").trim();
   data.active_thread_id ??= null;
   data.agents ||= [];
+  data.room_draft ??= null;
   return data;
 }
 
@@ -2004,6 +2006,70 @@ function telegramProcessKeyboardRows(config, chatId) {
   return telegramButtonRows(buttons, 1);
 }
 
+function telegramRoomDraft(config, chatId) {
+  const session = readTelegramSession(config, chatId);
+  const raw = session.room_draft && typeof session.room_draft === "object" ? session.room_draft : {};
+  const agents = [];
+  for (const value of raw.agents || []) {
+    const text = String(value || "").trim();
+    if (text && !agents.includes(text)) agents.push(text);
+  }
+  const steps = Number.parseInt(raw.max_steps || raw.maxSteps || 5, 10);
+  return {
+    agents,
+    max_steps: Math.max(1, Math.min(Number.isFinite(steps) ? steps : 5, 100)),
+    created_at: raw.created_at || new Date().toISOString()
+  };
+}
+
+function writeTelegramRoomDraft(config, chatId, draft) {
+  const session = readTelegramSession(config, chatId);
+  session.room_draft = draft;
+  writeTelegramSession(config, chatId, session);
+  return draft;
+}
+
+function clearTelegramRoomDraft(config, chatId) {
+  const session = readTelegramSession(config, chatId);
+  session.room_draft = null;
+  writeTelegramSession(config, chatId, session);
+}
+
+function telegramRoomDraftActive(config, chatId) {
+  const session = readTelegramSession(config, chatId);
+  return session.room_draft && typeof session.room_draft === "object";
+}
+
+function telegramRoomDraftKeyboardRows(config, chatId) {
+  const draft = telegramRoomDraft(config, chatId);
+  const current = new Set(draft.agents || []);
+  const buttons = [];
+  for (const agent of publicAgents().sort((a, b) => String(a.id || "").localeCompare(String(b.id || ""))).slice(0, 10)) {
+    const agentId = String(agent.id || "").trim();
+    if (!agentId) continue;
+    buttons.push(telegramCallbackButton(`${current.has(agentId) ? "* " : "+ "}${agentId}`, `/room agent toggle ${agentId}`));
+  }
+  const rows = telegramButtonRows(buttons, 2);
+  const steps = Number(draft.max_steps || 5);
+  rows.push(...telegramButtonRows([2, 5, 10, 20].map((value) => (
+    telegramCallbackButton(value === steps ? `* ${value} steps` : `${value} steps`, `/room steps ${value}`)
+  )), 2));
+  rows.push([
+    telegramCallbackButton("Cancel", "/room cancel"),
+    telegramCallbackButton("Rooms", "/rooms")
+  ]);
+  return rows;
+}
+
+function telegramRoomDraftText(draft) {
+  return [
+    "New Agent Bus room draft",
+    `Agents: ${(draft.agents || []).join(", ") || "auto"}`,
+    `Max steps: ${draft.max_steps || 5}`,
+    "Select agents and steps, then send the room goal or use /room start <goal>."
+  ].join("\n");
+}
+
 function telegramActiveRoomStatus(room) {
   return ["active", "running", "finishing"].includes(String(room?.status || "").toLowerCase());
 }
@@ -2049,15 +2115,18 @@ function telegramRoomMatch(config, query) {
 }
 
 function telegramRoomKeyboardRows(config) {
+  const rows = [[telegramCallbackButton("New room", "/room new")]];
   const buttons = listTelegramRooms(config).slice(0, 6).map((room) => (
     telegramCallbackButton(telegramRoomLabel(room), `/room ${room.id}`)
   ));
-  return telegramButtonRows(buttons, 1);
+  rows.push(...telegramButtonRows(buttons, 1));
+  return rows;
 }
 
 function telegramRoomActionKeyboardRows(room) {
   if (!room?.id) return [];
   const rows = [[telegramCallbackButton("Rooms", "/rooms")]];
+  rows.push([telegramCallbackButton("New room", "/room new")]);
   if (telegramActiveRoomStatus(room)) {
     rows.push([
       telegramCallbackButton("Wake next", `/room wake ${room.id}`),
@@ -2083,6 +2152,9 @@ function telegramReplyMarkup(config, commandResult = {}, chatId = "") {
   }
   if (command === "rooms") {
     rows.push(...telegramRoomKeyboardRows(config));
+  }
+  if (command === "room_draft") {
+    rows.push(...telegramRoomDraftKeyboardRows(config, chatId));
   }
   if (command === "room") {
     rows.push(...telegramRoomActionKeyboardRows(commandResult.room));
@@ -2246,7 +2318,8 @@ function telegramWebhook(config, body = {}, req) {
     reply_status: replyStatus,
     reply_markup: replyMarkup,
     callback_answer: callbackAnswer,
-    thread: command.thread
+    thread: command.thread,
+    room: command.room
   };
 }
 
@@ -2270,9 +2343,12 @@ function telegramHandleCommand(config, plugin, control, text, chatId = "") {
   if (isCommand && command === "resume") return telegramResumeCommand(config, chatId, rest);
   if (isCommand && command === "agent") return telegramAgentCommand(config, chatId, rest);
   if (isCommand && command === "agents") return { command, reply: telegramAgentsText() };
-  if (isCommand && command === "rooms") return telegramRoomsCommand(config, rest);
-  if (isCommand && command === "room") return telegramRoomCommand(config, rest);
+  if (isCommand && command === "rooms") return telegramRoomsCommand(config, chatId, rest);
+  if (isCommand && command === "room") return telegramRoomCommand(config, chatId, rest);
   if (!isCommand) {
+    if (telegramRoomDraftActive(config, chatId)) {
+      return telegramRoomStartCommand(config, chatId, text);
+    }
     if (telegramConversationEnabled(control)) {
       return telegramConversationCommand(config, control, chatId, text);
     }
@@ -2571,6 +2647,7 @@ function telegramHelpText(prefix = "") {
     "/agent [add|set|clear] <agent-id> - choose agents for this process",
     "/rooms - list Agent Bus rooms",
     "/room <room-id> - inspect, wake, or pause a room",
+    "/room new - draft a room, multi-select agents, and set max steps",
     "@agent-id message - add or target an agent for this message",
     "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled"
   ].filter(Boolean).join("\n");
@@ -2599,9 +2676,9 @@ function telegramAgentsText() {
   ].join("\n");
 }
 
-function telegramRoomsCommand(config, rest = "") {
+function telegramRoomsCommand(config, chatId = "", rest = "") {
   const query = String(rest || "").trim();
-  if (query) return telegramRoomCommand(config, query);
+  if (query) return telegramRoomCommand(config, chatId, query);
   const rooms = listTelegramRooms(config);
   if (!rooms.length) {
     return {
@@ -2622,11 +2699,29 @@ function telegramRoomsCommand(config, rest = "") {
   };
 }
 
-function telegramRoomCommand(config, rest = "") {
+function telegramRoomCommand(config, chatId = "", rest = "") {
   const parts = String(rest || "").trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return telegramRoomsCommand(config);
+  if (!parts.length) return telegramRoomsCommand(config, chatId);
   let action = parts[0].toLowerCase();
   let query = parts.join(" ");
+  if (action === "new") {
+    const goal = String(rest || "").trim().slice(parts[0].length).trim();
+    return telegramRoomNewCommand(config, chatId, goal);
+  }
+  if (action === "cancel") {
+    clearTelegramRoomDraft(config, chatId);
+    return { command: "rooms", reply: "Cancelled the new room draft." };
+  }
+  if (action === "agent") return telegramRoomAgentCommand(config, chatId, parts.slice(1));
+  if (["steps", "step", "max_steps", "maxsteps"].includes(action)) return telegramRoomStepsCommand(config, chatId, parts.slice(1));
+  if (action === "start") {
+    const goal = String(rest || "").trim().slice(parts[0].length).trim();
+    if (!goal) {
+      const draft = writeTelegramRoomDraft(config, chatId, telegramRoomDraft(config, chatId));
+      return { command: "room_draft", reply: telegramRoomDraftText(draft) };
+    }
+    return telegramRoomStartCommand(config, chatId, goal);
+  }
   if (["wake", "resume", "pause"].includes(action)) {
     query = parts.slice(1).join(" ");
   } else if (["show", "open"].includes(action)) {
@@ -2654,6 +2749,63 @@ function telegramRoomCommand(config, rest = "") {
     command: "room",
     reply: telegramRoomDetailText(room),
     room: telegramRoomSummary(room)
+  };
+}
+
+function telegramRoomNewCommand(config, chatId, goal = "") {
+  const draft = telegramRoomDraft(config, chatId);
+  draft.agents ||= [];
+  draft.max_steps ||= 5;
+  writeTelegramRoomDraft(config, chatId, draft);
+  if (String(goal || "").trim()) return telegramRoomStartCommand(config, chatId, goal);
+  return { command: "room_draft", reply: telegramRoomDraftText(draft) };
+}
+
+function telegramRoomAgentCommand(config, chatId, parts = []) {
+  const draft = telegramRoomDraft(config, chatId);
+  const args = parts.map((item) => String(item || "").trim()).filter(Boolean);
+  const action = String(args[0] || "").toLowerCase();
+  if (["clear", "auto"].includes(action)) {
+    draft.agents = [];
+  } else if (["toggle", "pick"].includes(action)) {
+    const values = validateAgentIds(args.slice(1));
+    const current = [...(draft.agents || [])];
+    for (const item of values) {
+      const index = current.indexOf(item);
+      if (index === -1) current.push(item);
+      else current.splice(index, 1);
+    }
+    draft.agents = current;
+  } else if (["add", "+"].includes(action)) {
+    const current = [...(draft.agents || [])];
+    for (const item of validateAgentIds(args.slice(1))) {
+      if (!current.includes(item)) current.push(item);
+    }
+    draft.agents = current;
+  } else {
+    draft.agents = validateAgentIds(args);
+  }
+  writeTelegramRoomDraft(config, chatId, draft);
+  return { command: "room_draft", reply: telegramRoomDraftText(draft) };
+}
+
+function telegramRoomStepsCommand(config, chatId, parts = []) {
+  const draft = telegramRoomDraft(config, chatId);
+  const steps = Number.parseInt(parts[0], 10);
+  if (!Number.isFinite(steps)) {
+    return { command: "room_draft", reply: `Usage: /room steps <1-100>\n${telegramRoomDraftText(draft)}` };
+  }
+  draft.max_steps = Math.max(1, Math.min(steps, 100));
+  writeTelegramRoomDraft(config, chatId, draft);
+  return { command: "room_draft", reply: telegramRoomDraftText(draft) };
+}
+
+function telegramRoomStartCommand(config, chatId, goal) {
+  const draft = telegramRoomDraft(config, chatId);
+  if (!String(goal || "").trim()) return { command: "room_draft", reply: telegramRoomDraftText(draft) };
+  return {
+    command: "room_draft",
+    reply: "Room creation from Telegram requires the Python central runtime. The draft is saved; run this command against a Python central or create the room from the CLI/web console."
   };
 }
 

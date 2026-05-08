@@ -284,7 +284,7 @@ Telegram control is intentionally disabled by default. After setting `control.en
 /run openclaw-hk check disk usage and report back
 ```
 
-Telegram buttons are contextual instead of being attached to every reply. `/status` and `/help` show a compact menu, `/new`, `/agents`, and `/agent` show multi-select agent buttons for the active process, `/resume` shows process/thread buttons, and `/rooms` shows room buttons. Telegram callback queries go through the same webhook handler as typed commands; dry-run mode records the `reply_markup` in `notifications.jsonl` so deployments can test the UX without contacting Telegram.
+Telegram buttons are contextual instead of being attached to every reply. `/status` and `/help` show a compact menu, `/new`, `/agents`, and `/agent` show multi-select agent buttons for the active process, `/resume` shows process/thread buttons, and `/rooms` shows room buttons. `/room new` starts a room draft with multi-select agent buttons plus step presets; send the room goal as the next plain message, or use `/room start <goal>`, to create the room. Telegram callback queries go through the same webhook handler as typed commands; dry-run mode records the `reply_markup` in `notifications.jsonl` so deployments can test the UX without contacting Telegram.
 
 Set `control.conversation.enabled: true` or `AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true` when plain Telegram messages should behave like a chat with Agent Bus. Use `control.conversation.agentId`, `control.conversation.agents`, `AGENT_BUS_TELEGRAM_CONVERSATION_AGENT`, or `AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS` to pin the chat to Hermes, OpenClaw, Codex, or another agent; otherwise Central uses normal Agent Bus routing.
 
@@ -301,6 +301,16 @@ Telegram conversation mode is process-oriented. A chat keeps one active Agent Bu
 /agent toggle openclaw-hk
 /agent clear
 @codex-120 review the latest code path
+```
+
+Room creation is separate from the active Telegram process/thread. Use `/room new`, choose participants with the room agent buttons, choose autonomous steps with the step buttons or `/room steps 12`, then send the goal:
+
+```text
+/room new
+/room agent toggle hermes-hk
+/room agent toggle openclaw-hk
+/room steps 10
+/room start investigate the onboarding bug and report a fix plan
 ```
 
 The first plain message names the process, `/resume` lists or switches prior Telegram processes, `/agent` sets or adds process agents, and a leading `@agent-id` targets that message while adding the agent to the active process. Agent replies are prefixed with `[agent-id]` so multi-agent Telegram replies stay attributable.

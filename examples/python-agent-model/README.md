@@ -94,6 +94,9 @@ python -m py_compile examples/python-agent-model/agent_model_example.py
 
 # Run with SDK smoke test
 npm run sdk:python:smoke -- --json
+
+# Run all release checks, including this fake-gateway example
+npm run release:check -- --json
 ```
 
 ## Use Cases

@@ -60,6 +60,20 @@ It shows the public north-star workflow without GitHub credentials, model calls,
 - export a redacted event bundle and replay it offline
 - write a patch artifact and PR draft artifact
 
+What this proves today:
+
+- local central/edge startup and room membership
+- planner-to-coder-to-reviewer handoff with `@agent-id` delegation
+- `REPORT`, `BLACKBOARD`, and `DONE` directive capture
+- redacted event export plus offline replay
+- deterministic patch and PR-draft artifact generation
+
+What it does not prove yet:
+
+- live GitHub issue reading, branch creation, pushing, or PR creation
+- model-provider connectivity or model quality
+- production authorization, repository permissions, or human review gates
+
 The default output directory is `agent-bus-issue-demo/`. Pass `--out-dir PATH` to choose a different directory, `--issue-file issue.md` to use your own issue text, or `--issue "..." --title "..."` for a one-line issue.
 
 All local demos use only fake local tokens and temporary files.

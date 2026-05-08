@@ -285,6 +285,19 @@ Telegram control is intentionally disabled by default. After setting `control.en
 
 Set `control.conversation.enabled: true` or `AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true` when plain Telegram messages should behave like a chat with Agent Bus. Use `control.conversation.agentId`, `control.conversation.agents`, `AGENT_BUS_TELEGRAM_CONVERSATION_AGENT`, or `AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS` to pin the chat to Hermes, OpenClaw, Codex, or another agent; otherwise Central uses normal Agent Bus routing.
 
+When Telegram cannot reach the public webhook because the Central is local-only, behind NAT, or protected by a WAF such as Cloudflare, run the polling bridge on the Central host instead:
+
+```bash
+AGENT_BUS_TELEGRAM_BOT_TOKEN=... \
+AGENT_BUS_TELEGRAM_WEBHOOK_SECRET=... \
+agent-bus plugin telegram poll \
+  --gateway http://127.0.0.1:8788 \
+  --delete-webhook \
+  --offset-file /var/lib/agent-bus/telegram-poller.offset
+```
+
+The poller calls Telegram `getUpdates`, forwards each update into the same local `/v1/agent-bus/plugins/telegram/webhook` handler, and stores the next update offset so it can run under systemd without reprocessing old messages.
+
 Keep `allowedChatIds` or `AGENT_BUS_TELEGRAM_CHAT_ID` scoped to operator chats, because `/run` and conversation mode queue real Agent Bus tasks for edge machines.
 
 Agent-backed model replacement uses the same OpenAI-compatible endpoint:

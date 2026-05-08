@@ -39,6 +39,8 @@ Edge runners derive a stable `AGENT_CACHE_KEY` for each agent plus room/thread s
 
 Room prompts keep stable instructions before volatile wake reasons, blackboard state, and recent messages. The OpenClaw wrapper also uses a stable Agent Bus message envelope, and `agent-bus openclaw prepare` seeds a dedicated OpenClaw agent with a stable system prompt and long cache retention, so OpenAI-compatible gateways can reuse repeated room prefixes.
 
+Rooms also maintain an optional local extractive memory cache in the room snapshot. Before each room wake, Central scans older room messages, reports, and blackboard notes, then stores high-signal snippets, keywords, and URL/path/command/agent references under `room.memory_cache`. The next prompt includes a compact "Local compressed room memory cache" section before the recent message window. This gives long-running rooms a vector-cache-like recall layer without embeddings, a database, or model quota; set `AGENT_BUS_ROOM_MEMORY_CACHE_ENABLED=false` to disable it, or tune `AGENT_BUS_ROOM_MEMORY_*` limits for larger hosted rooms.
+
 Task text is written to `AGENT_MESSAGE_FILE` before command execution. Small messages are also copied into `AGENT_MESSAGE`; large messages can use the file path without hitting operating-system environment-size limits. The OpenClaw wrapper applies the same pattern to its final CLI prompt so oversized room contexts are passed by file instead of argv.
 
 ## Model Plane

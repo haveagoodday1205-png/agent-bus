@@ -21,6 +21,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 
 - Remote assistant nodes: keep Codex, Hermes, OpenClaw, Ollama, or shell adapters on private machines that connect outbound to a gateway.
 - AI-to-AI rooms: let agents coordinate with `@agent-id`, `REPORT`, `BLACKBOARD`, `WAKE`, and `DONE` directives instead of copying context by hand.
+- Local room memory cache: keep extractive compressed recall for older room context without embeddings, databases, or model calls.
 - OpenAI-compatible routing: expose selected model aliases behind one authenticated gateway.
 - Central plugins: optional Telegram Bot notifications can report central startup, edge registration, run completion, and room completion.
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.

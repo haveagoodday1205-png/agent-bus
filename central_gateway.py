@@ -1782,8 +1782,167 @@ def compact_recent_room_messages(room):
     return [compact_room_item(item, item_limit) for item in messages[-item_count:] if isinstance(item, dict)]
 
 
+ROOM_MEMORY_STOPWORDS = {
+    "the", "and", "for", "with", "from", "this", "that", "have", "will", "room", "agent",
+    "bus", "your", "you", "are", "was", "were", "into", "then", "than", "they", "them",
+    "use", "using", "used", "latest", "message", "report", "blackboard", "continue",
+}
+
+
+def room_memory_enabled():
+    value = os.environ.get("AGENT_BUS_ROOM_MEMORY_CACHE_ENABLED", "true").strip().lower()
+    return value not in ("0", "false", "no", "off")
+
+
+def room_memory_source_items(room):
+    recent_count = room_prompt_limit("AGENT_BUS_ROOM_PROMPT_MESSAGE_COUNT", 8, 1, 20)
+    items = []
+    for item in (room.get("messages") or [])[:-recent_count]:
+        if isinstance(item, dict):
+            items.append(item)
+    for item in room.get("reports") or []:
+        if isinstance(item, dict):
+            items.append(item)
+    board = room.get("blackboard") if isinstance(room.get("blackboard"), dict) else {}
+    for key in ("notes", "reports"):
+        for item in board.get(key) or []:
+            if isinstance(item, dict):
+                items.append(item)
+    seen = set()
+    out = []
+    for item in items:
+        content = str(item.get("content") or item.get("message") or item.get("text") or "").strip()
+        if not content:
+            continue
+        dedupe_key = (item.get("run_id") or "", item.get("speaker") or item.get("agent_id") or item.get("role") or "", content[:240])
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        out.append(item)
+    return out
+
+
+def room_memory_source_hash(items):
+    digest = hashlib.sha256()
+    for item in items:
+        content = str(item.get("content") or item.get("message") or item.get("text") or "")
+        digest.update(str(item.get("run_id") or "").encode("utf-8"))
+        digest.update(str(item.get("speaker") or item.get("agent_id") or item.get("role") or "").encode("utf-8"))
+        digest.update(content.encode("utf-8", errors="ignore"))
+        digest.update(b"\0")
+    return digest.hexdigest()[:24]
+
+
+def room_memory_tokens(text):
+    values = []
+    for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_.:/#@-]{2,}|[\u4e00-\u9fff]{2,}", str(text or "").lower()):
+        token = token.strip("._:/#@-")
+        if len(token) < 3 or token in ROOM_MEMORY_STOPWORDS:
+            continue
+        values.append(token[:80])
+    return values
+
+
+def room_memory_entities(text):
+    text = str(text or "")
+    return {
+        "urls": re.findall(r"https?://[^\s)>\]]+", text)[:8],
+        "paths": re.findall(r"(?:[A-Za-z]:\\[^\s]+|/(?:[\w.-]+/)+[\w.-]+|[\w.-]+/[\w./-]+)", text)[:12],
+        "agents": re.findall(r"@[A-Za-z0-9_.-]+", text)[:12],
+        "commands": [line.strip()[:160] for line in text.splitlines() if re.match(r"^\s*(?:\$|npm|node|python3?|git|ssh|curl|systemctl|docker)\b", line.strip())][:8],
+    }
+
+
+def room_memory_item_score(item, content):
+    score = 0
+    speaker = str(item.get("speaker") or item.get("agent_id") or item.get("role") or "").lower()
+    if speaker not in ("", "user", "system"):
+        score += 2
+    if item.get("run_id"):
+        score += 1
+    if re.search(r"\b(REPORT|BLACKBOARD|DONE|WAKE)\b", content, re.I):
+        score += 4
+    if re.search(r"https?://|/[A-Za-z0-9_.-]+|[A-Za-z]:\\|`[^`]+`", content):
+        score += 2
+    if re.search(r"\b(error|failed|fixed|decision|todo|next|blocked|deploy|commit|test|cache|session)\b", content, re.I):
+        score += 2
+    return score
+
+
+def ensure_room_memory_cache(room):
+    if not room_memory_enabled():
+        room.pop("memory_cache", None)
+        return {}
+    items = room_memory_source_items(room)
+    source_hash = room_memory_source_hash(items)
+    existing = room.get("memory_cache") if isinstance(room.get("memory_cache"), dict) else {}
+    if existing.get("source_hash") == source_hash and existing.get("version") == 1:
+        return existing
+    snippet_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_SNIPPETS", 10, 0, 40)
+    snippet_chars = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_SNIPPET_CHARS", 260, 80, 1000)
+    keyword_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_KEYWORDS", 32, 0, 100)
+    entity_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_ENTITIES", 20, 0, 80)
+    token_counts = {}
+    entity_sets = {"urls": [], "paths": [], "agents": [], "commands": []}
+    snippets = []
+    for index, item in enumerate(items):
+        content = redact(str(item.get("content") or item.get("message") or item.get("text") or "").strip())
+        for token in room_memory_tokens(content):
+            token_counts[token] = token_counts.get(token, 0) + 1
+        entities = room_memory_entities(content)
+        for key, values in entities.items():
+            for value in values:
+                if value not in entity_sets[key]:
+                    entity_sets[key].append(value)
+        score = room_memory_item_score(item, content)
+        if score <= 0:
+            continue
+        snippets.append({
+            "score": score,
+            "index": index,
+            "at": item.get("at") or item.get("created_at"),
+            "speaker": item.get("speaker") or item.get("agent_id") or item.get("role") or "unknown",
+            "content": truncate_for_room_prompt(content, snippet_chars),
+        })
+    snippets = sorted(snippets, key=lambda item: (-item["score"], -item["index"]))[:snippet_limit]
+    keywords = [token for token, _count in sorted(token_counts.items(), key=lambda item: (-item[1], item[0]))[:keyword_limit]]
+    memory = {
+        "version": 1,
+        "updated_at": now(),
+        "source_count": len(items),
+        "source_hash": source_hash,
+        "keywords": keywords,
+        "snippets": [{key: value for key, value in item.items() if key not in ("score", "index")} for item in snippets],
+        "entities": {key: values[:entity_limit] for key, values in entity_sets.items() if values[:entity_limit]},
+    }
+    memory = {key: value for key, value in memory.items() if value not in (None, "", [], {})}
+    room["memory_cache"] = memory
+    return memory
+
+
+def room_memory_for_prompt(room, reason):
+    memory = ensure_room_memory_cache(room)
+    if not memory:
+        return {}
+    query = set(room_memory_tokens(" ".join([str(room.get("goal") or ""), str(reason or "")])))
+    snippets = []
+    for item in memory.get("snippets") or []:
+        overlap = len(query.intersection(room_memory_tokens(item.get("content") or ""))) if query else 0
+        snippets.append((overlap, item))
+    snippets = [item for _score, item in sorted(snippets, key=lambda pair: (-pair[0], str(pair[1].get("at") or "")))]
+    snippet_limit = room_prompt_limit("AGENT_BUS_ROOM_MEMORY_PROMPT_SNIPPETS", 6, 0, 20)
+    return {
+        "source_count": memory.get("source_count", 0),
+        "updated_at": memory.get("updated_at"),
+        "keywords": (memory.get("keywords") or [])[:24],
+        "entities": memory.get("entities") or {},
+        "relevant_snippets": snippets[:snippet_limit],
+    }
+
+
 def autonomous_prompt(room, agent, reason):
     autonomy = room.get("autonomy") or {}
+    memory = room_memory_for_prompt(room, reason)
     lines = [
         "You are an autonomous agent inside an Agent Bus room.",
         f"Room: {room.get('title') or room['id']}",
@@ -1810,6 +1969,9 @@ def autonomous_prompt(room, agent, reason):
         "",
         "Room progress:",
         f"steps={autonomy.get('steps', 0)} max_steps={autonomy.get('max_steps', 0)} status={room.get('status', 'active')}",
+        "",
+        "Local compressed room memory cache (older context, extractive):",
+        json.dumps(memory, ensure_ascii=False, indent=2),
         "",
         "Shared blackboard summary:",
         json.dumps(compact_room_blackboard(room), ensure_ascii=False, indent=2),

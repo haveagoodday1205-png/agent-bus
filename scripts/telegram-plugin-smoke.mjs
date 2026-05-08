@@ -33,6 +33,8 @@ async function main() {
   const gateway = `http://127.0.0.1:${port}`;
   const adminToken = "sk-telegram-plugin-smoke-token-000000";
   const edgeToken = "abt_edge_telegram_plugin_smoke_000000";
+  const webhookSecret = "telegram-plugin-smoke-webhook-secret";
+  const telegramChatId = "424242";
   const dataDir = path.join(tempDir, "data");
   const configPath = path.join(tempDir, "central.config.json");
   fs.writeFileSync(configPath, `${JSON.stringify({
@@ -47,7 +49,13 @@ async function main() {
       telegramBot: {
         enabled: true,
         dryRun: true,
-        events: ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed"]
+        events: ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test", "telegram.command"],
+        control: {
+          enabled: true,
+          secretToken: webhookSecret,
+          allowedChatIds: [telegramChatId],
+          allowRun: true
+        }
       }
     },
     modelRouter: { enabled: false, agentModels: true, backends: [] }
@@ -100,6 +108,17 @@ async function main() {
     })
   });
 
+  const statusWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/status");
+  assert(statusWebhook.ok === true && statusWebhook.command === "status", "telegram /status webhook failed");
+  const agentsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/agents");
+  assert(agentsWebhook.ok === true && agentsWebhook.command === "agents", "telegram /agents webhook failed");
+  const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-smoke-agent Run webhook command smoke.");
+  assert(runWebhook.ok === true && runWebhook.command === "run", "telegram /run webhook failed");
+  assert(runWebhook.thread?.runs?.length === 1, "telegram /run webhook did not queue a thread run");
+  const webhookTask = await pollTask(gateway, edgeToken);
+  assert(webhookTask.task?.run_id === runWebhook.thread.runs[0], "telegram /run task run_id mismatch");
+  await completeRun(gateway, edgeToken, webhookTask.task.run_id, "REPORT: Telegram webhook run dry-run ok.\n");
+
   const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
     headers: authJsonHeaders(adminToken),
@@ -128,7 +147,7 @@ async function main() {
   const roomTask = await pollTask(gateway, edgeToken);
   await completeRun(gateway, edgeToken, roomTask.task.run_id, "REPORT: Telegram plugin room dry-run ok.\nDONE\n");
 
-  const notifications = await waitForNotifications(dataDir, ["central.started", "telegram.test", "edge.registered", "run.completed", "room.completed"]);
+  const notifications = await waitForNotifications(dataDir, ["central.started", "telegram.test", "telegram.command", "edge.registered", "run.completed", "room.completed"]);
   const roomAfter = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}`, { headers: authHeaders(adminToken) });
   assert(roomAfter.status === "completed", "room did not complete");
   const nodeGateway = await nodeGatewayPluginSmoke();
@@ -142,6 +161,8 @@ async function main() {
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
     plugin_test_status: pluginTest.notification.status,
+    webhook_commands: [statusWebhook.command, agentsWebhook.command, runWebhook.command],
+    webhook_thread_id: runWebhook.thread.id,
     node_gateway_plugin_test_status: nodeGateway.plugin_test_status,
     thread_run_id: threadTask.task.run_id,
     room_id: room.id
@@ -159,6 +180,8 @@ async function nodeGatewayPluginSmoke() {
   const gateway = `http://127.0.0.1:${port}`;
   const adminToken = "sk-telegram-node-plugin-smoke-token-000000";
   const edgeToken = "abt_edge_telegram_node_plugin_smoke_000000";
+  const webhookSecret = "telegram-node-plugin-smoke-webhook-secret";
+  const telegramChatId = "525252";
   const nodeId = "telegram-node-smoke-edge";
   const agentId = "telegram-node-smoke-agent";
   const dataDir = path.join(tempDir, "node-data");
@@ -175,7 +198,13 @@ async function nodeGatewayPluginSmoke() {
       telegramBot: {
         enabled: true,
         dryRun: true,
-        events: ["central.started", "edge.registered", "run.completed", "run.failed", "telegram.test"]
+        events: ["central.started", "edge.registered", "run.completed", "run.failed", "telegram.test", "telegram.command"],
+        control: {
+          enabled: true,
+          secretToken: webhookSecret,
+          allowedChatIds: [telegramChatId],
+          allowRun: true
+        }
       }
     },
     modelRouter: { enabled: false, agentModels: true, backends: [] }
@@ -218,6 +247,14 @@ async function nodeGatewayPluginSmoke() {
     })
   });
 
+  const statusWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/status");
+  assert(statusWebhook.ok === true && statusWebhook.command === "status", "node telegram /status webhook failed");
+  const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-node-smoke-agent Run node webhook command smoke.");
+  assert(runWebhook.thread?.runs?.length === 1, "node telegram /run webhook did not queue a thread run");
+  const webhookTask = await pollTask(gateway, edgeToken, nodeId);
+  assert(webhookTask.task?.run_id === runWebhook.thread.runs[0], "node telegram /run task run_id mismatch");
+  await completeRun(gateway, edgeToken, webhookTask.task.run_id, "REPORT: Node Telegram webhook run dry-run ok.\n", nodeId);
+
   const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
     headers: authJsonHeaders(adminToken),
@@ -231,12 +268,31 @@ async function nodeGatewayPluginSmoke() {
   assert(threadTask.task?.run_id === thread.runs?.[0]?.id, "node thread task run_id mismatch");
   await completeRun(gateway, edgeToken, threadTask.task.run_id, "REPORT: Node Telegram plugin dry-run ok.\n", nodeId);
 
-  const notifications = await waitForNotifications(dataDir, ["central.started", "telegram.test", "edge.registered", "run.completed"]);
+  const notifications = await waitForNotifications(dataDir, ["central.started", "telegram.test", "telegram.command", "edge.registered", "run.completed"]);
   return {
     ok: true,
     plugin_test_status: pluginTest.notification.status,
+    webhook_commands: [statusWebhook.command, runWebhook.command],
     notifications: notifications.length
   };
+}
+
+function telegramWebhook(gateway, secret, chatId, text) {
+  return requestJson(`${gateway}/v1/agent-bus/plugins/telegram/webhook`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": secret
+    },
+    body: JSON.stringify({
+      update_id: 1000,
+      message: {
+        message_id: 1,
+        chat: { id: chatId, type: "private" },
+        text
+      }
+    })
+  });
 }
 
 async function pollTask(gateway, token, nodeId = "telegram-smoke-edge") {

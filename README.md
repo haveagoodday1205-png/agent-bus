@@ -175,7 +175,7 @@ agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --token abt_edge_..
 agent-bus connect --config edge.config.json
 ```
 
-To enable Telegram notifications, set `plugins.telegramBot.enabled` in `central.config.json`, then provide `AGENT_BUS_TELEGRAM_BOT_TOKEN` and `AGENT_BUS_TELEGRAM_CHAT_ID` in the central service environment. Verify the wiring with `agent-bus plugin telegram test --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN --dry-run`; `npm run plugin:telegram:smoke` covers the same path without contacting Telegram.
+To enable Telegram notifications, set `plugins.telegramBot.enabled` in `central.config.json`, then provide `AGENT_BUS_TELEGRAM_BOT_TOKEN` and `AGENT_BUS_TELEGRAM_CHAT_ID` in the central service environment. Verify the wiring with `agent-bus plugin telegram test --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN --dry-run`; `npm run plugin:telegram:smoke` covers the same path without contacting Telegram. The optional Telegram control webhook is off by default; when enabled it accepts `/status`, `/agents`, and `/run agent-id task` through `/v1/agent-bus/plugins/telegram/webhook`.
 
 Run with Docker:
 

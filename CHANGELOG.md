@@ -33,6 +33,7 @@
 
 - Adds a Central Telegram Bot plugin skeleton for startup, edge registration, run completion, and room completion notifications, with a dry-run smoke test that makes no external calls.
 - Adds admin plugin discovery plus `agent-bus plugin telegram test` so operators can verify Telegram wiring before relying on alerts.
+- Adds an opt-in Telegram control webhook for `/status`, `/agents`, and `/run agent-id task`, guarded by Telegram secret tokens and chat allowlists.
 - Makes `agent-bus setup central` generate and print a first scoped edge token plus a copy/paste `setup edge --token ...` command, while still supporting pair-code onboarding.
 - Makes the bundled `compose.yaml` fail fast when `AGENT_BUS_TOKEN` is unset instead of silently starting a public central gateway with a placeholder token.
 - Adds `npm run compose:smoke` plus Docker preflight docs so the single-service Python central deployment, persistent-volume story, and "database optional later" guidance stay aligned.

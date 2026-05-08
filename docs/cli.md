@@ -244,7 +244,13 @@ Central supports optional notification plugins under `plugins` in `central.confi
       "enabled": true,
       "botTokenEnv": "AGENT_BUS_TELEGRAM_BOT_TOKEN",
       "chatIdEnv": "AGENT_BUS_TELEGRAM_CHAT_ID",
-      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test"]
+      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test", "telegram.command"],
+      "control": {
+        "enabled": false,
+        "secretTokenEnv": "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET",
+        "allowedChatIds": [],
+        "allowRun": true
+      }
     }
   }
 }
@@ -260,6 +266,16 @@ agent-bus plugin telegram test \
   --message "Agent Bus is wired to Telegram" \
   --dry-run
 ```
+
+Telegram control is intentionally disabled by default. After setting `control.enabled: true`, register Telegram's webhook URL as `https://YOUR-DOMAIN/agent-bus/v1/agent-bus/plugins/telegram/webhook` and set `AGENT_BUS_TELEGRAM_WEBHOOK_SECRET` as Telegram's secret token. The first supported commands are:
+
+```text
+/status
+/agents
+/run openclaw-hk check disk usage and report back
+```
+
+Keep `allowedChatIds` or `AGENT_BUS_TELEGRAM_CHAT_ID` scoped to operator chats, because `/run` queues a real Agent Bus task for an edge machine.
 
 Agent-backed model replacement uses the same OpenAI-compatible endpoint:
 

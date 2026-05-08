@@ -15,7 +15,13 @@
       "botTokenEnv": "AGENT_BUS_TELEGRAM_BOT_TOKEN",
       "chatIdEnv": "AGENT_BUS_TELEGRAM_CHAT_ID",
       "dryRun": false,
-      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test"]
+      "events": ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test", "telegram.command"],
+      "control": {
+        "enabled": false,
+        "secretTokenEnv": "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET",
+        "allowedChatIds": [],
+        "allowRun": true
+      }
     }
   },
   "modelRouter": {

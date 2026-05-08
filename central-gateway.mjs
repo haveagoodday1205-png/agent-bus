@@ -11,7 +11,7 @@ const command = argv[0] || "serve";
 const configPath = optionValue("--config") || path.join(__dirname, "central.config.json");
 const NODE_STALE_SECONDS = intEnv("AGENT_BUS_NODE_STALE_SECONDS", 180);
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped"]);
-const TELEGRAM_DEFAULT_EVENTS = ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test"];
+const TELEGRAM_DEFAULT_EVENTS = ["central.started", "edge.registered", "run.completed", "run.failed", "room.completed", "telegram.test", "telegram.command"];
 
 const state = {
   nodes: new Map(),
@@ -310,6 +310,10 @@ async function serve(config) {
         requireAuth(req, config, ["admin"]);
         const body = await readJson(req);
         return sendJson(res, telegramPluginTest(config, body));
+      }
+      if (req.method === "POST" && (url.pathname === "/plugins/telegram/webhook" || url.pathname === "/v1/agent-bus/plugins/telegram/webhook")) {
+        const body = await readJson(req);
+        return sendJson(res, telegramWebhook(config, body, req));
       }
       if (req.method === "POST" && url.pathname === "/edge/register") {
         requireAuth(req, config, ["admin", "edge"]);
@@ -1582,18 +1586,35 @@ function telegramPluginConfig(config) {
   plugin.chatIdEnv ||= "AGENT_BUS_TELEGRAM_CHAT_ID";
   plugin.events ||= TELEGRAM_DEFAULT_EVENTS;
   plugin.dryRun ??= false;
+  plugin.control = { ...(plugin.control || {}) };
+  if (process.env.AGENT_BUS_TELEGRAM_CONTROL_ENABLED) {
+    plugin.control.enabled = /^(1|true|yes|on)$/i.test(process.env.AGENT_BUS_TELEGRAM_CONTROL_ENABLED);
+  }
+  plugin.control.enabled ??= false;
+  plugin.control.secretTokenEnv ||= "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET";
+  plugin.control.allowedChatIds ||= [];
+  plugin.control.allowRun ??= true;
   return plugin;
 }
 
 function publicTelegramPluginStatus(config) {
   const plugin = telegramPluginConfig(config);
+  const control = telegramControlConfig(plugin);
   return {
     enabled: plugin.enabled === true,
     configured: Boolean(telegramBotToken(plugin) && telegramChatId(plugin)),
     dry_run: plugin.dryRun === true || plugin.dry_run === true,
     events: pluginEvents(plugin),
     bot_token_env: plugin.botTokenEnv,
-    chat_id_env: plugin.chatIdEnv
+    chat_id_env: plugin.chatIdEnv,
+    control: {
+      enabled: control.enabled === true,
+      webhook: "/v1/agent-bus/plugins/telegram/webhook",
+      allow_run: control.allowRun !== false && control.allow_run !== false,
+      allowed_chat_count: telegramAllowedChatIds(plugin).length,
+      secret_configured: Boolean(telegramControlSecret(control)),
+      secret_token_env: control.secretTokenEnv
+    }
   };
 }
 
@@ -1617,6 +1638,29 @@ function telegramChatId(plugin) {
   return String(process.env[plugin.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID"] || plugin.chatId || plugin.chat_id || "").trim();
 }
 
+function telegramControlConfig(plugin) {
+  return { ...(plugin.control || {}) };
+}
+
+function telegramControlSecret(control) {
+  return String(process.env[control.secretTokenEnv || "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET"] || control.secretToken || control.secret_token || "").trim();
+}
+
+function telegramAllowedChatIds(plugin) {
+  const control = telegramControlConfig(plugin);
+  const raw = control.allowedChatIds || control.allowed_chat_ids || [];
+  const values = Array.isArray(raw) ? raw : String(raw).split(",");
+  const allowed = new Set(values.map((item) => String(item).trim()).filter(Boolean));
+  const defaultChat = telegramChatId(plugin);
+  if (defaultChat) allowed.add(defaultChat);
+  return [...allowed].sort();
+}
+
+function telegramChatAllowed(plugin, chatId) {
+  const allowed = telegramAllowedChatIds(plugin);
+  return !allowed.length || allowed.includes(String(chatId));
+}
+
 function notifyPlugin(config, event, payload = {}, options = {}) {
   const plugin = telegramPluginConfig(config);
   if (plugin.enabled !== true) {
@@ -1637,7 +1681,7 @@ function notifyPlugin(config, event, payload = {}, options = {}) {
   }
   const text = telegramNotificationText(event, payload);
   const token = telegramBotToken(plugin);
-  const chatId = telegramChatId(plugin);
+  const chatId = String(options.chatIdOverride || telegramChatId(plugin)).trim();
   const dryRun = options.dryRunOverride === undefined
     ? (plugin.dryRun === true || plugin.dry_run === true)
     : options.dryRunOverride === true;
@@ -1687,6 +1731,138 @@ function telegramPluginTest(config, body = {}) {
   };
 }
 
+function telegramWebhook(config, body = {}, req) {
+  const plugin = telegramPluginConfig(config);
+  const control = telegramControlConfig(plugin);
+  if (plugin.enabled !== true || control.enabled !== true) {
+    const err = new Error("telegram control webhook is disabled");
+    err.statusCode = 403;
+    throw err;
+  }
+  const secret = telegramControlSecret(control);
+  if (secret && req.headers["x-telegram-bot-api-secret-token"] !== secret) {
+    const err = new Error("invalid telegram webhook secret");
+    err.statusCode = 403;
+    throw err;
+  }
+  const message = telegramUpdateMessage(body);
+  const chatId = String(message.chat?.id || "").trim();
+  const text = String(message.text || "").trim();
+  if (!chatId || !text) {
+    const err = new Error("telegram webhook requires message.chat.id and message.text");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!telegramChatAllowed(plugin, chatId)) {
+    const err = new Error("telegram chat is not allowed");
+    err.statusCode = 403;
+    throw err;
+  }
+  const command = telegramHandleCommand(config, plugin, control, text);
+  const replyStatus = notifyPlugin(config, "telegram.command", {
+    command: command.command,
+    reply: command.reply,
+    chat_id: chatId,
+    thread_id: command.thread?.id
+  }, {
+    eventFilter: false,
+    chatIdOverride: chatId
+  });
+  return {
+    ok: true,
+    command: command.command,
+    reply_status: replyStatus,
+    thread: command.thread
+  };
+}
+
+function telegramUpdateMessage(body = {}) {
+  if (body.message && typeof body.message === "object") return body.message;
+  if (body.edited_message && typeof body.edited_message === "object") return body.edited_message;
+  if (body.callback_query?.message) {
+    return { ...body.callback_query.message, text: body.callback_query.data || body.callback_query.message.text || "" };
+  }
+  return {};
+}
+
+function telegramHandleCommand(config, plugin, control, text) {
+  const { command, rest } = telegramParseCommand(text);
+  if (command === "start" || command === "help") return { command, reply: telegramHelpText() };
+  if (command === "status") return { command, reply: telegramStatusText(config) };
+  if (command === "agents") return { command, reply: telegramAgentsText() };
+  if (command === "run") {
+    if (control.allowRun === false || control.allow_run === false) {
+      return { command, reply: "Run commands are disabled for this Telegram bot." };
+    }
+    return telegramRunCommand(config, rest);
+  }
+  return { command: command || "unknown", reply: telegramHelpText("Unknown command.") };
+}
+
+function telegramParseCommand(text) {
+  const [first = "", ...rest] = String(text || "").trim().split(/\s+/);
+  const token = first.startsWith("/") ? first.slice(1).split("@")[0] : first;
+  return {
+    command: token.toLowerCase().replace(/-/g, "_"),
+    rest: rest.join(" ").trim()
+  };
+}
+
+function telegramHelpText(prefix = "") {
+  return [
+    prefix,
+    "Agent Bus Telegram commands:",
+    "/status - gateway, edge, queue, and room summary",
+    "/agents - list online agents",
+    "/run <agent-id> <task> - queue a task for one agent"
+  ].filter(Boolean).join("\n");
+}
+
+function telegramStatusText() {
+  const nodes = publicNodes();
+  const agents = publicAgents();
+  const queued = [...state.queues.values()].reduce((sum, queue) => sum + queue.length, 0);
+  return [
+    "Agent Bus status",
+    `Nodes online: ${nodes.length}`,
+    `Agents online: ${agents.length}`,
+    `Queued runs: ${queued}`,
+    "Active rooms: 0",
+    `Agents: ${agents.map((agent) => agent.id).join(", ") || "none"}`
+  ].join("\n");
+}
+
+function telegramAgentsText() {
+  const agents = publicAgents();
+  if (!agents.length) return "No online Agent Bus agents.";
+  return [
+    "Online Agent Bus agents:",
+    ...agents.map((agent) => `- ${agent.id} (${agent.kind}/${agent.role}) on ${agent.node_id}`)
+  ].join("\n");
+}
+
+function telegramRunCommand(config, rest) {
+  const [agentId = "", ...messageParts] = String(rest || "").trim().split(/\s+/);
+  const message = messageParts.join(" ").trim();
+  if (!agentId || !message) return { command: "run", reply: "Usage: /run <agent-id> <task>" };
+  const thread = createThread(config, {
+    message,
+    agents: [agentId],
+    mode: "orchestrate",
+    source: "telegram"
+  });
+  const runIds = (thread.runs || []).map((run) => run.id).filter(Boolean);
+  return {
+    command: "run",
+    reply: `Queued ${thread.id} for ${agentId}.\nRuns: ${runIds.join(", ") || "none"}`,
+    thread: {
+      id: thread.id,
+      trace_id: thread.trace_id,
+      runs: runIds
+    }
+  };
+}
+
 function telegramNotificationText(event, payload) {
   if (event === "central.started") {
     return `Agent Bus central started\nGateway: ${payload.gateway || ""}\nRuntime: ${payload.runtime || ""}`;
@@ -1702,6 +1878,9 @@ function telegramNotificationText(event, payload) {
   }
   if (event === "telegram.test") {
     return `Agent Bus Telegram test\n${payload.message || ""}\nGateway: ${payload.gateway || ""}`;
+  }
+  if (event === "telegram.command") {
+    return String(payload.reply || "Agent Bus Telegram command completed.");
   }
   return `Agent Bus event: ${event}\n${JSON.stringify(payload)}`;
 }

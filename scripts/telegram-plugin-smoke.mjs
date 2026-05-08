@@ -108,6 +108,12 @@ async function main() {
         role: "executor",
         enabled: true,
         capabilities: ["smoke", "telegram"]
+      }, {
+        id: "telegram-smoke-helper",
+        kind: "echo",
+        role: "assistant",
+        enabled: true,
+        capabilities: ["smoke", "telegram", "helper"]
       }]
     })
   });
@@ -131,6 +137,33 @@ async function main() {
   assert(chatTask.task?.agent_id === "telegram-smoke-agent", "telegram conversational task did not target configured agent");
   await completeRun(gateway, edgeToken, chatTask.task.run_id, "Telegram conversational reply ok.\n");
   await waitForNotificationMessage(dataDir, /Telegram conversational reply ok/);
+
+  const continuedWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Continue the same Telegram process.");
+  assert(continuedWebhook.command === "chat", "telegram continued process command mismatch");
+  assert(continuedWebhook.thread?.id === chatWebhook.thread.id, "telegram conversational process did not stay on the same thread");
+  assert(continuedWebhook.thread?.runs?.length === 1, "telegram continued process did not queue one run");
+  const continuedTask = await pollTask(gateway, edgeToken);
+  assert(continuedTask.task?.run_id === continuedWebhook.thread.runs[0], "telegram continued task run_id mismatch");
+  await completeRun(gateway, edgeToken, continuedTask.task.run_id, "Telegram continued process reply ok.\n");
+  await waitForNotificationMessage(dataDir, /\[telegram-smoke-agent\][\s\S]*Telegram continued process reply ok/);
+
+  const helperWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "@telegram-smoke-helper Join this active process.");
+  assert(helperWebhook.thread?.id === chatWebhook.thread.id, "telegram @agent message did not reuse active thread");
+  assert(helperWebhook.thread?.agents?.includes("telegram-smoke-helper"), "telegram @agent did not add helper agent");
+  const helperTask = await pollTask(gateway, edgeToken);
+  assert(helperTask.task?.agent_id === "telegram-smoke-helper", "telegram @agent task did not target helper agent");
+  await completeRun(gateway, edgeToken, helperTask.task.run_id, "Telegram helper joined the process.\n");
+  await waitForNotificationMessage(dataDir, /\[telegram-smoke-helper\][\s\S]*Telegram helper joined/);
+
+  const resumeWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/resume");
+  assert(resumeWebhook.ok === true && resumeWebhook.command === "resume", "telegram /resume webhook failed");
+  assert(/Recent Agent Bus processes/.test(resumeWebhook.reply || ""), "telegram /resume did not list processes");
+  const newWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/new");
+  assert(newWebhook.ok === true && newWebhook.command === "new", "telegram /new webhook failed");
+  const newChatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Start a fresh Telegram process.");
+  assert(newChatWebhook.thread?.id && newChatWebhook.thread.id !== chatWebhook.thread.id, "telegram /new did not start a fresh thread");
+  const newChatTask = await pollTask(gateway, edgeToken);
+  await completeRun(gateway, edgeToken, newChatTask.task.run_id, "Telegram fresh process reply ok.\n");
 
   const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
@@ -174,9 +207,10 @@ async function main() {
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command],
+    webhook_commands: [statusWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, newWebhook.command, newChatWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
+    fresh_conversational_thread_id: newChatWebhook.thread.id,
     node_gateway_plugin_test_status: nodeGateway.plugin_test_status,
     thread_run_id: threadTask.task.run_id,
     room_id: room.id
@@ -261,6 +295,12 @@ async function nodeGatewayPluginSmoke() {
         role: "executor",
         enabled: true,
         capabilities: ["smoke", "telegram", "node"]
+      }, {
+        id: "telegram-node-helper-agent",
+        kind: "echo",
+        role: "assistant",
+        enabled: true,
+        capabilities: ["smoke", "telegram", "node", "helper"]
       }]
     })
   });
@@ -282,6 +322,30 @@ async function nodeGatewayPluginSmoke() {
   await completeRun(gateway, edgeToken, chatTask.task.run_id, "Node Telegram conversational reply ok.\n", nodeId);
   await waitForNotificationMessage(dataDir, /Node Telegram conversational reply ok/);
 
+  const continuedWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Continue the node central Telegram process.");
+  assert(continuedWebhook.thread?.id === chatWebhook.thread.id, "node telegram conversational process did not stay on same thread");
+  const continuedTask = await pollTask(gateway, edgeToken, nodeId);
+  assert(continuedTask.task?.run_id === continuedWebhook.thread.runs[0], "node telegram continued task run_id mismatch");
+  await completeRun(gateway, edgeToken, continuedTask.task.run_id, "Node Telegram continued process reply ok.\n", nodeId);
+  await waitForNotificationMessage(dataDir, /\[telegram-node-smoke-agent\][\s\S]*Node Telegram continued process reply ok/);
+
+  const helperWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "@telegram-node-helper-agent Join the node active process.");
+  assert(helperWebhook.thread?.id === chatWebhook.thread.id, "node telegram @agent message did not reuse active thread");
+  assert(helperWebhook.thread?.agents?.includes("telegram-node-helper-agent"), "node telegram @agent did not add helper agent");
+  const helperTask = await pollTask(gateway, edgeToken, nodeId);
+  assert(helperTask.task?.agent_id === "telegram-node-helper-agent", "node telegram @agent task did not target helper agent");
+  await completeRun(gateway, edgeToken, helperTask.task.run_id, "Node Telegram helper joined the process.\n", nodeId);
+  await waitForNotificationMessage(dataDir, /\[telegram-node-helper-agent\][\s\S]*Node Telegram helper joined/);
+
+  const resumeWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/resume");
+  assert(resumeWebhook.command === "resume" && /Recent Agent Bus processes/.test(resumeWebhook.reply || ""), "node telegram /resume did not list processes");
+  const newWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/new");
+  assert(newWebhook.command === "new", "node telegram /new webhook failed");
+  const newChatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Start a fresh node Telegram process.");
+  assert(newChatWebhook.thread?.id && newChatWebhook.thread.id !== chatWebhook.thread.id, "node telegram /new did not start a fresh thread");
+  const newChatTask = await pollTask(gateway, edgeToken, nodeId);
+  await completeRun(gateway, edgeToken, newChatTask.task.run_id, "Node Telegram fresh process reply ok.\n", nodeId);
+
   const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
     headers: authJsonHeaders(adminToken),
@@ -299,8 +363,9 @@ async function nodeGatewayPluginSmoke() {
   return {
     ok: true,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, runWebhook.command, chatWebhook.command],
+    webhook_commands: [statusWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, newWebhook.command, newChatWebhook.command],
     conversational_thread_id: chatWebhook.thread.id,
+    fresh_conversational_thread_id: newChatWebhook.thread.id,
     notifications: notifications.length
   };
 }

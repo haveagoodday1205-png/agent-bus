@@ -102,6 +102,7 @@ function ensureDataDirs(config) {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(path.join(config.dataDir, "threads"), { recursive: true });
   fs.mkdirSync(path.join(config.dataDir, "runs"), { recursive: true });
+  fs.mkdirSync(path.join(config.dataDir, "telegram_sessions"), { recursive: true });
 }
 
 function loadEdgeTokens(config) {
@@ -1375,6 +1376,7 @@ function createThread(config, body, traceId = "") {
     id: `thread_${crypto.randomUUID()}`,
     trace_id: traceId,
     created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     source: body.source || "http",
     mode: selection.mode,
     message: body.message,
@@ -1385,6 +1387,7 @@ function createThread(config, body, traceId = "") {
     },
     runs: []
   };
+  if (String(body.title || "").trim()) thread.title = String(body.title).trim();
   if (body.telegram && typeof body.telegram === "object") thread.telegram = body.telegram;
 
   for (const agent of selection.agents) {
@@ -1689,6 +1692,160 @@ function telegramConversationAgents(conversation = {}) {
   return [...new Set(values)].filter(Boolean);
 }
 
+function telegramSessionKey(chatId) {
+  return String(chatId || "").trim().replace(/[^A-Za-z0-9_.-]+/g, "_") || "unknown";
+}
+
+function telegramSessionPath(config, chatId) {
+  return path.join(config.dataDir, "telegram_sessions", `${telegramSessionKey(chatId)}.json`);
+}
+
+function readTelegramSession(config, chatId) {
+  const file = telegramSessionPath(config, chatId);
+  if (!fs.existsSync(file)) {
+    return {
+      chat_id: String(chatId || "").trim(),
+      active_thread_id: null,
+      agents: [],
+      updated_at: null
+    };
+  }
+  let data = {};
+  try {
+    data = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    data = {};
+  }
+  data.chat_id = String(chatId || "").trim();
+  data.active_thread_id ??= null;
+  data.agents ||= [];
+  return data;
+}
+
+function writeTelegramSession(config, chatId, session) {
+  const file = telegramSessionPath(config, chatId);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const record = {
+    ...(session || {}),
+    chat_id: String(chatId || "").trim(),
+    updated_at: new Date().toISOString()
+  };
+  fs.writeFileSync(file, `${JSON.stringify(redactObject(record), null, 2)}\n`);
+  return record;
+}
+
+function telegramThreadForChat(thread, chatId) {
+  const telegram = thread?.telegram;
+  return telegram && telegram.conversation === true && String(telegram.chat_id || "") === String(chatId || "");
+}
+
+function telegramChatThreads(config, chatId) {
+  const byId = new Map();
+  for (const thread of readSnapshots(config, "threads")) {
+    if (thread?.id && telegramThreadForChat(thread, chatId)) byId.set(thread.id, thread);
+  }
+  for (const thread of state.threads.values()) {
+    if (thread?.id && telegramThreadForChat(thread, chatId)) byId.set(thread.id, thread);
+  }
+  return [...byId.values()].sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
+}
+
+function telegramActiveThread(config, chatId, session = null) {
+  const current = session || readTelegramSession(config, chatId);
+  const threadId = current.active_thread_id;
+  if (!threadId) return null;
+  const thread = state.threads.get(threadId) || readSnapshot(config, "threads", threadId);
+  return thread && telegramThreadForChat(thread, chatId) ? thread : null;
+}
+
+function telegramThreadTitle(message) {
+  return String(message || "").trim().split(/\s+/).join(" ").slice(0, 80) || "Untitled Telegram process";
+}
+
+function telegramThreadLabel(thread) {
+  if (!thread) return "no active process";
+  return String(thread.title || thread.message || thread.id || "").trim().slice(0, 80) || thread.id;
+}
+
+function validateAgentIds(agentIds) {
+  const wanted = [];
+  for (const value of agentIds || []) {
+    const text = String(value || "").trim();
+    if (text && !wanted.includes(text)) wanted.push(text);
+  }
+  if (!wanted.length) return [];
+  const online = new Set(publicAgents().map((agent) => agent.id));
+  const missing = wanted.filter((agentId) => !online.has(agentId));
+  if (missing.length) {
+    const err = new Error(`unknown registered agents: ${missing.join(", ")}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return wanted;
+}
+
+function telegramThreadAgentIds(thread) {
+  return ((thread?.selection || {}).agents || []).map((item) => String(item)).filter(Boolean);
+}
+
+function updateTelegramThreadAgents(config, thread, agentIds) {
+  const values = validateAgentIds(agentIds);
+  if (!thread || !values.length) return [];
+  const merged = [];
+  for (const item of [...telegramThreadAgentIds(thread), ...values]) {
+    if (!merged.includes(item)) merged.push(item);
+  }
+  thread.selection ||= {};
+  thread.selection.agents = merged;
+  thread.updated_at = new Date().toISOString();
+  state.threads.set(thread.id, thread);
+  writeSnapshot(config, "threads", thread.id, thread);
+  return merged;
+}
+
+function telegramExtractMentions(text) {
+  let remaining = String(text || "").trim();
+  const mentions = [];
+  while (true) {
+    const match = remaining.match(/^@([A-Za-z0-9_.-]+)(?:\s+|$)/);
+    if (!match) break;
+    mentions.push(match[1]);
+    remaining = remaining.slice(match[0].length).trim();
+  }
+  return { mentions, message: remaining };
+}
+
+function telegramProcessPrompt(thread, latestMessage) {
+  const lines = [
+    "You are continuing a Telegram Agent Bus process.",
+    `Process: ${telegramThreadLabel(thread)}`,
+    `Thread: ${thread.id}`,
+    "Answer the latest user message directly. Keep continuity with the prior messages.",
+    "Do not claim to be another agent. Your agent id will be added outside your reply.",
+    "",
+    "Recent process messages:"
+  ];
+  for (const item of (thread.conversation || []).slice(-12)) {
+    const speaker = item.speaker || item.role || "unknown";
+    const content = trimOutput(item.content || "");
+    if (content) lines.push(`${speaker}: ${content}`);
+  }
+  lines.push("", "Latest user message:", String(latestMessage || "").trim());
+  return lines.join("\n");
+}
+
+function telegramSessionAgents(config, control, session, thread = null, mentions = []) {
+  const mentioned = validateAgentIds(mentions);
+  if (mentioned.length) return mentioned;
+  const sessionAgents = validateAgentIds(session.agents || []);
+  if (sessionAgents.length) return sessionAgents;
+  const configured = validateAgentIds(telegramConversationAgents(telegramConversationConfig(control)));
+  if (configured.length) return configured;
+  const threadAgents = validateAgentIds(telegramThreadAgentIds(thread));
+  if (threadAgents.length) return threadAgents;
+  return [];
+}
+
 function telegramControlSecret(control) {
   return String(process.env[control.secretTokenEnv || "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET"] || control.secretToken || control.secret_token || "").trim();
 }
@@ -1818,6 +1975,7 @@ function telegramWebhook(config, body = {}, req) {
   return {
     ok: true,
     command: command.command,
+    reply: command.reply,
     reply_status: replyStatus,
     thread: command.thread
   };
@@ -1833,7 +1991,12 @@ function telegramUpdateMessage(body = {}) {
 }
 
 function telegramHandleCommand(config, plugin, control, text, chatId = "") {
-  if (!String(text || "").trimStart().startsWith("/")) {
+  const isCommand = String(text || "").trimStart().startsWith("/");
+  const { command, rest } = telegramParseCommand(text);
+  if (isCommand && command === "new") return telegramNewCommand(config, chatId, rest);
+  if (isCommand && command === "resume") return telegramResumeCommand(config, chatId, rest);
+  if (isCommand && command === "agent") return telegramAgentCommand(config, chatId, rest);
+  if (!isCommand) {
     if (telegramConversationEnabled(control)) {
       return telegramConversationCommand(config, control, chatId, text);
     }
@@ -1842,7 +2005,6 @@ function telegramHandleCommand(config, plugin, control, text, chatId = "") {
       reply: telegramHelpText("Free-form chat is disabled. Use /run or enable control.conversation.enabled.")
     };
   }
-  const { command, rest } = telegramParseCommand(text);
   if (command === "start" || command === "help") return { command, reply: telegramHelpText() };
   if (command === "status") return { command, reply: telegramStatusText(config) };
   if (command === "agents") return { command, reply: telegramAgentsText() };
@@ -1855,26 +2017,182 @@ function telegramHandleCommand(config, plugin, control, text, chatId = "") {
   return { command: command || "unknown", reply: telegramHelpText("Unknown command.") };
 }
 
+function telegramNewCommand(config, chatId, rest = "") {
+  const session = readTelegramSession(config, chatId);
+  session.active_thread_id = null;
+  session.agents = [];
+  writeTelegramSession(config, chatId, session);
+  if (String(rest || "").trim()) {
+    const plugin = telegramPluginConfig(config);
+    return telegramConversationCommand(config, telegramControlConfig(plugin), chatId, rest);
+  }
+  return {
+    command: "new",
+    reply: "Started a new Agent Bus process. Send the first message to name it."
+  };
+}
+
+function telegramResumeCommand(config, chatId, rest = "") {
+  const query = String(rest || "").trim();
+  const threads = telegramChatThreads(config, chatId);
+  const session = readTelegramSession(config, chatId);
+  if (!query) {
+    if (!threads.length) return { command: "resume", reply: "No Telegram processes found. Send a message to start one." };
+    const lines = ["Recent Agent Bus processes:"];
+    for (const thread of threads.slice(0, 8)) {
+      const marker = thread.id === session.active_thread_id ? "*" : "-";
+      lines.push(`${marker} ${thread.id} - ${telegramThreadLabel(thread)}`);
+    }
+    lines.push("Use /resume <thread-id or title words> to switch.");
+    return { command: "resume", reply: lines.join("\n") };
+  }
+  const lowered = query.toLowerCase();
+  const match = threads.find((thread) => {
+    const title = telegramThreadLabel(thread).toLowerCase();
+    const threadId = String(thread.id || "");
+    return threadId === query || threadId.endsWith(query) || threadId.includes(query) || title.includes(lowered);
+  });
+  if (!match) return { command: "resume", reply: `No matching Telegram process for: ${query}` };
+  session.active_thread_id = match.id;
+  session.agents = telegramThreadAgentIds(match);
+  writeTelegramSession(config, chatId, session);
+  return {
+    command: "resume",
+    reply: `Resumed process: ${telegramThreadLabel(match)}\nThread: ${match.id}\nAgents: ${session.agents.join(", ") || "auto"}`,
+    thread: {
+      id: match.id,
+      trace_id: match.trace_id,
+      runs: [],
+      agents: session.agents
+    }
+  };
+}
+
+function telegramAgentCommand(config, chatId, rest = "") {
+  const session = readTelegramSession(config, chatId);
+  const active = telegramActiveThread(config, chatId, session);
+  const parts = String(rest || "").split(/\s+/).filter(Boolean);
+  if (!parts.length) {
+    const online = publicAgents().map((agent) => agent.id);
+    const current = session.agents?.length ? session.agents : telegramThreadAgentIds(active);
+    return {
+      command: "agent",
+      reply: `Current agents: ${current.join(", ") || "auto"}\nOnline agents: ${online.join(", ") || "none"}`
+    };
+  }
+  const action = parts[0].toLowerCase();
+  if (["clear", "auto"].includes(action)) {
+    session.agents = [];
+    writeTelegramSession(config, chatId, session);
+    return { command: "agent", reply: "Agent selection cleared. The process will use Agent Bus routing." };
+  }
+  if (["add", "+"].includes(action)) {
+    const values = validateAgentIds(parts.slice(1));
+    if (!values.length) return { command: "agent", reply: "Usage: /agent add <agent-id> [agent-id...]" };
+    let merged = [];
+    for (const item of [...(session.agents?.length ? session.agents : telegramThreadAgentIds(active)), ...values]) {
+      if (!merged.includes(item)) merged.push(item);
+    }
+    if (active) merged = updateTelegramThreadAgents(config, active, merged);
+    session.agents = merged;
+    writeTelegramSession(config, chatId, session);
+    return { command: "agent", reply: `Agents for this process: ${merged.join(", ")}` };
+  }
+  const values = validateAgentIds(["set", "="].includes(action) ? parts.slice(1) : parts);
+  if (!values.length) return { command: "agent", reply: "Usage: /agent <agent-id> [agent-id...]" };
+  if (active) updateTelegramThreadAgents(config, active, values);
+  session.agents = values;
+  writeTelegramSession(config, chatId, session);
+  return { command: "agent", reply: `Agents for this process: ${values.join(", ")}` };
+}
+
 function telegramConversationCommand(config, control, chatId, text) {
+  const extracted = telegramExtractMentions(text);
+  let message = extracted.message;
+  const mentions = extracted.mentions;
+  if (!message) {
+    if (mentions.length) return telegramAgentCommand(config, chatId, `add ${mentions.join(" ")}`);
+    message = String(text || "").trim();
+  }
+  const session = readTelegramSession(config, chatId);
+  const active = telegramActiveThread(config, chatId, session);
   const conversation = telegramConversationConfig(control);
-  const agents = telegramConversationAgents(conversation);
+  const agents = telegramSessionAgents(config, control, session, active, mentions);
   const mode = String(conversation.mode || "orchestrate").trim() || "orchestrate";
+  const queuedRunIds = [];
+  if (active) {
+    if (mentions.length) {
+      const merged = updateTelegramThreadAgents(config, active, [...telegramThreadAgentIds(active), ...mentions]);
+      session.agents = merged;
+      writeTelegramSession(config, chatId, session);
+    }
+    let selected = agents.length ? agents : telegramThreadAgentIds(active);
+    if (!selected.length) selected = telegramSessionAgents(config, control, session, active, []);
+    if (!selected.length) {
+      const selection = selectAgentsForMessage(message, { mode, agents: null });
+      selected = selection.agents.map((agent) => agent.id);
+      updateTelegramThreadAgents(config, active, selected);
+    }
+    selected = validateAgentIds(selected);
+    active.conversation ||= [];
+    active.conversation.push({
+      speaker: "user",
+      role: "user",
+      content: message,
+      at: new Date().toISOString()
+    });
+    const prompt = telegramProcessPrompt(active, message);
+    const onlineById = new Map(publicAgents().map((agent) => [agent.id, agent]));
+    for (const agentId of selected) {
+      const run = createAgentRun(config, active, onlineById.get(agentId), prompt, active.trace_id);
+      queuedRunIds.push(run.id);
+    }
+    active.updated_at = new Date().toISOString();
+    state.threads.set(active.id, active);
+    writeSnapshot(config, "threads", active.id, active);
+    appendJsonl(config, "threads.jsonl", active);
+    return {
+      command: "chat",
+      reply: `Thinking with ${selected.join(", ") || "Agent Bus"}...\nProcess: ${telegramThreadLabel(active)}\nThread: ${active.id}`,
+      thread: {
+        id: active.id,
+        trace_id: active.trace_id,
+        runs: queuedRunIds,
+        agents: selected
+      }
+    };
+  }
   const body = {
-    message: String(text || "").trim(),
+    message,
+    title: telegramThreadTitle(message),
     mode,
     source: "telegram",
     telegram: {
       conversation: true,
-      chat_id: String(chatId || "").trim()
+      chat_id: String(chatId || "").trim(),
+      session: true
     }
   };
   if (agents.length) body.agents = agents;
   const thread = createThread(config, body);
+  thread.conversation ||= [];
+  thread.conversation.push({
+    speaker: "user",
+    role: "user",
+    content: message,
+    at: thread.created_at || new Date().toISOString()
+  });
+  thread.updated_at = new Date().toISOString();
+  state.threads.set(thread.id, thread);
+  writeSnapshot(config, "threads", thread.id, thread);
+  session.active_thread_id = thread.id;
+  session.agents = telegramThreadAgentIds(thread);
+  writeTelegramSession(config, chatId, session);
   const runIds = (thread.runs || []).map((run) => run.id).filter(Boolean);
   const selected = thread.selection?.agents || agents;
   return {
     command: "chat",
-    reply: `Thinking with ${selected.join(", ") || "Agent Bus"}...\nThread: ${thread.id}`,
+    reply: `Thinking with ${selected.join(", ") || "Agent Bus"}...\nProcess: ${telegramThreadLabel(thread)}\nThread: ${thread.id}`,
     thread: {
       id: thread.id,
       trace_id: thread.trace_id,
@@ -1892,6 +2210,7 @@ function notifyTelegramConversationResult(config, run) {
   if (!telegram || telegram.conversation !== true) return false;
   const chatId = String(telegram.chat_id || "").trim();
   if (!chatId) return false;
+  recordTelegramConversationReply(config, thread, run);
   const reply = telegramConversationReplyText(run);
   notifyPlugin(config, "telegram.command", {
     command: "chat",
@@ -1906,13 +2225,31 @@ function notifyTelegramConversationResult(config, run) {
   return true;
 }
 
+function recordTelegramConversationReply(config, thread, run) {
+  if (!thread) return;
+  const content = trimOutput(run.stdout || run.summary || run.stderr || "");
+  thread.conversation ||= [];
+  thread.conversation.push({
+    speaker: run.agent_id || "agent",
+    role: "assistant",
+    content,
+    run_id: run.id,
+    status: run.status,
+    at: run.completed_at || new Date().toISOString()
+  });
+  thread.updated_at = new Date().toISOString();
+  state.threads.set(thread.id, thread);
+  writeSnapshot(config, "threads", thread.id, thread);
+}
+
 function telegramConversationReplyText(run) {
   let content = trimOutput(run.stdout || run.summary || run.stderr || "").trim();
   if (!content) content = "(no output)";
   const limit = 3800;
   if (content.length > limit) content = `${content.slice(0, limit).trimEnd()}\n...[truncated ${content.length - limit} chars]`;
-  if (run.status === "completed") return content;
-  return `Agent Bus run ${run.status || "failed"}\n${content}`;
+  const prefix = `[${run.agent_id || "agent"}]`;
+  if (run.status === "completed") return `${prefix}\n${content}`;
+  return `${prefix}\nAgent Bus run ${run.status || "failed"}\n${content}`;
 }
 
 function telegramParseCommand(text) {
@@ -1931,6 +2268,10 @@ function telegramHelpText(prefix = "") {
     "/status - gateway, edge, queue, and room summary",
     "/agents - list online agents",
     "/run <agent-id> <task> - queue a task for one agent",
+    "/new - end the current Telegram process and start a new one",
+    "/resume [thread-id or title] - list or resume Telegram processes",
+    "/agent [add|set|clear] <agent-id> - choose agents for this process",
+    "@agent-id message - add or target an agent for this message",
     "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled"
   ].filter(Boolean).join("\n");
 }

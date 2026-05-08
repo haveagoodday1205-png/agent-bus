@@ -108,6 +108,7 @@ def ensure_dirs(config):
     (root / "threads").mkdir(parents=True, exist_ok=True)
     (root / "runs").mkdir(parents=True, exist_ok=True)
     (root / "rooms").mkdir(parents=True, exist_ok=True)
+    (root / "telegram_sessions").mkdir(parents=True, exist_ok=True)
 
 
 def load_edge_tokens(config):
@@ -1876,6 +1877,7 @@ def create_thread(config, body, trace_id=None):
         "id": "thread_" + str(uuid.uuid4()),
         "trace_id": trace_id,
         "created_at": now(),
+        "updated_at": now(),
         "source": body.get("source", "http"),
         "mode": selection["mode"],
         "message": body["message"],
@@ -1886,6 +1888,8 @@ def create_thread(config, body, trace_id=None):
         },
         "runs": [],
     }
+    if str(body.get("title") or "").strip():
+        thread["title"] = str(body.get("title")).strip()
     if isinstance(body.get("telegram"), dict):
         thread["telegram"] = body["telegram"]
     for agent in selection["agents"]:
@@ -2522,6 +2526,169 @@ def telegram_conversation_agents(conversation):
     return out
 
 
+def telegram_session_key(chat_id):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(chat_id or "").strip()) or "unknown"
+
+
+def telegram_session_path(config, chat_id):
+    return Path(config["dataDir"]) / "telegram_sessions" / f"{telegram_session_key(chat_id)}.json"
+
+
+def read_telegram_session(config, chat_id):
+    path = telegram_session_path(config, chat_id)
+    if not path.exists():
+        return {
+            "chat_id": str(chat_id or "").strip(),
+            "active_thread_id": None,
+            "agents": [],
+            "updated_at": None,
+        }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    data["chat_id"] = str(chat_id or "").strip()
+    data.setdefault("active_thread_id", None)
+    data.setdefault("agents", [])
+    return data
+
+
+def write_telegram_session(config, chat_id, session):
+    path = telegram_session_path(config, chat_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = dict(session or {})
+    record["chat_id"] = str(chat_id or "").strip()
+    record["updated_at"] = now()
+    path.write_text(json.dumps(redact(record), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return record
+
+
+def telegram_thread_for_chat(thread, chat_id):
+    telegram = thread.get("telegram") if isinstance(thread, dict) else None
+    return (
+        isinstance(telegram, dict)
+        and telegram.get("conversation") is True
+        and str(telegram.get("chat_id") or "") == str(chat_id or "")
+    )
+
+
+def telegram_chat_threads(config, chat_id):
+    by_id = {}
+    for thread in read_snapshots(config, "threads"):
+        if isinstance(thread, dict) and thread.get("id") and telegram_thread_for_chat(thread, chat_id):
+            by_id[thread["id"]] = thread
+    for thread in STATE["threads"].values():
+        if isinstance(thread, dict) and thread.get("id") and telegram_thread_for_chat(thread, chat_id):
+            by_id[thread["id"]] = thread
+    return sorted(by_id.values(), key=lambda item: item.get("updated_at") or item.get("created_at") or "", reverse=True)
+
+
+def telegram_active_thread(config, chat_id, session=None):
+    session = session or read_telegram_session(config, chat_id)
+    thread_id = session.get("active_thread_id")
+    if not thread_id:
+        return None
+    thread = STATE["threads"].get(thread_id) or read_snapshot(config, "threads", thread_id)
+    if isinstance(thread, dict) and telegram_thread_for_chat(thread, chat_id):
+        return thread
+    return None
+
+
+def telegram_thread_title(message):
+    title = " ".join(str(message or "").strip().split())
+    return title[:80] or "Untitled Telegram process"
+
+
+def telegram_thread_label(thread):
+    if not thread:
+        return "no active process"
+    return str(thread.get("title") or thread.get("message") or thread.get("id") or "").strip()[:80] or thread.get("id")
+
+
+def validate_agent_ids(agent_ids):
+    wanted = []
+    for agent_id in agent_ids or []:
+        text = str(agent_id or "").strip()
+        if text and text not in wanted:
+            wanted.append(text)
+    if not wanted:
+        return []
+    online = {agent["id"] for agent in public_agents()}
+    missing = [agent_id for agent_id in wanted if agent_id not in online]
+    if missing:
+        err = Exception("unknown registered agents: " + ", ".join(missing))
+        err.status_code = 400
+        raise err
+    return wanted
+
+
+def telegram_thread_agent_ids(thread):
+    return [str(item) for item in ((thread or {}).get("selection", {}) or {}).get("agents") or [] if str(item or "").strip()]
+
+
+def update_telegram_thread_agents(config, thread, agent_ids):
+    values = validate_agent_ids(agent_ids)
+    if not thread or not values:
+        return []
+    current = telegram_thread_agent_ids(thread)
+    merged = []
+    for item in [*current, *values]:
+        if item not in merged:
+            merged.append(item)
+    thread.setdefault("selection", {})["agents"] = merged
+    thread["updated_at"] = now()
+    STATE["threads"][thread["id"]] = thread
+    write_snapshot(config, "threads", thread["id"], thread)
+    return merged
+
+
+def telegram_extract_mentions(text):
+    remaining = str(text or "").strip()
+    mentions = []
+    while True:
+        match = re.match(r"^@([A-Za-z0-9_.-]+)(?:\s+|$)", remaining)
+        if not match:
+            break
+        mentions.append(match.group(1))
+        remaining = remaining[match.end():].strip()
+    return mentions, remaining
+
+
+def telegram_process_prompt(thread, latest_message):
+    lines = [
+        "You are continuing a Telegram Agent Bus process.",
+        f"Process: {telegram_thread_label(thread)}",
+        f"Thread: {thread.get('id')}",
+        "Answer the latest user message directly. Keep continuity with the prior messages.",
+        "Do not claim to be another agent. Your agent id will be added outside your reply.",
+        "",
+        "Recent process messages:",
+    ]
+    for item in (thread.get("conversation") or [])[-12:]:
+        speaker = item.get("speaker") or item.get("role") or "unknown"
+        content = trim(item.get("content") or "")
+        if content:
+            lines.append(f"{speaker}: {content}")
+    lines.extend(["", "Latest user message:", str(latest_message or "").strip()])
+    return "\n".join(lines)
+
+
+def telegram_session_agents(config, control, session, thread=None, mentions=None):
+    mentioned = validate_agent_ids(mentions or [])
+    if mentioned:
+        return mentioned
+    session_agents = validate_agent_ids(session.get("agents") or [])
+    if session_agents:
+        return session_agents
+    configured = validate_agent_ids(telegram_conversation_agents(telegram_conversation_config(control)))
+    if configured:
+        return configured
+    thread_agents = validate_agent_ids(telegram_thread_agent_ids(thread))
+    if thread_agents:
+        return thread_agents
+    return []
+
+
 def telegram_control_secret(control):
     env_name = str(control.get("secretTokenEnv") or "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET")
     return str(os.environ.get(env_name) or control.get("secretToken") or control.get("secret_token") or "").strip()
@@ -2643,6 +2810,7 @@ def telegram_webhook(config, body, handler):
     return {
         "ok": True,
         "command": command_result["command"],
+        "reply": command_result["reply"],
         "reply_status": reply_result,
         "thread": command_result.get("thread"),
     }
@@ -2662,14 +2830,21 @@ def telegram_update_message(body):
 
 
 def telegram_handle_command(config, plugin, control, text, chat_id=None):
-    if not str(text or "").lstrip().startswith("/"):
+    is_command = str(text or "").lstrip().startswith("/")
+    command, rest = telegram_parse_command(text)
+    if is_command and command == "new":
+        return telegram_new_command(config, chat_id, rest)
+    if is_command and command == "resume":
+        return telegram_resume_command(config, chat_id, rest)
+    if is_command and command == "agent":
+        return telegram_agent_command(config, chat_id, rest)
+    if not is_command:
         if telegram_conversation_enabled(control):
             return telegram_conversation_command(config, control, chat_id, text)
         return {
             "command": "message",
             "reply": telegram_help_text(prefix="Free-form chat is disabled. Use /run or enable control.conversation.enabled."),
         }
-    command, rest = telegram_parse_command(text)
     if command in ("start", "help"):
         return {"command": command, "reply": telegram_help_text()}
     if command == "status":
@@ -2683,27 +2858,182 @@ def telegram_handle_command(config, plugin, control, text, chat_id=None):
     return {"command": command or "unknown", "reply": telegram_help_text(prefix="Unknown command.")}
 
 
+def telegram_new_command(config, chat_id, rest):
+    session = read_telegram_session(config, chat_id)
+    session["active_thread_id"] = None
+    session["agents"] = []
+    write_telegram_session(config, chat_id, session)
+    if str(rest or "").strip():
+        plugin = telegram_plugin_config(config)
+        return telegram_conversation_command(config, telegram_control_config(plugin), chat_id, rest)
+    return {
+        "command": "new",
+        "reply": "Started a new Agent Bus process. Send the first message to name it.",
+    }
+
+
+def telegram_resume_command(config, chat_id, rest):
+    query = str(rest or "").strip()
+    threads = telegram_chat_threads(config, chat_id)
+    session = read_telegram_session(config, chat_id)
+    if not query:
+        if not threads:
+            return {"command": "resume", "reply": "No Telegram processes found. Send a message to start one."}
+        lines = ["Recent Agent Bus processes:"]
+        active_id = session.get("active_thread_id")
+        for thread in threads[:8]:
+            marker = "*" if thread.get("id") == active_id else "-"
+            lines.append(f"{marker} {thread.get('id')} - {telegram_thread_label(thread)}")
+        lines.append("Use /resume <thread-id or title words> to switch.")
+        return {"command": "resume", "reply": "\n".join(lines)}
+    lowered = query.lower()
+    match = None
+    for thread in threads:
+        title = telegram_thread_label(thread).lower()
+        thread_id = str(thread.get("id") or "")
+        if thread_id == query or thread_id.endswith(query) or query in thread_id or lowered in title:
+            match = thread
+            break
+    if not match:
+        return {"command": "resume", "reply": f"No matching Telegram process for: {query}"}
+    session["active_thread_id"] = match["id"]
+    session["agents"] = telegram_thread_agent_ids(match)
+    write_telegram_session(config, chat_id, session)
+    return {
+        "command": "resume",
+        "reply": f"Resumed process: {telegram_thread_label(match)}\nThread: {match['id']}\nAgents: {', '.join(session['agents']) or 'auto'}",
+        "thread": {
+            "id": match.get("id"),
+            "trace_id": match.get("trace_id"),
+            "runs": [],
+            "agents": session["agents"],
+        },
+    }
+
+
+def telegram_agent_command(config, chat_id, rest):
+    session = read_telegram_session(config, chat_id)
+    active = telegram_active_thread(config, chat_id, session)
+    parts = str(rest or "").split()
+    if not parts:
+        online = [agent["id"] for agent in public_agents()]
+        current = session.get("agents") or telegram_thread_agent_ids(active)
+        return {
+            "command": "agent",
+            "reply": "Current agents: " + (", ".join(current) or "auto") + "\nOnline agents: " + (", ".join(online) or "none"),
+        }
+    action = parts[0].lower()
+    if action in ("clear", "auto"):
+        session["agents"] = []
+        write_telegram_session(config, chat_id, session)
+        return {"command": "agent", "reply": "Agent selection cleared. The process will use Agent Bus routing."}
+    if action in ("add", "+"):
+        values = validate_agent_ids(parts[1:])
+        if not values:
+            return {"command": "agent", "reply": "Usage: /agent add <agent-id> [agent-id...]"}
+        merged = []
+        for item in [*(session.get("agents") or telegram_thread_agent_ids(active)), *values]:
+            if item not in merged:
+                merged.append(item)
+        if active:
+            merged = update_telegram_thread_agents(config, active, merged)
+        session["agents"] = merged
+        write_telegram_session(config, chat_id, session)
+        return {"command": "agent", "reply": "Agents for this process: " + ", ".join(merged)}
+    if action in ("set", "="):
+        values = validate_agent_ids(parts[1:])
+    else:
+        values = validate_agent_ids(parts)
+    if not values:
+        return {"command": "agent", "reply": "Usage: /agent <agent-id> [agent-id...]"}
+    if active:
+        update_telegram_thread_agents(config, active, values)
+    session["agents"] = values
+    write_telegram_session(config, chat_id, session)
+    return {"command": "agent", "reply": "Agents for this process: " + ", ".join(values)}
+
+
 def telegram_conversation_command(config, control, chat_id, text):
+    mentions, message = telegram_extract_mentions(text)
+    if not message:
+        if mentions:
+            return telegram_agent_command(config, chat_id, "add " + " ".join(mentions))
+        message = str(text or "").strip()
+    session = read_telegram_session(config, chat_id)
+    active = telegram_active_thread(config, chat_id, session)
     conversation = telegram_conversation_config(control)
-    agents = telegram_conversation_agents(conversation)
+    agents = telegram_session_agents(config, control, session, active, mentions)
     mode = str(conversation.get("mode") or "orchestrate").strip() or "orchestrate"
+    run_ids = []
+    if active:
+        if mentions:
+            merged = update_telegram_thread_agents(config, active, [*telegram_thread_agent_ids(active), *mentions])
+            session["agents"] = merged
+            write_telegram_session(config, chat_id, session)
+        selected = agents or telegram_thread_agent_ids(active)
+        if not selected:
+            selected = telegram_session_agents(config, control, session, active, [])
+        if not selected:
+            selection = select_agents(message, {"mode": mode, "agents": None})
+            selected = [agent["id"] for agent in selection["agents"]]
+            update_telegram_thread_agents(config, active, selected)
+        selected = validate_agent_ids(selected)
+        active.setdefault("conversation", []).append({
+            "speaker": "user",
+            "role": "user",
+            "content": message,
+            "at": now(),
+        })
+        prompt = telegram_process_prompt(active, message)
+        online_by_id = {agent["id"]: agent for agent in public_agents()}
+        for agent_id in selected:
+            run = create_run(config, active, online_by_id[agent_id], prompt, trace_id=active.get("trace_id"))
+            run_ids.append(run["id"])
+        active["updated_at"] = now()
+        STATE["threads"][active["id"]] = active
+        write_snapshot(config, "threads", active["id"], active)
+        append_jsonl(config, "threads.jsonl", active)
+        return {
+            "command": "chat",
+            "reply": f"Thinking with {', '.join(selected) or 'Agent Bus'}...\nProcess: {telegram_thread_label(active)}\nThread: {active.get('id')}",
+            "thread": {
+                "id": active.get("id"),
+                "trace_id": active.get("trace_id"),
+                "runs": run_ids,
+                "agents": selected,
+            },
+        }
     body = {
-        "message": str(text or "").strip(),
+        "message": message,
+        "title": telegram_thread_title(message),
         "mode": mode,
         "source": "telegram",
         "telegram": {
             "conversation": True,
             "chat_id": str(chat_id or "").strip(),
+            "session": True,
         },
     }
     if agents:
         body["agents"] = agents
     thread = create_thread(config, body)
+    thread.setdefault("conversation", []).append({
+        "speaker": "user",
+        "role": "user",
+        "content": message,
+        "at": thread.get("created_at") or now(),
+    })
+    thread["updated_at"] = now()
+    STATE["threads"][thread["id"]] = thread
+    write_snapshot(config, "threads", thread["id"], thread)
+    session["active_thread_id"] = thread["id"]
+    session["agents"] = telegram_thread_agent_ids(thread)
+    write_telegram_session(config, chat_id, session)
     run_ids = [run.get("id") for run in thread.get("runs") or [] if run.get("id")]
     selected = thread.get("selection", {}).get("agents") or agents
     return {
         "command": "chat",
-        "reply": "Thinking with " + (", ".join(selected) or "Agent Bus") + f"...\nThread: {thread.get('id')}",
+        "reply": "Thinking with " + (", ".join(selected) or "Agent Bus") + f"...\nProcess: {telegram_thread_label(thread)}\nThread: {thread.get('id')}",
         "thread": {
             "id": thread.get("id"),
             "trace_id": thread.get("trace_id"),
@@ -2724,6 +3054,7 @@ def notify_telegram_conversation_result(config, run):
     chat_id = str(telegram.get("chat_id") or "").strip()
     if not chat_id:
         return False
+    record_telegram_conversation_reply(config, thread, run)
     reply = telegram_conversation_reply_text(run)
     notify_plugin(config, "telegram.command", {
         "command": "chat",
@@ -2735,6 +3066,23 @@ def notify_telegram_conversation_result(config, run):
     return True
 
 
+def record_telegram_conversation_reply(config, thread, run):
+    if not isinstance(thread, dict):
+        return
+    content = trim(run.get("stdout") or run.get("summary") or run.get("stderr") or "")
+    thread.setdefault("conversation", []).append({
+        "speaker": run.get("agent_id") or "agent",
+        "role": "assistant",
+        "content": content,
+        "run_id": run.get("id"),
+        "status": run.get("status"),
+        "at": run.get("completed_at") or now(),
+    })
+    thread["updated_at"] = now()
+    STATE["threads"][thread["id"]] = thread
+    write_snapshot(config, "threads", thread["id"], thread)
+
+
 def telegram_conversation_reply_text(run):
     content = trim(run.get("stdout") or run.get("summary") or run.get("stderr") or "").strip()
     if not content:
@@ -2742,9 +3090,10 @@ def telegram_conversation_reply_text(run):
     limit = 3800
     if len(content) > limit:
         content = content[:limit].rstrip() + f"\n...[truncated {len(content) - limit} chars]"
+    prefix = f"[{run.get('agent_id') or 'agent'}]"
     if run.get("status") == "completed":
-        return content
-    return f"Agent Bus run {run.get('status') or 'failed'}\n{content}"
+        return f"{prefix}\n{content}"
+    return f"{prefix}\nAgent Bus run {run.get('status') or 'failed'}\n{content}"
 
 
 def telegram_parse_command(text):
@@ -2767,6 +3116,10 @@ def telegram_help_text(prefix=""):
         "/status - gateway, edge, queue, and room summary",
         "/agents - list online agents",
         "/run <agent-id> <task> - queue a task for one agent",
+        "/new - end the current Telegram process and start a new one",
+        "/resume [thread-id or title] - list or resume Telegram processes",
+        "/agent [add|set|clear] <agent-id> - choose agents for this process",
+        "@agent-id message - add or target an agent for this message",
         "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled",
     ])
     return "\n".join(lines)

@@ -36,6 +36,7 @@
 - Adds an opt-in Telegram control webhook for `/status`, `/agents`, and `/run agent-id task`, guarded by Telegram secret tokens and chat allowlists.
 - Adds opt-in Telegram conversational mode so plain webhook messages can route to configured Agent Bus agents and return agent output to the same Telegram chat.
 - Adds `agent-bus plugin telegram poll` as a Central-side polling bridge for deployments where public Telegram webhooks are blocked by Cloudflare, NAT, or local-only networking.
+- Makes Telegram conversation mode process-oriented: plain messages stay on the active thread until `/new`, `/resume` can switch processes, `/agent` manages process agents, and `@agent-id` can add or target agents mid-process.
 - Makes `agent-bus setup central` generate and print a first scoped edge token plus a copy/paste `setup edge --token ...` command, while still supporting pair-code onboarding.
 - Adds a Web Console Edge Join panel that creates, lists, and revokes scoped edge tokens while copying a ready-to-run `agent-bus setup edge --gateway ... --token ...` command.
 - Adds Web Console pair-code onboarding so operators can create short-lived codes and copy `agent-bus setup edge --gateway ... --code ...` commands without exposing admin tokens.

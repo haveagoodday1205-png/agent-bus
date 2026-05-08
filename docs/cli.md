@@ -285,6 +285,22 @@ Telegram control is intentionally disabled by default. After setting `control.en
 
 Set `control.conversation.enabled: true` or `AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true` when plain Telegram messages should behave like a chat with Agent Bus. Use `control.conversation.agentId`, `control.conversation.agents`, `AGENT_BUS_TELEGRAM_CONVERSATION_AGENT`, or `AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS` to pin the chat to Hermes, OpenClaw, Codex, or another agent; otherwise Central uses normal Agent Bus routing.
 
+Telegram conversation mode is process-oriented. A chat keeps one active Agent Bus thread and appends new runs to it until the operator starts a new process:
+
+```text
+/new
+/new investigate the deployment failure
+/resume
+/resume deployment failure
+/agent
+/agent hermes-hk
+/agent add openclaw-hk
+/agent clear
+@codex-120 review the latest code path
+```
+
+The first plain message names the process, `/resume` lists or switches prior Telegram processes, `/agent` sets or adds process agents, and a leading `@agent-id` targets that message while adding the agent to the active process. Agent replies are prefixed with `[agent-id]` so multi-agent Telegram replies stay attributable.
+
 When Telegram cannot reach the public webhook because the Central is local-only, behind NAT, or protected by a WAF such as Cloudflare, run the polling bridge on the Central host instead:
 
 ```bash

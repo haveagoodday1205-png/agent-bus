@@ -112,6 +112,15 @@ DONE
 
 `DONE` requests completion. The room is not marked completed until all queued or running runs have finished.
 
+Long-running rooms also expose a local memory index:
+
+```http
+GET /rooms/{room_id}/memory
+GET /rooms/{room_id}/memory/expand?ref=messages[7]&around=1
+```
+
+The memory endpoint returns compressed snippets plus a book-style table of contents. Each table entry points back to durable room history such as `messages[7]`, `reports[2]`, or `blackboard.notes[1]`. The expand endpoint returns the selected source item, optionally with neighboring items, so an agent can carry a small directory in its prompt and fetch exact context only when it needs to continue a thread of work.
+
 
 ## Room Directive Contract
 

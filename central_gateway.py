@@ -12,7 +12,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -385,7 +385,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
             if path == "/health":
                 agents = public_agents()
                 nodes = public_nodes()
@@ -429,7 +431,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/rooms":
                 return self.json(list_rooms(self.config))
             if path.startswith("/rooms/"):
-                room_id = path.rsplit("/", 1)[-1]
+                parts = path.strip("/").split("/")
+                if len(parts) == 3 and parts[2] == "memory":
+                    return self.json(room_memory_api(self.config, parts[1], query))
+                if len(parts) == 4 and parts[2] == "memory" and parts[3] == "expand":
+                    return self.json(room_memory_expand_api(self.config, parts[1], query))
+                if len(parts) != 2:
+                    return self.json({"error": "not_found"}, 404)
+                room_id = parts[1] if len(parts) >= 2 else path.rsplit("/", 1)[-1]
                 item = STATE["rooms"].get(room_id) or read_snapshot(self.config, "rooms", room_id)
                 return self.json(item or {"error": "not_found"}, 200 if item else 404)
             if path.startswith("/traces/"):
@@ -806,6 +815,8 @@ def agent_bus_manifest(config):
             "threads": "POST /threads",
             "rooms": "POST /rooms",
             "room": "GET /rooms/{room_id}",
+            "room_memory": "GET /rooms/{room_id}/memory",
+            "room_memory_expand": "GET /rooms/{room_id}/memory/expand?ref=messages[7]&around=1",
             "room_message": "POST /rooms/{room_id}/messages",
             "room_wake": "POST /rooms/{room_id}/wake",
             "trace": "GET /traces/{trace_id}",
@@ -2047,6 +2058,113 @@ def room_memory_for_prompt(room, reason):
         "table_of_contents": toc_entries[:index_limit],
         "relevant_snippets": snippets[:snippet_limit],
     }
+
+
+def room_memory_query_value(query, name, default=""):
+    values = query.get(name) if isinstance(query, dict) else None
+    if isinstance(values, list) and values:
+        return str(values[0] or "").strip()
+    return default
+
+
+def room_memory_query_int(query, name, default, lower, upper):
+    try:
+        value = int(room_memory_query_value(query, name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(lower, min(value, upper))
+
+
+def room_memory_api(config, room_id, query):
+    room = get_room(config, room_id)
+    reason = room_memory_query_value(query, "q") or room_memory_query_value(query, "query")
+    memory = ensure_room_memory_cache(room)
+    write_room(config, room)
+    return {
+        "room_id": room.get("id"),
+        "version": memory.get("version") if memory else None,
+        "memory": memory,
+        "prompt_view": room_memory_for_prompt(room, reason),
+        "expand": {
+            "endpoint": f"/rooms/{room.get('id')}/memory/expand",
+            "ref_param": "Use a table_of_contents ref label such as messages[7], reports[2], or blackboard.notes[1].",
+            "around_param": "Optional number of neighboring source items to include.",
+        },
+    }
+
+
+def room_memory_expand_api(config, room_id, query):
+    room = get_room(config, room_id)
+    ref_label = room_memory_query_value(query, "ref") or room_memory_query_value(query, "label")
+    if not ref_label:
+        err = Exception("ref is required")
+        err.status_code = 400
+        raise err
+    source, position = parse_room_memory_ref(ref_label)
+    items = room_memory_collection(room, source)
+    if position < 0 or position >= len(items):
+        err = Exception("memory ref not found")
+        err.status_code = 404
+        raise err
+    around = room_memory_query_int(query, "around", 0, 0, 10)
+    item_chars = room_memory_query_int(query, "chars", 4000, 200, 30000)
+    memory = ensure_room_memory_cache(room)
+    write_room(config, room)
+    start = max(0, position - around)
+    end = min(len(items), position + around + 1)
+    expanded = []
+    for index in range(start, end):
+        item = items[index]
+        if not isinstance(item, dict):
+            continue
+        entry = room_memory_source_entry(item, source, index)
+        content = redact(str(entry.get("content") or entry.get("message") or entry.get("text") or "").strip())
+        expanded.append({
+            "ref": room_memory_item_ref(entry),
+            "selected": index == position,
+            "title": room_memory_item_title(content),
+            "topics": room_memory_unique_tokens(room_memory_tokens(content), 8),
+            "content": truncate_for_room_prompt(content, item_chars),
+        })
+    toc_entry = next(
+        (
+            item for item in memory.get("table_of_contents", [])
+            if (item.get("ref") or {}).get("label") == f"{source}[{position}]"
+        ),
+        None,
+    ) if memory else None
+    return {
+        "room_id": room.get("id"),
+        "ref": f"{source}[{position}]",
+        "around": around,
+        "source_count": len(items),
+        "toc_entry": toc_entry,
+        "items": expanded,
+    }
+
+
+def parse_room_memory_ref(ref_label):
+    match = re.match(r"^(messages|reports|blackboard\.(?:notes|reports))\[(\d+)\]$", str(ref_label or "").strip())
+    if not match:
+        err = Exception("unsupported memory ref; expected messages[n], reports[n], blackboard.notes[n], or blackboard.reports[n]")
+        err.status_code = 400
+        raise err
+    return match.group(1), int(match.group(2))
+
+
+def room_memory_collection(room, source):
+    if source == "messages":
+        return room.get("messages") or []
+    if source == "reports":
+        return room.get("reports") or []
+    board = room.get("blackboard") if isinstance(room.get("blackboard"), dict) else {}
+    if source == "blackboard.notes":
+        return board.get("notes") or []
+    if source == "blackboard.reports":
+        return board.get("reports") or []
+    err = Exception("unsupported memory source")
+    err.status_code = 400
+    raise err
 
 
 def autonomous_prompt(room, agent, reason):

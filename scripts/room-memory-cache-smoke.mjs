@@ -148,6 +148,11 @@ async function main() {
   assert(finalRoom.memory_cache?.source_count >= 1, "room snapshot did not persist memory_cache source_count");
   assert((finalRoom.memory_cache?.table_of_contents || []).some((item) => String(item.ref?.label || "").startsWith("messages[")), "memory_cache did not store source positions in table_of_contents");
   assert((finalRoom.memory_cache?.snippets || []).some((item) => String(item.content || "").includes("vectorish-memory-cache")), "memory_cache did not store the high-signal snippet");
+  const memoryApi = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}/memory?q=vectorish-memory-cache`, { headers: authHeaders(token) });
+  const memoryRef = (memoryApi.memory?.table_of_contents || []).find((item) => String(item.preview || "").includes("vectorish-memory-cache"))?.ref?.label || "";
+  assert(memoryRef.startsWith("messages["), "memory API did not expose a source ref for the high-signal message");
+  const expanded = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}/memory/expand?ref=${encodeURIComponent(memoryRef)}&around=1&chars=1200`, { headers: authHeaders(token) });
+  assert((expanded.items || []).some((item) => item.selected && String(item.content || "").includes("vectorish-memory-cache")), "memory expand API did not return the selected source content");
 
   const bytes = Number.parseInt(output.match(/prompt_bytes=(\d+)/)?.[1] || "0", 10);
   const result = {
@@ -156,6 +161,7 @@ async function main() {
     room_id: finalRoom.id,
     memory_source_count: finalRoom.memory_cache?.source_count || 0,
     memory_index_entries: finalRoom.memory_cache?.table_of_contents?.length || 0,
+    memory_expand_items: expanded.items?.length || 0,
     memory_snippets: finalRoom.memory_cache?.snippets?.length || 0,
     prompt_bytes: bytes
   };

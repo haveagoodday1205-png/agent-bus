@@ -202,6 +202,7 @@ Usage:
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
   agent-bus room recover room_xxx --yes --reason "stale queued run recovery"
+  agent-bus room recover room_xxx --yes --force --reason "operator-confirmed pause"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus trace export trace_xxx --format markdown --out trace.md
@@ -1703,6 +1704,11 @@ async function room(args) {
       process.stdout.write(formatRoomInspection(inspection));
       process.stdout.write(`\nDry run. Re-run with --yes to pause the room and cancel queued runs:\nagent-bus room recover ${roomId} --yes --reason ${JSON.stringify(reason)}\n`);
       return;
+    }
+    const force = args.includes("--force");
+    if (!force && inspection.recommendation !== "pause_recover_orphan_queued_runs") {
+      process.stdout.write(formatRoomInspection(inspection));
+      throw new Error("Refusing room recover --yes because no stale queued orphan runs were found. Use `agent-bus room pause ROOM_ID --reason ...` for an intentional operator pause, or add --force after verifying no agent process should keep running.");
     }
     const recovered = await gatewayJson(`/rooms/${pathPart(roomId)}/pause`, { auth: true, args, method: "POST", body: { reason } });
     if (args.includes("--json")) return printJson(recovered);

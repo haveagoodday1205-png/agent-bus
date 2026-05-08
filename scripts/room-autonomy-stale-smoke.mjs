@@ -150,6 +150,14 @@ async function main() {
   assert(plannerStatus?.active_runs?.some((run) => run.status === "running"), "CLI status did not include the active planner run");
   assert(workerStatus?.activity === "idle", "CLI status marked the idle peer as busy");
   assert(runningStatus.rooms?.some((item) => item.id === room.id && item.active_runs?.length), "CLI status did not expose active room runs");
+  let activeRecoverRejected = false;
+  try {
+    await runCliText(["room", "recover", room.id, "--yes", "--gateway", gateway, "--token", token]);
+  } catch (err) {
+    activeRecoverRejected = /Refusing room recover --yes/.test(err.message || String(err));
+  }
+  assert(activeRecoverRejected, "room recover --yes should refuse active rooms without stale queued orphan runs");
+  await waitForRunStatus(gateway, token, room.id, "slow-planner", "running");
 
   await requestJson(`${gateway}/edge/register`, {
     method: "POST",

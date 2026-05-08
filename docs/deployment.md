@@ -37,7 +37,7 @@ Operational recovery checklist for stale/orphan room runs:
 
 1. Check `agent-bus status --gateway ... --token ...` and look for `stale_queued_runs` or stale nodes.
 2. Inspect the specific room with `agent-bus room inspect ROOM_ID --gateway ... --token ...`; lower `--queued-run-stale-seconds` only for tests or confirmed incidents.
-3. If the gateway queue is empty and the room only has old queued snapshots, run `agent-bus room recover ROOM_ID --yes --reason "stale queued run recovery"`. This pauses the room and cancels queued runs without deleting history.
+3. If the gateway queue is empty and the room only has old queued snapshots, run `agent-bus room recover ROOM_ID --yes --reason "stale queued run recovery"`. This pauses the room and cancels queued runs without deleting history. `room recover --yes` now refuses when inspect does not find stale queued orphan runs; use `room pause` for a deliberate operator stop, or `room recover --yes --force` only after separately confirming no live agent process should continue.
 4. If any run is actually running, first verify the edge OS process or let it finish; room recovery does not kill local agent processes.
 5. Export the paused room and create a new follow-up room if work should continue.
 

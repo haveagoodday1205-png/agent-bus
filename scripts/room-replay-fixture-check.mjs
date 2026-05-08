@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { replayRoomEvents } from "../sdk/js/agent-bus-sdk.mjs";
+import { replayRoomEvents, validateRoomEventBundle } from "../sdk/js/agent-bus-sdk.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const bundlePath = path.join(root, "docs", "fixtures", "no-quota-room-events.v1.json");
@@ -24,12 +24,14 @@ Promise.resolve().then(main).catch((err) => {
 function main() {
   const bundle = readJson(bundlePath);
   const expected = readJson(replayPath);
-  validateBundle(bundle);
+  const knownTypes = validateBundle(bundle);
+  const jsValidation = validateRoomEventBundle(bundle, { strictTypes: true, knownTypes });
+  assert(jsValidation.event_count === bundle.events.length, "JS SDK validation returned the wrong event count");
 
   const jsReplay = replayRoomEvents(bundle);
   assertDeepEqual(jsReplay, expected, "JS SDK replay summary changed");
 
-  const pythonReplay = pythonReplayFixture();
+  const pythonReplay = pythonReplayFixture(knownTypes);
   assertDeepEqual(pythonReplay, expected, "Python SDK replay summary changed");
 
   const cliReplay = cliReplayFixture();
@@ -56,7 +58,7 @@ function main() {
     event_count: bundle.events.length,
     output_events: expected.counts.output_events,
     output_bytes: expected.counts.output_bytes,
-    checks: ["metadata", "schema_event_types", "js_sdk_replay", "python_sdk_replay", "cli_replay", "cli_markdown"]
+    checks: ["metadata", "schema_event_types", "js_sdk_validate", "js_sdk_replay", "python_sdk_validate", "python_sdk_replay", "cli_strict_replay", "cli_markdown"]
   };
 
   if (jsonOut) {
@@ -98,18 +100,22 @@ function validateBundle(bundle) {
   assert(bundle.events.some((event) => event.type === "run.output"), "fixture should include run.output events");
   assert(bundle.events.some((event) => event.type === "room.status.changed"), "fixture should include room.status.changed");
   assertDeepEqual(actualCounts, bundle.counts, "fixture counts do not match event types");
+  return [...knownTypes];
 }
 
-function pythonReplayFixture() {
+function pythonReplayFixture(knownTypes) {
   const python = findPython();
   assert(python, "Python 3.10+ is required for the replay fixture check");
   const code = [
     "import json, sys",
     `sys.path.insert(0, ${JSON.stringify(root)})`,
-    "from sdk.python.agent_bus_sdk import replay_room_events",
+    "from sdk.python.agent_bus_sdk import replay_room_events, validate_room_event_bundle",
     `bundle_path = ${JSON.stringify(bundlePath)}`,
+    `known_types = set(${JSON.stringify(knownTypes)})`,
     "with open(bundle_path, encoding='utf-8') as handle:",
     "    bundle = json.load(handle)",
+    "validation = validate_room_event_bundle(bundle, strict_types=True, known_types=known_types)",
+    "assert validation['event_count'] == len(bundle['events'])",
     "print(json.dumps(replay_room_events(bundle), sort_keys=True))"
   ].join("\n");
   return JSON.parse(run(python, ["-c", code]).stdout);
@@ -121,7 +127,8 @@ function cliReplayFixture() {
     "room",
     "replay",
     "--in",
-    bundlePath
+    bundlePath,
+    "--strict"
   ]).stdout);
 }
 

@@ -10,6 +10,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const command = argv[0] || "help";
 
+const ROOM_EVENT_TYPES = [
+  "room.created",
+  "room.message.added",
+  "room.blackboard.updated",
+  "room.report.added",
+  "room.status.changed",
+  "run.queued",
+  "run.started",
+  "run.output",
+  "run.completed",
+  "run.failed",
+  "agent.registered",
+  "agent.health.updated",
+  "wake.requested",
+  "wake.dispatched",
+  "wake.cancelled",
+  "policy.denied"
+];
+
 const OPENCLAW_AGENT_BUS_AGENTS_MD = `# Agent Bus Runtime
 
 You are an OpenClaw executor connected through Agent Bus.
@@ -198,7 +217,7 @@ Usage:
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
   agent-bus room export room_xxx --format events --out room-events.json
-  agent-bus room replay --in room-events.json --format markdown
+  agent-bus room replay --in room-events.json --format markdown [--strict]
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
   agent-bus room recover room_xxx --yes --reason "stale queued run recovery"
@@ -1646,7 +1665,9 @@ async function room(args) {
   if (action === "replay") {
     const input = optionValue(args, "--in") || optionValue(args, "--input") || requiredPositional(args, 1, "event bundle path");
     const format = optionValue(args, "--format") || (args.includes("--markdown") ? "markdown" : "json");
-    const summary = replayRoomEvents(readJsonFile(input));
+    const bundle = readJsonFile(input);
+    if (args.includes("--strict")) validateRoomEventBundle(bundle, { strictTypes: true });
+    const summary = replayRoomEvents(bundle);
     const text = format === "markdown" || format === "md"
       ? formatRoomReplayMarkdown(summary)
       : `${JSON.stringify(summary, null, 2)}\n`;
@@ -2427,6 +2448,63 @@ function roomEventBundle(room, options = {}) {
     },
     counts: countRoomEvents(sorted),
     events: sorted
+  };
+}
+
+function validateRoomEventBundle(bundle, options = {}) {
+  if (!bundle || typeof bundle !== "object" || !Array.isArray(bundle.events)) {
+    throw new Error("room replay requires a JSON event bundle with an events array.");
+  }
+  if (bundle.object && bundle.object !== "agent_bus.room_event_bundle") {
+    throw new Error(`Expected agent_bus.room_event_bundle, got ${bundle.object}.`);
+  }
+  const metadata = bundle.export_metadata || {};
+  const events = bundle.events;
+  if (metadata.event_count !== undefined && metadata.event_count !== events.length) {
+    throw new Error(`Event bundle metadata count ${metadata.event_count} does not match ${events.length} events.`);
+  }
+  if (events.length) {
+    if (metadata.sequence_start !== undefined && metadata.sequence_start !== 1) {
+      throw new Error(`Event bundle sequence_start must be 1, got ${metadata.sequence_start}.`);
+    }
+    if (metadata.sequence_end !== undefined && metadata.sequence_end !== events.length) {
+      throw new Error(`Event bundle sequence_end must match event count, got ${metadata.sequence_end}.`);
+    }
+  }
+  const ids = new Set();
+  const knownTypes = new Set(options.knownTypes || ROOM_EVENT_TYPES);
+  const strictTypes = options.strictTypes === true;
+  const roomId = bundle.room?.id || "";
+  const counts = { events: events.length };
+  for (const [index, event] of events.entries()) {
+    if (!event || typeof event !== "object") throw new Error(`Event ${index + 1} must be an object.`);
+    if (!event.id) throw new Error(`Event ${index + 1} is missing id.`);
+    if (ids.has(event.id)) throw new Error(`Duplicate event id: ${event.id}.`);
+    ids.add(event.id);
+    if (event.sequence !== undefined && event.sequence !== index + 1) {
+      throw new Error(`Event ${event.id} has non-contiguous sequence ${event.sequence}; expected ${index + 1}.`);
+    }
+    if (!event.type) throw new Error(`Event ${event.id} is missing type.`);
+    if (strictTypes && !knownTypes.has(event.type)) {
+      throw new Error(`Event ${event.id} uses unknown type: ${event.type}.`);
+    }
+    if (!event.at) throw new Error(`Event ${event.id} is missing at timestamp.`);
+    if (!event.actor) throw new Error(`Event ${event.id} is missing actor.`);
+    if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) {
+      throw new Error(`Event ${event.id} payload must be an object.`);
+    }
+    if (roomId && event.room_id && event.room_id !== roomId) {
+      throw new Error(`Event ${event.id} room_id ${event.room_id} does not match bundle room id ${roomId}.`);
+    }
+    counts[event.type] = (counts[event.type] || 0) + 1;
+  }
+  return {
+    ok: true,
+    room_id: roomId,
+    event_count: events.length,
+    sequence_start: events.length ? 1 : 0,
+    sequence_end: events.length,
+    counts
   };
 }
 

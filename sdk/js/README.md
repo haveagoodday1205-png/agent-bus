@@ -31,7 +31,7 @@ The SDK intentionally stays small:
 - presence: `agents()`, `nodes()`
 - rooms: `rooms()`, `room(id)`, `createRoom()`, `messageRoom()`, `wakeRoom()`
 - OpenAI-compatible agent calls: `agentChat()`, `agentResponse()`
-- replay fixtures: `exportRoomEvents()`, `roomEventBundle()`, `replayRoomEvents()`
+- replay fixtures: `exportRoomEvents()`, `roomEventBundle()`, `validateRoomEventBundle()`, `replayRoomEvents()`
 
 Room event bundles include stable event `sequence` numbers and `export_metadata` so SDK examples and support tools can verify replay order without depending only on array position. Public fixtures live under `docs/fixtures/` and can be checked with `npm run fixture:room-replay`.
 

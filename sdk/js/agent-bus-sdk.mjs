@@ -135,6 +135,25 @@ export function agentModel(agentId) {
   return text.startsWith("agent:") ? text : `agent:${text}`;
 }
 
+export const ROOM_EVENT_TYPES = [
+  "room.created",
+  "room.message.added",
+  "room.blackboard.updated",
+  "room.report.added",
+  "room.status.changed",
+  "run.queued",
+  "run.started",
+  "run.output",
+  "run.completed",
+  "run.failed",
+  "agent.registered",
+  "agent.health.updated",
+  "wake.requested",
+  "wake.dispatched",
+  "wake.cancelled",
+  "policy.denied"
+];
+
 export function roomEventBundle(room, options = {}) {
   const events = [];
   const roomId = room?.id || "";
@@ -248,6 +267,65 @@ export function roomEventBundle(room, options = {}) {
     },
     counts: countEvents(sorted),
     events: sorted
+  };
+}
+
+export function validateRoomEventBundle(bundle, options = {}) {
+  if (!bundle || typeof bundle !== "object" || !Array.isArray(bundle.events)) {
+    throw new AgentBusError("validateRoomEventBundle requires an event bundle with an events array.");
+  }
+  if (bundle.object && bundle.object !== "agent_bus.room_event_bundle") {
+    throw new AgentBusError(`Expected agent_bus.room_event_bundle, got ${bundle.object}.`);
+  }
+  const metadata = bundle.export_metadata || {};
+  const events = bundle.events;
+  if (metadata.event_count !== undefined && metadata.event_count !== events.length) {
+    throw new AgentBusError(`Event bundle metadata count ${metadata.event_count} does not match ${events.length} events.`);
+  }
+  if (events.length) {
+    if (metadata.sequence_start !== undefined && metadata.sequence_start !== 1) {
+      throw new AgentBusError(`Event bundle sequence_start must be 1, got ${metadata.sequence_start}.`);
+    }
+    if (metadata.sequence_end !== undefined && metadata.sequence_end !== events.length) {
+      throw new AgentBusError(`Event bundle sequence_end must match event count, got ${metadata.sequence_end}.`);
+    }
+  }
+
+  const knownTypes = new Set(options.knownTypes || ROOM_EVENT_TYPES);
+  const strictTypes = options.strictTypes === true;
+  const ids = new Set();
+  const counts = { events: events.length };
+  const roomId = bundle.room?.id || "";
+  for (const [index, event] of events.entries()) {
+    if (!event || typeof event !== "object") throw new AgentBusError(`Event ${index + 1} must be an object.`);
+    if (!event.id) throw new AgentBusError(`Event ${index + 1} is missing id.`);
+    if (ids.has(event.id)) throw new AgentBusError(`Duplicate event id: ${event.id}.`);
+    ids.add(event.id);
+    if (event.sequence !== undefined && event.sequence !== index + 1) {
+      throw new AgentBusError(`Event ${event.id} has non-contiguous sequence ${event.sequence}; expected ${index + 1}.`);
+    }
+    if (!event.type) throw new AgentBusError(`Event ${event.id} is missing type.`);
+    if (strictTypes && !knownTypes.has(event.type)) {
+      throw new AgentBusError(`Event ${event.id} uses unknown type: ${event.type}.`);
+    }
+    if (!event.at) throw new AgentBusError(`Event ${event.id} is missing at timestamp.`);
+    if (!event.actor) throw new AgentBusError(`Event ${event.id} is missing actor.`);
+    if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) {
+      throw new AgentBusError(`Event ${event.id} payload must be an object.`);
+    }
+    if (roomId && event.room_id && event.room_id !== roomId) {
+      throw new AgentBusError(`Event ${event.id} room_id ${event.room_id} does not match bundle room id ${roomId}.`);
+    }
+    counts[event.type] = (counts[event.type] || 0) + 1;
+  }
+
+  return {
+    ok: true,
+    room_id: roomId,
+    event_count: events.length,
+    sequence_start: events.length ? 1 : 0,
+    sequence_end: events.length,
+    counts
   };
 }
 

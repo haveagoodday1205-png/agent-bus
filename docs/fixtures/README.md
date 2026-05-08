@@ -13,4 +13,4 @@ Run the fixture gate from a checkout:
 npm run fixture:room-replay
 ```
 
-The check validates event ordering metadata, verifies event types against `docs/protocol-v1.schema.json`, replays the bundle through the JS SDK, Python SDK, and CLI, and confirms the Markdown replay path still renders the key report/run details. It does not start a gateway and does not call a model provider.
+The check validates event ordering metadata, verifies event types against `docs/protocol-v1.schema.json`, exercises the JS/Python SDK bundle validators, replays the bundle through the JS SDK, Python SDK, and CLI `--strict` path, and confirms the Markdown replay path still renders the key report/run details. It does not start a gateway and does not call a model provider.

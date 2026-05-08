@@ -19,6 +19,26 @@ class AgentBusError(Exception):
         self.body = body
 
 
+ROOM_EVENT_TYPES = {
+    "room.created",
+    "room.message.added",
+    "room.blackboard.updated",
+    "room.report.added",
+    "room.status.changed",
+    "run.queued",
+    "run.started",
+    "run.output",
+    "run.completed",
+    "run.failed",
+    "agent.registered",
+    "agent.health.updated",
+    "wake.requested",
+    "wake.dispatched",
+    "wake.cancelled",
+    "policy.denied",
+}
+
+
 @dataclass
 class AgentBusClient:
     gateway_url: str | None = None
@@ -223,6 +243,66 @@ def room_event_bundle(room: dict[str, Any], *, reports_only: bool = False) -> di
         },
         "counts": _count_events(sorted_events),
         "events": sorted_events,
+    }
+
+
+def validate_room_event_bundle(
+    bundle: dict[str, Any],
+    *,
+    strict_types: bool = False,
+    known_types: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("events"), list):
+        raise AgentBusError("validate_room_event_bundle requires an event bundle with an events array.")
+    if bundle.get("object") and bundle.get("object") != "agent_bus.room_event_bundle":
+        raise AgentBusError(f"Expected agent_bus.room_event_bundle, got {bundle.get('object')}.")
+    metadata = bundle.get("export_metadata") or {}
+    events = bundle["events"]
+    if metadata.get("event_count") is not None and metadata.get("event_count") != len(events):
+        raise AgentBusError(f"Event bundle metadata count {metadata.get('event_count')} does not match {len(events)} events.")
+    if events:
+        if metadata.get("sequence_start") is not None and metadata.get("sequence_start") != 1:
+            raise AgentBusError(f"Event bundle sequence_start must be 1, got {metadata.get('sequence_start')}.")
+        if metadata.get("sequence_end") is not None and metadata.get("sequence_end") != len(events):
+            raise AgentBusError(f"Event bundle sequence_end must match event count, got {metadata.get('sequence_end')}.")
+
+    allowed_types = set(known_types or ROOM_EVENT_TYPES)
+    room_id = (bundle.get("room") or {}).get("id", "")
+    ids: set[str] = set()
+    counts: dict[str, int] = {"events": len(events)}
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise AgentBusError(f"Event {index + 1} must be an object.")
+        event_id = event.get("id")
+        if not event_id:
+            raise AgentBusError(f"Event {index + 1} is missing id.")
+        if event_id in ids:
+            raise AgentBusError(f"Duplicate event id: {event_id}.")
+        ids.add(event_id)
+        if event.get("sequence") is not None and event.get("sequence") != index + 1:
+            raise AgentBusError(f"Event {event_id} has non-contiguous sequence {event.get('sequence')}; expected {index + 1}.")
+        event_type = event.get("type")
+        if not event_type:
+            raise AgentBusError(f"Event {event_id} is missing type.")
+        if strict_types and event_type not in allowed_types:
+            raise AgentBusError(f"Event {event_id} uses unknown type: {event_type}.")
+        if not event.get("at"):
+            raise AgentBusError(f"Event {event_id} is missing at timestamp.")
+        if not event.get("actor"):
+            raise AgentBusError(f"Event {event_id} is missing actor.")
+        if not isinstance(event.get("payload"), dict):
+            raise AgentBusError(f"Event {event_id} payload must be an object.")
+        if room_id and event.get("room_id") and event.get("room_id") != room_id:
+            raise AgentBusError(f"Event {event_id} room_id {event.get('room_id')} does not match bundle room id {room_id}.")
+        counts[event_type] = counts.get(event_type, 0) + 1
+
+    return {
+        "ok": True,
+        "room_id": room_id,
+        "event_count": len(events),
+        "sequence_start": 1 if events else 0,
+        "sequence_end": len(events),
+        "counts": counts,
     }
 
 

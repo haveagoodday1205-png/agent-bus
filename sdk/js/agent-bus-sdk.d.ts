@@ -33,5 +33,10 @@ export class AgentBusClient {
 }
 
 export function agentModel(agentId: string): string;
+export const ROOM_EVENT_TYPES: string[];
 export function roomEventBundle(room: any, options?: { reportsOnly?: boolean }): any;
+export function validateRoomEventBundle(
+  bundle: any,
+  options?: { strictTypes?: boolean; knownTypes?: Iterable<string> }
+): any;
 export function replayRoomEvents(bundle: any): any;

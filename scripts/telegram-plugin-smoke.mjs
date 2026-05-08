@@ -54,7 +54,11 @@ async function main() {
           enabled: true,
           secretToken: webhookSecret,
           allowedChatIds: [telegramChatId],
-          allowRun: true
+          allowRun: true,
+          conversation: {
+            enabled: true,
+            agentId: "telegram-smoke-agent"
+          }
         }
       }
     },
@@ -119,6 +123,15 @@ async function main() {
   assert(webhookTask.task?.run_id === runWebhook.thread.runs[0], "telegram /run task run_id mismatch");
   await completeRun(gateway, edgeToken, webhookTask.task.run_id, "REPORT: Telegram webhook run dry-run ok.\n");
 
+  const chatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Please answer like a Telegram conversational assistant.");
+  assert(chatWebhook.ok === true && chatWebhook.command === "chat", "telegram conversational webhook failed");
+  assert(chatWebhook.thread?.runs?.length === 1, "telegram conversational webhook did not queue a thread run");
+  const chatTask = await pollTask(gateway, edgeToken);
+  assert(chatTask.task?.run_id === chatWebhook.thread.runs[0], "telegram conversational task run_id mismatch");
+  assert(chatTask.task?.agent_id === "telegram-smoke-agent", "telegram conversational task did not target configured agent");
+  await completeRun(gateway, edgeToken, chatTask.task.run_id, "Telegram conversational reply ok.\n");
+  await waitForNotificationMessage(dataDir, /Telegram conversational reply ok/);
+
   const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
     headers: authJsonHeaders(adminToken),
@@ -161,8 +174,9 @@ async function main() {
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, agentsWebhook.command, runWebhook.command],
+    webhook_commands: [statusWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
+    conversational_thread_id: chatWebhook.thread.id,
     node_gateway_plugin_test_status: nodeGateway.plugin_test_status,
     thread_run_id: threadTask.task.run_id,
     room_id: room.id
@@ -203,7 +217,11 @@ async function nodeGatewayPluginSmoke() {
           enabled: true,
           secretToken: webhookSecret,
           allowedChatIds: [telegramChatId],
-          allowRun: true
+          allowRun: true,
+          conversation: {
+            enabled: true,
+            agentId
+          }
         }
       }
     },
@@ -255,6 +273,15 @@ async function nodeGatewayPluginSmoke() {
   assert(webhookTask.task?.run_id === runWebhook.thread.runs[0], "node telegram /run task run_id mismatch");
   await completeRun(gateway, edgeToken, webhookTask.task.run_id, "REPORT: Node Telegram webhook run dry-run ok.\n", nodeId);
 
+  const chatWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "Please answer through node central conversational mode.");
+  assert(chatWebhook.ok === true && chatWebhook.command === "chat", "node telegram conversational webhook failed");
+  assert(chatWebhook.thread?.runs?.length === 1, "node telegram conversational webhook did not queue a thread run");
+  const chatTask = await pollTask(gateway, edgeToken, nodeId);
+  assert(chatTask.task?.run_id === chatWebhook.thread.runs[0], "node telegram conversational task run_id mismatch");
+  assert(chatTask.task?.agent_id === agentId, "node telegram conversational task did not target configured agent");
+  await completeRun(gateway, edgeToken, chatTask.task.run_id, "Node Telegram conversational reply ok.\n", nodeId);
+  await waitForNotificationMessage(dataDir, /Node Telegram conversational reply ok/);
+
   const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
     headers: authJsonHeaders(adminToken),
@@ -272,7 +299,8 @@ async function nodeGatewayPluginSmoke() {
   return {
     ok: true,
     plugin_test_status: pluginTest.notification.status,
-    webhook_commands: [statusWebhook.command, runWebhook.command],
+    webhook_commands: [statusWebhook.command, runWebhook.command, chatWebhook.command],
+    conversational_thread_id: chatWebhook.thread.id,
     notifications: notifications.length
   };
 }
@@ -331,6 +359,18 @@ async function waitForNotifications(dataDir, requiredEvents, timeoutMs = 10000) 
     await delay(100);
   }
   throw new Error(`Timed out waiting for notifications: ${requiredEvents.join(", ")}`);
+}
+
+async function waitForNotificationMessage(dataDir, pattern, timeoutMs = 10000) {
+  const started = Date.now();
+  const file = path.join(dataDir, "notifications.jsonl");
+  while (Date.now() - started < timeoutMs) {
+    const events = readJsonl(file);
+    const match = events.find((item) => pattern.test(String(item.message || "")));
+    if (match) return match;
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for notification message: ${pattern}`);
 }
 
 function readJsonl(file) {

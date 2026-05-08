@@ -1385,6 +1385,7 @@ function createThread(config, body, traceId = "") {
     },
     runs: []
   };
+  if (body.telegram && typeof body.telegram === "object") thread.telegram = body.telegram;
 
   for (const agent of selection.agents) {
     createAgentRun(config, thread, agent, body.message, traceId);
@@ -1495,14 +1496,16 @@ function completeRun(config, body) {
   writeSnapshot(config, "runs", run.id, run);
   updateThreadRun(config, run);
   appendJsonl(config, "runs.jsonl", run);
-  notifyPlugin(config, run.status === "completed" ? "run.completed" : "run.failed", {
-    run_id: run.id,
-    thread_id: run.thread_id,
-    agent_id: run.agent_id,
-    node_id: run.node_id,
-    status: run.status,
-    exit_code: run.exit_code
-  });
+  if (!notifyTelegramConversationResult(config, run)) {
+    notifyPlugin(config, run.status === "completed" ? "run.completed" : "run.failed", {
+      run_id: run.id,
+      thread_id: run.thread_id,
+      agent_id: run.agent_id,
+      node_id: run.node_id,
+      status: run.status,
+      exit_code: run.exit_code
+    });
+  }
   return run;
 }
 
@@ -1600,6 +1603,7 @@ function telegramPluginConfig(config) {
 function publicTelegramPluginStatus(config) {
   const plugin = telegramPluginConfig(config);
   const control = telegramControlConfig(plugin);
+  const conversation = telegramConversationConfig(control);
   return {
     enabled: plugin.enabled === true,
     configured: Boolean(telegramBotToken(plugin) && telegramChatId(plugin)),
@@ -1613,7 +1617,12 @@ function publicTelegramPluginStatus(config) {
       allow_run: control.allowRun !== false && control.allow_run !== false,
       allowed_chat_count: telegramAllowedChatIds(plugin).length,
       secret_configured: Boolean(telegramControlSecret(control)),
-      secret_token_env: control.secretTokenEnv
+      secret_token_env: control.secretTokenEnv,
+      conversation: {
+        enabled: conversation.enabled === true || envTruthy(conversation.enabled),
+        agents: telegramConversationAgents(conversation),
+        mode: conversation.mode || "orchestrate"
+      }
     }
   };
 }
@@ -1640,6 +1649,44 @@ function telegramChatId(plugin) {
 
 function telegramControlConfig(plugin) {
   return { ...(plugin.control || {}) };
+}
+
+function envTruthy(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
+function telegramConversationConfig(control) {
+  const raw = control.conversation || control.chat || {};
+  const conversation = raw && typeof raw === "object" ? { ...raw } : {};
+  if (process.env.AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED !== undefined) {
+    conversation.enabled = envTruthy(process.env.AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED);
+  }
+  if (process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENT) {
+    conversation.agentId = process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENT.trim();
+  }
+  if (process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS) {
+    conversation.agents = process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  return conversation;
+}
+
+function telegramConversationEnabled(control) {
+  const conversation = telegramConversationConfig(control);
+  return conversation.enabled === true || envTruthy(conversation.enabled);
+}
+
+function telegramConversationAgents(conversation = {}) {
+  const values = [];
+  for (const key of ["agentId", "agent_id", "defaultAgentId", "default_agent_id"]) {
+    if (conversation[key]) values.push(String(conversation[key]).trim());
+  }
+  const raw = conversation.agents || conversation.agentIds || conversation.agent_ids || [];
+  const items = Array.isArray(raw) ? raw : String(raw).split(",");
+  for (const item of items) {
+    const text = String(item || "").trim();
+    if (text) values.push(text);
+  }
+  return [...new Set(values)].filter(Boolean);
 }
 
 function telegramControlSecret(control) {
@@ -1758,7 +1805,7 @@ function telegramWebhook(config, body = {}, req) {
     err.statusCode = 403;
     throw err;
   }
-  const command = telegramHandleCommand(config, plugin, control, text);
+  const command = telegramHandleCommand(config, plugin, control, text, chatId);
   const replyStatus = notifyPlugin(config, "telegram.command", {
     command: command.command,
     reply: command.reply,
@@ -1785,7 +1832,16 @@ function telegramUpdateMessage(body = {}) {
   return {};
 }
 
-function telegramHandleCommand(config, plugin, control, text) {
+function telegramHandleCommand(config, plugin, control, text, chatId = "") {
+  if (!String(text || "").trimStart().startsWith("/")) {
+    if (telegramConversationEnabled(control)) {
+      return telegramConversationCommand(config, control, chatId, text);
+    }
+    return {
+      command: "message",
+      reply: telegramHelpText("Free-form chat is disabled. Use /run or enable control.conversation.enabled.")
+    };
+  }
   const { command, rest } = telegramParseCommand(text);
   if (command === "start" || command === "help") return { command, reply: telegramHelpText() };
   if (command === "status") return { command, reply: telegramStatusText(config) };
@@ -1797,6 +1853,66 @@ function telegramHandleCommand(config, plugin, control, text) {
     return telegramRunCommand(config, rest);
   }
   return { command: command || "unknown", reply: telegramHelpText("Unknown command.") };
+}
+
+function telegramConversationCommand(config, control, chatId, text) {
+  const conversation = telegramConversationConfig(control);
+  const agents = telegramConversationAgents(conversation);
+  const mode = String(conversation.mode || "orchestrate").trim() || "orchestrate";
+  const body = {
+    message: String(text || "").trim(),
+    mode,
+    source: "telegram",
+    telegram: {
+      conversation: true,
+      chat_id: String(chatId || "").trim()
+    }
+  };
+  if (agents.length) body.agents = agents;
+  const thread = createThread(config, body);
+  const runIds = (thread.runs || []).map((run) => run.id).filter(Boolean);
+  const selected = thread.selection?.agents || agents;
+  return {
+    command: "chat",
+    reply: `Thinking with ${selected.join(", ") || "Agent Bus"}...\nThread: ${thread.id}`,
+    thread: {
+      id: thread.id,
+      trace_id: thread.trace_id,
+      runs: runIds,
+      agents: selected
+    }
+  };
+}
+
+function notifyTelegramConversationResult(config, run) {
+  const threadId = run.thread_id;
+  if (!threadId || run.room_id) return false;
+  const thread = state.threads.get(threadId) || readSnapshot(config, "threads", threadId);
+  const telegram = thread?.telegram;
+  if (!telegram || telegram.conversation !== true) return false;
+  const chatId = String(telegram.chat_id || "").trim();
+  if (!chatId) return false;
+  const reply = telegramConversationReplyText(run);
+  notifyPlugin(config, "telegram.command", {
+    command: "chat",
+    reply,
+    chat_id: chatId,
+    thread_id: threadId,
+    run_id: run.id
+  }, {
+    eventFilter: false,
+    chatIdOverride: chatId
+  });
+  return true;
+}
+
+function telegramConversationReplyText(run) {
+  let content = trimOutput(run.stdout || run.summary || run.stderr || "").trim();
+  if (!content) content = "(no output)";
+  const limit = 3800;
+  if (content.length > limit) content = `${content.slice(0, limit).trimEnd()}\n...[truncated ${content.length - limit} chars]`;
+  if (run.status === "completed") return content;
+  return `Agent Bus run ${run.status || "failed"}\n${content}`;
 }
 
 function telegramParseCommand(text) {
@@ -1814,7 +1930,8 @@ function telegramHelpText(prefix = "") {
     "Agent Bus Telegram commands:",
     "/status - gateway, edge, queue, and room summary",
     "/agents - list online agents",
-    "/run <agent-id> <task> - queue a task for one agent"
+    "/run <agent-id> <task> - queue a task for one agent",
+    "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled"
   ].filter(Boolean).join("\n");
 }
 

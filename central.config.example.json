@@ -20,7 +20,13 @@
         "enabled": false,
         "secretTokenEnv": "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET",
         "allowedChatIds": [],
-        "allowRun": true
+        "allowRun": true,
+        "conversation": {
+          "enabled": false,
+          "agentId": "",
+          "agents": [],
+          "mode": "orchestrate"
+        }
       }
     }
   },

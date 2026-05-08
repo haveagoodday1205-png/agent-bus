@@ -251,7 +251,13 @@ Central supports optional notification plugins under `plugins` in `central.confi
         "enabled": false,
         "secretTokenEnv": "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET",
         "allowedChatIds": [],
-        "allowRun": true
+        "allowRun": true,
+        "conversation": {
+          "enabled": false,
+          "agentId": "",
+          "agents": [],
+          "mode": "orchestrate"
+        }
       }
     }
   }
@@ -277,7 +283,9 @@ Telegram control is intentionally disabled by default. After setting `control.en
 /run openclaw-hk check disk usage and report back
 ```
 
-Keep `allowedChatIds` or `AGENT_BUS_TELEGRAM_CHAT_ID` scoped to operator chats, because `/run` queues a real Agent Bus task for an edge machine.
+Set `control.conversation.enabled: true` or `AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true` when plain Telegram messages should behave like a chat with Agent Bus. Use `control.conversation.agentId`, `control.conversation.agents`, `AGENT_BUS_TELEGRAM_CONVERSATION_AGENT`, or `AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS` to pin the chat to Hermes, OpenClaw, Codex, or another agent; otherwise Central uses normal Agent Bus routing.
+
+Keep `allowedChatIds` or `AGENT_BUS_TELEGRAM_CHAT_ID` scoped to operator chats, because `/run` and conversation mode queue real Agent Bus tasks for edge machines.
 
 Agent-backed model replacement uses the same OpenAI-compatible endpoint:
 

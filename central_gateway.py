@@ -1886,6 +1886,8 @@ def create_thread(config, body, trace_id=None):
         },
         "runs": [],
     }
+    if isinstance(body.get("telegram"), dict):
+        thread["telegram"] = body["telegram"]
     for agent in selection["agents"]:
         create_run(config, thread, agent, body["message"], trace_id=trace_id)
     STATE["threads"][thread["id"]] = thread
@@ -2115,15 +2117,16 @@ def complete_run(config, body):
     continue_group_thread(config, run)
     continue_room_run(config, run)
     append_jsonl(config, "runs.jsonl", run)
-    notify_plugin(config, "run.completed" if run.get("status") == "completed" else "run.failed", {
-        "run_id": run.get("id"),
-        "thread_id": run.get("thread_id"),
-        "room_id": run.get("room_id"),
-        "agent_id": run.get("agent_id"),
-        "node_id": run.get("node_id"),
-        "status": run.get("status"),
-        "exit_code": run.get("exit_code"),
-    })
+    if not notify_telegram_conversation_result(config, run):
+        notify_plugin(config, "run.completed" if run.get("status") == "completed" else "run.failed", {
+            "run_id": run.get("id"),
+            "thread_id": run.get("thread_id"),
+            "room_id": run.get("room_id"),
+            "agent_id": run.get("agent_id"),
+            "node_id": run.get("node_id"),
+            "status": run.get("status"),
+            "exit_code": run.get("exit_code"),
+        })
     return run
 
 
@@ -2423,6 +2426,7 @@ def public_telegram_plugin_status(config):
     token = telegram_bot_token(plugin)
     chat_id = telegram_chat_id(plugin)
     control = telegram_control_config(plugin)
+    conversation = telegram_conversation_config(control)
     return {
         "enabled": plugin.get("enabled") is True,
         "configured": bool(token and chat_id),
@@ -2437,6 +2441,11 @@ def public_telegram_plugin_status(config):
             "allowed_chat_count": len(telegram_allowed_chat_ids(plugin)),
             "secret_configured": bool(telegram_control_secret(control)),
             "secret_token_env": control.get("secretTokenEnv"),
+            "conversation": {
+                "enabled": conversation.get("enabled") is True or env_truthy(conversation.get("enabled")),
+                "agents": telegram_conversation_agents(conversation),
+                "mode": conversation.get("mode") or "orchestrate",
+            },
         },
     }
 
@@ -2466,6 +2475,51 @@ def telegram_chat_id(plugin):
 
 def telegram_control_config(plugin):
     return dict(plugin.get("control") or {})
+
+
+def env_truthy(value):
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def telegram_conversation_config(control):
+    raw = control.get("conversation") or control.get("chat") or {}
+    conversation = dict(raw) if isinstance(raw, dict) else {}
+    env_enabled = os.environ.get("AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED")
+    if env_enabled is not None:
+        conversation["enabled"] = env_truthy(env_enabled)
+    env_agent = os.environ.get("AGENT_BUS_TELEGRAM_CONVERSATION_AGENT")
+    if env_agent:
+        conversation["agentId"] = env_agent.strip()
+    env_agents = os.environ.get("AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS")
+    if env_agents:
+        conversation["agents"] = [item.strip() for item in env_agents.split(",") if item.strip()]
+    return conversation
+
+
+def telegram_conversation_enabled(control):
+    conversation = telegram_conversation_config(control)
+    return conversation.get("enabled") is True or env_truthy(conversation.get("enabled"))
+
+
+def telegram_conversation_agents(conversation):
+    values = []
+    for key in ("agentId", "agent_id", "defaultAgentId", "default_agent_id"):
+        if conversation.get(key):
+            values.append(str(conversation[key]).strip())
+    raw = conversation.get("agents") or conversation.get("agentIds") or conversation.get("agent_ids") or []
+    if isinstance(raw, str):
+        raw = [item.strip() for item in raw.split(",")]
+    for item in raw:
+        text = str(item).strip()
+        if text:
+            values.append(text)
+    out = []
+    seen = set()
+    for item in values:
+        if item and item not in seen:
+            out.append(item)
+            seen.add(item)
+    return out
 
 
 def telegram_control_secret(control):
@@ -2579,7 +2633,7 @@ def telegram_webhook(config, body, handler):
         err = Exception("telegram chat is not allowed")
         err.status_code = 403
         raise err
-    command_result = telegram_handle_command(config, plugin, control, text)
+    command_result = telegram_handle_command(config, plugin, control, text, chat_id)
     reply_result = notify_plugin(config, "telegram.command", {
         "command": command_result["command"],
         "reply": command_result["reply"],
@@ -2607,7 +2661,14 @@ def telegram_update_message(body):
     return {}
 
 
-def telegram_handle_command(config, plugin, control, text):
+def telegram_handle_command(config, plugin, control, text, chat_id=None):
+    if not str(text or "").lstrip().startswith("/"):
+        if telegram_conversation_enabled(control):
+            return telegram_conversation_command(config, control, chat_id, text)
+        return {
+            "command": "message",
+            "reply": telegram_help_text(prefix="Free-form chat is disabled. Use /run or enable control.conversation.enabled."),
+        }
     command, rest = telegram_parse_command(text)
     if command in ("start", "help"):
         return {"command": command, "reply": telegram_help_text()}
@@ -2620,6 +2681,70 @@ def telegram_handle_command(config, plugin, control, text):
             return {"command": command, "reply": "Run commands are disabled for this Telegram bot."}
         return telegram_run_command(config, rest)
     return {"command": command or "unknown", "reply": telegram_help_text(prefix="Unknown command.")}
+
+
+def telegram_conversation_command(config, control, chat_id, text):
+    conversation = telegram_conversation_config(control)
+    agents = telegram_conversation_agents(conversation)
+    mode = str(conversation.get("mode") or "orchestrate").strip() or "orchestrate"
+    body = {
+        "message": str(text or "").strip(),
+        "mode": mode,
+        "source": "telegram",
+        "telegram": {
+            "conversation": True,
+            "chat_id": str(chat_id or "").strip(),
+        },
+    }
+    if agents:
+        body["agents"] = agents
+    thread = create_thread(config, body)
+    run_ids = [run.get("id") for run in thread.get("runs") or [] if run.get("id")]
+    selected = thread.get("selection", {}).get("agents") or agents
+    return {
+        "command": "chat",
+        "reply": "Thinking with " + (", ".join(selected) or "Agent Bus") + f"...\nThread: {thread.get('id')}",
+        "thread": {
+            "id": thread.get("id"),
+            "trace_id": thread.get("trace_id"),
+            "runs": run_ids,
+            "agents": selected,
+        },
+    }
+
+
+def notify_telegram_conversation_result(config, run):
+    thread_id = run.get("thread_id")
+    if not thread_id or run.get("room_id"):
+        return False
+    thread = STATE["threads"].get(thread_id) or read_snapshot(config, "threads", thread_id)
+    telegram = thread.get("telegram") if isinstance(thread, dict) else None
+    if not isinstance(telegram, dict) or telegram.get("conversation") is not True:
+        return False
+    chat_id = str(telegram.get("chat_id") or "").strip()
+    if not chat_id:
+        return False
+    reply = telegram_conversation_reply_text(run)
+    notify_plugin(config, "telegram.command", {
+        "command": "chat",
+        "reply": reply,
+        "chat_id": chat_id,
+        "thread_id": thread_id,
+        "run_id": run.get("id"),
+    }, event_filter=False, chat_id_override=chat_id)
+    return True
+
+
+def telegram_conversation_reply_text(run):
+    content = trim(run.get("stdout") or run.get("summary") or run.get("stderr") or "").strip()
+    if not content:
+        content = "(no output)"
+    limit = 3800
+    if len(content) > limit:
+        content = content[:limit].rstrip() + f"\n...[truncated {len(content) - limit} chars]"
+    if run.get("status") == "completed":
+        return content
+    return f"Agent Bus run {run.get('status') or 'failed'}\n{content}"
 
 
 def telegram_parse_command(text):
@@ -2642,6 +2767,7 @@ def telegram_help_text(prefix=""):
         "/status - gateway, edge, queue, and room summary",
         "/agents - list online agents",
         "/run <agent-id> <task> - queue a task for one agent",
+        "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled",
     ])
     return "\n".join(lines)
 

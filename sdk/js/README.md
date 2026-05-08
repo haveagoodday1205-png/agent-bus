@@ -38,3 +38,7 @@ Room event bundles include stable event `sequence` numbers and `export_metadata`
 Pass `prompt_cache_key`, `metadata.agent_bus_cache_scope`, or `agent_bus.cache_scope` in `agentChat()`/`agentResponse()` options when otherwise separate model-replacement calls should reuse the same Agent Bus session/cache scope.
 
 It requires Node.js 20+ or any runtime with `fetch`.
+
+## Examples
+
+- [JS Room Replay Example](../../examples/js-room-replay/) exports a room event bundle, replays it offline, and renders a Markdown support summary.

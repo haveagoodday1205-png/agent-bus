@@ -9,6 +9,7 @@ const HERMETIC_AGENT_BUS_ENV = [
   "AGENT_BUS_GATEWAY_URL",
   "AGENT_BUS_TOKEN",
   "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_ROOM_ID",
   "AGENT_BUS_CONFIG",
   "AGENT_BUS_HOST",
   "AGENT_BUS_PORT",
@@ -46,7 +47,8 @@ const jsFiles = [
   "scripts/verify-portable-release.mjs",
   "scripts/release-check.mjs",
   "scripts/release-notes.mjs",
-  "scripts/release-preflight.mjs"
+  "scripts/release-preflight.mjs",
+  "examples/js-room-replay/room_replay_example.mjs"
 ];
 
 try {
@@ -67,6 +69,7 @@ try {
   step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);
   step("python room-agent smoke", process.execPath, ["scripts/python-room-agent-smoke.mjs", "--json"]);
   step("python agent-model example", python, ["examples/python-agent-model/agent_model_example.py"]);
+  step("JS room replay example", process.execPath, ["examples/js-room-replay/room_replay_example.mjs", "--json"]);
   step("hello-agent compatibility smoke", process.execPath, ["scripts/compatibility-smoke.mjs", "--json"]);
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);

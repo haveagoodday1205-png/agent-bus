@@ -34,6 +34,7 @@
 - Makes the bundled `compose.yaml` fail fast when `AGENT_BUS_TOKEN` is unset instead of silently starting a public central gateway with a placeholder token.
 - Adds `npm run compose:smoke` plus Docker preflight docs so the single-service Python central deployment, persistent-volume story, and "database optional later" guidance stay aligned.
 - Shows room-specific recovery recommendations in `agent-bus room inspect` human output so stale/orphan run recovery can be copy/pasted without substituting `ROOM_ID`.
+- Documents a live-update impact matrix for central Python service changes, edge bridge scripts, edge config changes, and operator-only CLI/docs updates.
 
 ## 0.5.5 - Compact room session keys
 

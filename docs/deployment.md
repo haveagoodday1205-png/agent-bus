@@ -134,7 +134,17 @@ For live deployments, roll changes out from central to edges in small reversible
 5. For config-only changes, prefer adding new keys while keeping old keys valid until all edges have restarted. Do not rotate tokens and bridge commands in the same step; verify the new token or command with `agent-bus doctor --config edge.config.json` first.
 6. Keep secrets out of reports and commits: share service names, commit ids, room ids, and redacted command shapes rather than raw tokens, full private URLs, or model-provider quota details.
 
-Central service changes usually require only a central restart. Edge bridge script changes require each edge node to pull the repo and restart its edge service because `runCommand` invokes local scripts from that checkout.
+Use this impact matrix when deciding what to restart:
+
+| Changed files/settings | Restart | Verify |
+| --- | --- | --- |
+| `central_gateway.py`, `central.config.json`, central environment variables | Central Python service | `/health`, `agent-bus status`, and room/trace command affected by the change |
+| `edge-node.mjs`, `edge.config.json`, `pollTimeoutMs`, `defaultTimeoutMs`, agent `runCommand` | Affected edge node service | `agent-bus doctor --config edge.config.json`, then `agent-bus status` from an admin machine |
+| `scripts/codex-agent-bus.sh`, `scripts/openclaw-agent-bus.sh`, `scripts/hermes-agent-bus.sh` | Every edge whose `runCommand` references that script | A one-line no-secret room wake or a local command dry run with fake `AGENT_MESSAGE_FILE` |
+| `agent-bus.mjs` operator CLI only | Operator shells/installations using the CLI | `agent-bus --help` plus the specific read-only command, for example `agent-bus room inspect ...` |
+| Docs/examples only | No service restart | Link/render review or the relevant no-quota smoke when examples changed |
+
+Central service changes usually require only a central restart. Edge bridge script changes require each edge node to pull the repo and restart its edge service because `runCommand` invokes local scripts from that checkout. If `runCommand` uses an absolute script path, update that deployed file or repoint the config before restarting; pulling the repo alone is not enough.
 
 ## Edge Node
 

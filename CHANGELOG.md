@@ -59,6 +59,7 @@
 - Adds JS/Python SDK event bundle validators and CLI `agent-bus room replay --strict` so shared room archives can fail fast on bad sequence metadata before replay.
 - Brings JS and Python SDK replay output accounting into parity with the CLI for `run.output` events, started timestamps, exit codes, and stable run ordering.
 - Documents a live-update impact matrix for central Python service changes, edge bridge scripts, edge config changes, and operator-only CLI/docs updates.
+- Adds Web Console quickstart recovery commands so stale queued room hints can be copied with the current gateway and redacted token placeholders.
 
 ## 0.5.5 - Compact room session keys
 

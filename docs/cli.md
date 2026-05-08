@@ -83,13 +83,21 @@ agent-bus openclaw prepare \
 
 Use `OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh` for the OpenClaw `runCommand`. The prepare command writes minimal Agent Bus workspace files, marks the workspace setup complete, archives `BOOTSTRAP.md` in that target workspace if one exists, and seeds the dedicated agent with a stable Agent Bus system prompt, empty inherited skills list, and `cacheRetention: "long"` unless those fields were already customized.
 
+For Codex nodes on Linux, prefer the bundled bridge script too:
+
+```bash
+CODEX_COMMAND=codex bash ./scripts/codex-agent-bus.sh
+```
+
+It reads `AGENT_MESSAGE_FILE` before falling back to `AGENT_MESSAGE`, which prevents long room turns from becoming empty Codex prompts.
+
 For Hermes nodes on Linux, prefer the bundled bridge script when it is available:
 
 ```bash
 HERMES_COMMAND=/root/.local/bin/hermes ./scripts/hermes-agent-bus.sh
 ```
 
-The bridge reads `AGENT_MESSAGE_FILE`/`AGENT_MESSAGE` and sets Hermes' internal session id from `AGENT_SESSION_ID` without resuming old conversation history. For OpenAI Responses-compatible gateways such as sub2api, that stable id becomes the `prompt_cache_key`, so repeated wakes in the same room or thread reuse the provider-side prefix cache more consistently. A first request for a new room, thread, or newly changed prompt prefix can still show `cache_read_tokens = 0`; that is a normal cache warm-up. Investigate only when subsequent turns in the same room/session keep returning zero cached tokens.
+The Hermes bridge reads `AGENT_MESSAGE_FILE`/`AGENT_MESSAGE` and sets Hermes' internal session id from `AGENT_SESSION_ID` without resuming old conversation history. It passes the file path into its Python bootstrap instead of exporting the whole prompt, so long room turns avoid OS environment-size limits. For OpenAI Responses-compatible gateways such as sub2api, that stable id becomes the `prompt_cache_key`, so repeated wakes in the same room or thread reuse the provider-side prefix cache more consistently. A first request for a new room, thread, or newly changed prompt prefix can still show `cache_read_tokens = 0`; that is a normal cache warm-up. Investigate only when subsequent turns in the same room/session keep returning zero cached tokens.
 
 Edit:
 

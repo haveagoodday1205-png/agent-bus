@@ -27,7 +27,7 @@
       "capabilities": ["skills", "memory", "shell", "webhook", "cron"],
       "pingUrl": "https://YOUR-MODEL-GATEWAY/v1/models",
       "healthCommand": "test -x /root/.local/bin/hermes && /root/.local/bin/hermes --help 2>&1 | head -30",
-      "runCommand": "/root/.local/bin/hermes chat -q \"$AGENT_MESSAGE\" -Q"
+      "runCommand": "HERMES_COMMAND=/root/.local/bin/hermes ./scripts/hermes-agent-bus.sh"
     }
   ]
 }

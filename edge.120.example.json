@@ -16,7 +16,7 @@
       "capabilities": ["code", "review", "shell", "files"],
       "pingUrl": "https://api.openai.com/v1/models",
       "healthCommand": "codex --help | head -40",
-      "runCommand": "codex exec --color never --dangerously-bypass-approvals-and-sandbox \"$AGENT_MESSAGE\" < /dev/null"
+      "runCommand": "CODEX_COMMAND=codex bash ./scripts/codex-agent-bus.sh"
     }
   ]
 }

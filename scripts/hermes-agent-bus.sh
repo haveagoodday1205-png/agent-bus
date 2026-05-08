@@ -5,6 +5,7 @@ message="${AGENT_MESSAGE:-}"
 if [ -n "${AGENT_MESSAGE_FILE:-}" ] && [ -r "$AGENT_MESSAGE_FILE" ]; then
   message="$(cat "$AGENT_MESSAGE_FILE")"
 fi
+message_file="${AGENT_MESSAGE_FILE:-}"
 
 session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
 if [ -n "$session_id" ]; then
@@ -20,7 +21,13 @@ fi
 python_bin="${python_bin:-python3}"
 
 if [ -n "$session_id" ] && [ -d "$hermes_root" ]; then
-  export HERMES_AGENT_BUS_MESSAGE="$message"
+  if [ -n "$message_file" ] && [ -r "$message_file" ]; then
+    export HERMES_AGENT_BUS_MESSAGE_FILE="$message_file"
+    unset HERMES_AGENT_BUS_MESSAGE
+  else
+    export HERMES_AGENT_BUS_MESSAGE="$message"
+    unset HERMES_AGENT_BUS_MESSAGE_FILE
+  fi
   export HERMES_AGENT_BUS_SESSION_ID="$session_id"
   export HERMES_SESSION_SOURCE="${HERMES_SESSION_SOURCE:-agent-bus}"
   export PYTHONPATH="$hermes_root${PYTHONPATH:+:$PYTHONPATH}"
@@ -39,7 +46,16 @@ except ModuleNotFoundError as exc:
     )
     raise SystemExit(86)
 
-message = os.environ.get("HERMES_AGENT_BUS_MESSAGE", "")
+message_file = os.environ.get("HERMES_AGENT_BUS_MESSAGE_FILE", "")
+if message_file:
+    try:
+        with open(message_file, "r", encoding="utf-8") as fh:
+            message = fh.read()
+    except OSError as exc:
+        print(f"Hermes Agent Bus message file unavailable: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+else:
+    message = os.environ.get("HERMES_AGENT_BUS_MESSAGE", "")
 session_id = os.environ.get("HERMES_AGENT_BUS_SESSION_ID", "")
 
 if not session_id:
@@ -87,4 +103,14 @@ PY
   fi
 fi
 
-exec "$hermes_command" chat -q "$message" -Q
+fallback_message="$message"
+max_arg_bytes="${HERMES_AGENT_BUS_MAX_ARG_BYTES:-20000}"
+case "$max_arg_bytes" in
+  ''|*[!0-9]*) max_arg_bytes=20000 ;;
+esac
+message_bytes="$(printf '%s' "$fallback_message" | wc -c | tr -d ' ')"
+if [ -n "$message_file" ] && [ "${message_bytes:-0}" -gt "$max_arg_bytes" ]; then
+  fallback_message="Agent Bus request is too large to pass as a CLI argument. Read the full UTF-8 task from: $message_file"
+fi
+
+exec "$hermes_command" chat -q "$fallback_message" -Q

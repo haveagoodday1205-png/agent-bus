@@ -47,6 +47,7 @@
     "trace:smoke": "node scripts/trace-smoke.mjs",
     "smoke:central-restart": "node scripts/central-restart-smoke.mjs",
     "smoke:room-stale": "node scripts/room-autonomy-stale-smoke.mjs",
+    "smoke:room-prompt": "node scripts/room-prompt-compaction-smoke.mjs",
     "sdk:python:smoke": "node scripts/python-sdk-smoke.mjs",
     "smoke:python-room-agent": "node scripts/python-room-agent-smoke.mjs",
     "demo:local": "node scripts/demo-local.mjs",

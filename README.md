@@ -296,7 +296,7 @@ Each edge node sends:
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
 
-For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default OpenClaw wrapper does this, passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, falls back to a prompt file when the final OpenClaw CLI argument would be too large, and backs up oversized Agent Bus session files before a run so stale OpenClaw history does not balloon later room turns. Agent-backed `/v1/chat/completions` and `/v1/responses` calls can also pass `prompt_cache_key` or `metadata.agent_bus_cache_scope` to reuse the same derived session across otherwise separate requests.
+For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default Codex, OpenClaw, and Hermes bridge scripts do this so long room prompts do not become oversized environment variables. The OpenClaw wrapper also passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, falls back to a prompt file when the final OpenClaw CLI argument would be too large, and backs up oversized Agent Bus session files before a run so stale OpenClaw history does not balloon later room turns. Agent-backed `/v1/chat/completions` and `/v1/responses` calls can also pass `prompt_cache_key` or `metadata.agent_bus_cache_scope` to reuse the same derived session across otherwise separate requests.
 
 When using OpenClaw, prepare a dedicated Agent Bus agent/workspace before connecting the edge node:
 
@@ -309,6 +309,8 @@ agent-bus openclaw prepare \
 ```
 
 Then use `OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh` as the OpenClaw `runCommand`. This keeps Agent Bus room traffic away from any personal/default OpenClaw workspace, archives `BOOTSTRAP.md` in the target workspace so the first room turn answers the task instead of running onboarding, and gives the dedicated agent a stable Agent Bus system prompt, empty inherited skills list, `cacheRetention: "long"`, and a conservative context cap unless those fields were already customized.
+
+For Codex nodes on Linux, prefer `CODEX_COMMAND=codex bash ./scripts/codex-agent-bus.sh`; it reads `AGENT_MESSAGE_FILE` and keeps long room turns from arriving as an empty prompt after `AGENT_MESSAGE` is intentionally cleared.
 
 The edge node streams stdout/stderr events back to the gateway, then posts a final run result.
 

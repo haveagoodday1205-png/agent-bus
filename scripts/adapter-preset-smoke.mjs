@@ -28,6 +28,9 @@ try {
   for (const id of ["codex", "openclaw", "hermes", "ollama"]) {
     assert(detected.get(id)?.available === true, `detect did not find fake ${id}`);
   }
+  if (process.platform !== "win32") {
+    assert(/bundled Codex Agent Bus bridge/.test(detected.get("codex")?.note || ""), "codex detection did not prefer the bridge script");
+  }
   assert(/Using bundled\/openclaw bridge script/.test(detected.get("openclaw")?.note || ""), "openclaw detection did not prefer the bridge script");
   if (process.platform !== "win32") {
     assert(/bundled Hermes Agent Bus bridge/.test(detected.get("hermes")?.note || ""), "hermes detection did not prefer the bridge script");
@@ -59,9 +62,14 @@ try {
 
   const codex = agents.get("codex");
   assert(codex.role === "coder", "codex preset has wrong role");
-  assert(codex.runCommand.includes(" exec "), "codex preset must use codex exec");
-  assert(codex.runCommand.includes("--color never"), "codex preset should disable color");
-  assert(codex.runCommand.includes("AGENT_MESSAGE"), "codex preset must pass AGENT_MESSAGE");
+  if (process.platform === "win32") {
+    assert(codex.runCommand.includes(" exec "), "codex Windows preset must use codex exec");
+    assert(codex.runCommand.includes("--color never"), "codex Windows preset should disable color");
+    assert(codex.runCommand.includes("AGENT_MESSAGE"), "codex Windows preset must pass AGENT_MESSAGE");
+  } else {
+    assert(codex.runCommand.includes("CODEX_COMMAND="), "codex preset must bind CODEX_COMMAND");
+    assert(codex.runCommand.includes("codex-agent-bus.sh"), "codex preset must use the bridge script when available");
+  }
 
   const openclaw = agents.get("openclaw");
   assert(openclaw.role === "executor", "openclaw preset has wrong role");

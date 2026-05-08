@@ -1388,7 +1388,7 @@ function presetAgents() {
       adapter: "echo",
       capabilities: ["shell", "files"]
     }],
-    codex: [codexAgent("codex")],
+    codex: [codexAgent("codex", "codex-local", { script: process.platform === "win32" ? "" : "./scripts/codex-agent-bus.sh" })],
     openclaw: [openclawAgent("./scripts/openclaw-agent-bus.sh")],
     hermes: [hermesAgent(defaultHermesCommand())],
     ollama: [ollamaAgent("ollama", "llama3.1")]
@@ -1436,6 +1436,11 @@ function edgeConfigWithAgents(agents) {
 async function discoverLocalTools() {
   const host = safeId(os.hostname() || "local");
   const codexPath = findExecutable("codex");
+  const codexScript = os.platform() === "win32" ? "" : findFirstExisting([
+    path.resolve(process.cwd(), "scripts", "codex-agent-bus.sh"),
+    path.resolve(__dirname, "scripts", "codex-agent-bus.sh"),
+    "/root/agent-bus/scripts/codex-agent-bus.sh"
+  ]);
   const hermesPath = findExecutable("hermes", commonHermesPaths());
   const ollamaPath = findExecutable("ollama");
   const openclawCommand = process.env.OPENCLAW_AGENT_COMMAND || "";
@@ -1460,7 +1465,8 @@ async function discoverLocalTools() {
       available: Boolean(codexPath),
       command: codexPath || "codex",
       version: codexPath ? commandVersion(codexPath) : "",
-      agent: codexPath ? codexAgent(codexPath, `codex-${host}`) : null
+      note: codexScript ? "Using bundled Codex Agent Bus bridge script for large room prompts." : "",
+      agent: codexPath ? codexAgent(codexPath, `codex-${host}`, { script: codexScript }) : null
     },
     {
       id: "openclaw",
@@ -1539,7 +1545,8 @@ function checkConfiguredTools(checks, config, baseDir) {
   }
 }
 
-function codexAgent(commandPath, id = "codex-local") {
+function codexAgent(commandPath, id = "codex-local", options = {}) {
+  const script = options.script || "";
   return {
     id,
     kind: "codex",
@@ -1548,7 +1555,9 @@ function codexAgent(commandPath, id = "codex-local") {
     adapter: "command",
     capabilities: ["code", "review", "shell", "files"],
     pingUrl: "https://api.openai.com/v1/models",
-    runCommand: `${quoteCommand(commandPath)} exec --color never --dangerously-bypass-approvals-and-sandbox ${messageArgument()}${nullInputRedirect()}`
+    runCommand: script
+      ? `CODEX_COMMAND=${quoteCommand(commandPath)} bash ${quoteCommand(script)}`
+      : `${quoteCommand(commandPath)} exec --color never --dangerously-bypass-approvals-and-sandbox ${messageArgument()}${nullInputRedirect()}`
   };
 }
 

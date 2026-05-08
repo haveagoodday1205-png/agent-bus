@@ -1691,14 +1691,70 @@ def wake_room_agents(config, room, agent_ids, reason, trace_id=None):
     return out
 
 
+def room_prompt_limit(name, default, lower, upper):
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(lower, min(value, upper))
+
+
+def truncate_for_room_prompt(value, limit):
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    return text[:limit].rstrip() + f"\n[truncated {omitted} chars]"
+
+
+def compact_room_item(item, per_item_limit):
+    content = truncate_for_room_prompt(item.get("content") or item.get("message") or item.get("text") or "", per_item_limit)
+    out = {
+        "at": item.get("at") or item.get("created_at"),
+        "speaker": item.get("speaker") or item.get("agent_id") or item.get("role") or "unknown",
+        "content": content,
+    }
+    run_id = item.get("run_id")
+    if run_id:
+        out["run_id"] = run_id
+    return out
+
+
+def compact_room_blackboard(room):
+    board = room.get("blackboard") if isinstance(room.get("blackboard"), dict) else {}
+    item_limit = room_prompt_limit("AGENT_BUS_ROOM_PROMPT_ITEM_CHARS", 1200, 200, 8000)
+    item_count = room_prompt_limit("AGENT_BUS_ROOM_PROMPT_ITEM_COUNT", 6, 1, 20)
+    compact = {
+        "permissions": board.get("permissions"),
+        "budget": board.get("budget"),
+        "open_questions": board.get("open_questions") or [],
+        "next_actions": board.get("next_actions") or [],
+    }
+    notes = board.get("notes") if isinstance(board.get("notes"), list) else []
+    reports = board.get("reports") if isinstance(board.get("reports"), list) else room.get("reports") or []
+    if notes:
+        compact["recent_notes"] = [compact_room_item(item, item_limit) for item in notes[-item_count:] if isinstance(item, dict)]
+    if reports:
+        compact["recent_reports"] = [compact_room_item(item, item_limit) for item in reports[-item_count:] if isinstance(item, dict)]
+    return {key: value for key, value in compact.items() if value not in (None, "", [])}
+
+
+def compact_recent_room_messages(room):
+    item_limit = room_prompt_limit("AGENT_BUS_ROOM_PROMPT_MESSAGE_CHARS", 1000, 200, 8000)
+    item_count = room_prompt_limit("AGENT_BUS_ROOM_PROMPT_MESSAGE_COUNT", 8, 1, 20)
+    messages = room.get("messages") or []
+    return [compact_room_item(item, item_limit) for item in messages[-item_count:] if isinstance(item, dict)]
+
+
 def autonomous_prompt(room, agent, reason):
+    autonomy = room.get("autonomy") or {}
     lines = [
         "You are an autonomous agent inside an Agent Bus room.",
         f"Room: {room.get('title') or room['id']}",
         f"Your identity: {agent['id']} ({agent.get('kind')}/{agent.get('role')}).",
         "",
         "Goal:",
-        room.get("goal", ""),
+        truncate_for_room_prompt(room.get("goal", ""), room_prompt_limit("AGENT_BUS_ROOM_PROMPT_GOAL_CHARS", 12000, 1000, 50000)),
         "",
         "Cache-stable room contract:",
         "Agent Bus rooms are shared AI-to-AI workspaces. Treat the room goal, agent identity, and autonomy protocol as durable context for this room. Work from the latest state, but keep the beginning of your reasoning anchored in the stable room contract so model gateways can reuse cached prompt prefixes across repeated wakes. Your job is to advance the room goal, report useful findings, and delegate work only when another listed agent is better positioned to inspect, code, browse, deploy, or verify. Prefer concrete outcomes over commentary. When you need another agent, address that agent with an @agent-id directive and a self-contained task. When you produce a user-facing update, use REPORT with the important result. When shared state should persist for the next wake, use BLACKBOARD with the shortest useful note. When the goal is genuinely complete, include DONE. Do not mark DONE just because your own subtask is complete if other queued or running work remains relevant. Keep responses compact enough for room history to stay readable, but include paths, commands, endpoints, IDs, or error text when those details are needed for another agent to continue. Do not repeat this contract back to the room.",
@@ -1716,16 +1772,19 @@ def autonomous_prompt(room, agent, reason):
         "",
         "Current room state follows. These sections may change between wakes.",
         "",
-        "Shared blackboard:",
-        json.dumps(room.get("blackboard") or {}, ensure_ascii=False, indent=2),
+        "Room progress:",
+        f"steps={autonomy.get('steps', 0)} max_steps={autonomy.get('max_steps', 0)} status={room.get('status', 'active')}",
+        "",
+        "Shared blackboard summary:",
+        json.dumps(compact_room_blackboard(room), ensure_ascii=False, indent=2),
         "",
         "Latest wake reason:",
         str(reason or "").strip(),
         "",
-        "Recent room messages:",
+        "Recent room messages (compact, newest kept):",
     ]
-    for item in (room.get("messages") or [])[-18:]:
-        speaker = item.get("speaker") or item.get("role") or "unknown"
+    for item in compact_recent_room_messages(room):
+        speaker = item.get("speaker") or "unknown"
         content = str(item.get("content") or "").strip()
         if content:
             lines.append(f"{speaker}: {content}")

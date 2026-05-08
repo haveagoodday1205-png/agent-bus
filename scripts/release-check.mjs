@@ -26,6 +26,7 @@ const jsFiles = [
   "scripts/python-sdk-smoke.mjs",
   "scripts/python-room-agent-smoke.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
+  "scripts/room-prompt-compaction-smoke.mjs",
   "scripts/make-portable-release.mjs",
   "scripts/offline-smoke.mjs",
   "scripts/npm-install-smoke.mjs",
@@ -56,6 +57,7 @@ try {
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);
   step("stale room autonomy smoke", process.execPath, ["scripts/room-autonomy-stale-smoke.mjs", "--json"]);
+  step("room prompt compaction smoke", process.execPath, ["scripts/room-prompt-compaction-smoke.mjs", "--json"]);
   step("npm package verification", process.execPath, ["scripts/verify-package.mjs"]);
   step("portable bundle verification", process.execPath, ["scripts/verify-portable-release.mjs"]);
   step("release notes generation", process.execPath, ["scripts/release-notes.mjs"]);

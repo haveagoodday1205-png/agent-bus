@@ -193,7 +193,7 @@ Usage:
   agent-bus edge-agents --config edge.config.json
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
-  agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--queued-run-stale-seconds 21600]
+  agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
@@ -1610,11 +1610,13 @@ async function room(args) {
   }
   if (action === "inspect") {
     const roomId = requiredPositional(args, 1, "room id");
-    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
     const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
-    const inspection = inspectRoomRecovery(roomData, { queuedRunStaleSeconds });
+    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const nodes = await optionalGatewayJson("/nodes", { auth: true, args }, []);
+    const inspection = inspectRoomState(roomData, { nodes, staleSeconds, queuedRunStaleSeconds });
     if (args.includes("--json")) return printJson(inspection);
-    process.stdout.write(formatRoomInspection(inspection));
+    process.stdout.write(formatRoomStateInspection(inspection));
     return;
   }
   if (action === "export" || action === "dump") {
@@ -1700,9 +1702,10 @@ async function room(args) {
     const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
     const inspection = inspectRoomRecovery(roomData, { queuedRunStaleSeconds });
     const reason = optionValue(args, "--reason") || optionValue(args, "--message") || `Stale/orphan room recovery: cancelling ${inspection.stale_queued_runs.length || "old"} queued run(s).`;
+    const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
     if (!args.includes("--yes")) {
       process.stdout.write(formatRoomInspection(inspection));
-      process.stdout.write(`\nDry run. Re-run with --yes to pause the room and cancel queued runs:\nagent-bus room recover ${roomId} --yes --reason ${JSON.stringify(reason)}\n`);
+      process.stdout.write(`\nDry run. Re-run with --yes to pause the room and cancel queued runs:\nagent-bus room recover ${roomId} --yes${thresholdFlag} --reason ${JSON.stringify(reason)}\n`);
       return;
     }
     const force = args.includes("--force");
@@ -1787,6 +1790,323 @@ function formatRoomInspection(inspection) {
     lines.push("No active run recovery needed.");
   }
   return `${lines.join("\n")}\n`;
+}
+
+function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStaleSeconds = 21600 } = {}) {
+  const nodeLookupAvailable = Array.isArray(nodes) && nodes.length > 0;
+  const nodeById = new Map(
+    (Array.isArray(nodes) ? nodes : [])
+      .map((node) => [String(node?.node_id || node?.id || "").trim(), node])
+      .filter(([nodeId]) => nodeId)
+  );
+  const terminalRuns = [];
+  const liveRunningRuns = [];
+  const liveQueuedRuns = [];
+  const staleQueuedRuns = [];
+  const orphanedRunningRuns = [];
+  const otherNonTerminalRuns = [];
+  for (const rawRun of Array.isArray(room?.runs) ? room.runs : []) {
+    const run = roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailable);
+    const status = String(run.status || "queued").toLowerCase();
+    if (STATUS_TERMINAL_RUNS.has(status)) {
+      terminalRuns.push(run);
+      continue;
+    }
+    if (status === "queued") {
+      if (isStaleQueuedRun(run, queuedRunStaleSeconds)) staleQueuedRuns.push(run);
+      else liveQueuedRuns.push(run);
+      continue;
+    }
+    if (status === "running") {
+      if (run.node_freshness.startsWith("stale") || (nodeLookupAvailable && run.node_freshness === "unknown")) {
+        orphanedRunningRuns.push(run);
+      } else {
+        liveRunningRuns.push(run);
+      }
+      continue;
+    }
+    otherNonTerminalRuns.push(run);
+  }
+  const summary = summarizeRoomInspection({
+    room,
+    liveRunningRuns,
+    liveQueuedRuns,
+      staleQueuedRuns,
+      orphanedRunningRuns,
+      otherNonTerminalRuns,
+      queuedRunStaleSeconds
+    });
+  const nonTerminalRuns = [
+    ...liveRunningRuns,
+    ...liveQueuedRuns,
+    ...orphanedRunningRuns,
+    ...otherNonTerminalRuns
+  ];
+  const counts = {
+    total_runs: Array.isArray(room?.runs) ? room.runs.length : 0,
+    non_terminal_runs: nonTerminalRuns.length + staleQueuedRuns.length,
+    terminal_runs: terminalRuns.length,
+    live_running_runs: liveRunningRuns.length,
+    live_queued_runs: liveQueuedRuns.length,
+    stale_queued_runs: staleQueuedRuns.length,
+    orphaned_running_runs: orphanedRunningRuns.length,
+    other_non_terminal_runs: otherNonTerminalRuns.length
+  };
+  const recommendations = roomInspectionRecommendations({
+    room,
+    summary,
+    liveRunningRuns,
+    liveQueuedRuns,
+    staleQueuedRuns,
+    orphanedRunningRuns,
+    otherNonTerminalRuns,
+    queuedRunStaleSeconds
+  });
+  return {
+    room: {
+      id: room?.id || "",
+      title: room?.title || "",
+      trace_id: room?.trace_id || "",
+      status: room?.status || "unknown",
+      agents: room?.agents || [],
+      updated_at: room?.updated_at || null,
+      created_at: room?.created_at || null
+    },
+    analysis: {
+      summary,
+      thresholds: {
+        node_stale_seconds: staleSeconds,
+        queued_run_stale_seconds: queuedRunStaleSeconds
+      },
+      counts,
+      node_inventory_available: nodeLookupAvailable,
+      live_running_runs: liveRunningRuns,
+      live_queued_runs: liveQueuedRuns,
+      stale_queued_runs: staleQueuedRuns,
+      orphaned_running_runs: orphanedRunningRuns,
+      other_non_terminal_runs: otherNonTerminalRuns,
+      recommendations
+    },
+    thresholds: { queued_run_stale_seconds: queuedRunStaleSeconds, node_stale_seconds: staleSeconds },
+    counts: {
+      runs: counts.total_runs,
+      active_runs: nonTerminalRuns.length,
+      stale_queued_runs: staleQueuedRuns.length,
+      orphaned_running_runs: orphanedRunningRuns.length
+    },
+    active_runs: nonTerminalRuns,
+    stale_queued_runs: staleQueuedRuns,
+    recommendation: legacyRoomInspectionRecommendation(summary, nonTerminalRuns, staleQueuedRuns)
+  };
+}
+
+function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailable) {
+  const nodeId = String(rawRun?.node_id || "").trim();
+  const node = nodeById.get(nodeId);
+  const seenAt = node?.last_seen_at || null;
+  return {
+    id: rawRun?.id || "",
+    room_id: rawRun?.room_id || rawRun?.thread_id || "",
+    agent_id: rawRun?.agent_id || "",
+    node_id: nodeId,
+    status: rawRun?.status || "queued",
+    created_at: rawRun?.created_at || null,
+    started_at: rawRun?.started_at || null,
+    completed_at: rawRun?.completed_at || null,
+    node_status: node?.status || null,
+    node_last_seen_at: seenAt,
+    node_freshness: node
+      ? statusFreshness(node.status, seenAt, staleSeconds)
+      : (nodeLookupAvailable ? "unknown" : "unchecked"),
+    age_seconds: elapsedSeconds(rawRun?.started_at || rawRun?.created_at || rawRun?.completed_at || null)
+  };
+}
+
+function summarizeRoomInspection({ room, liveRunningRuns, liveQueuedRuns, staleQueuedRuns, orphanedRunningRuns, otherNonTerminalRuns }) {
+  const status = String(room?.status || "unknown").toLowerCase();
+  if (status === "completed") return "completed";
+  if (status === "paused") return "paused";
+  if (orphanedRunningRuns.length) {
+    return staleQueuedRuns.length ? "mixed_orphaned_running_and_stale_queued" : "orphaned_running_candidate";
+  }
+  if (staleQueuedRuns.length && !liveRunningRuns.length && !liveQueuedRuns.length && !otherNonTerminalRuns.length) {
+    return "stale_queued_recovery_candidate";
+  }
+  if (liveRunningRuns.length || liveQueuedRuns.length || otherNonTerminalRuns.length) {
+    return staleQueuedRuns.length ? "mixed_live_and_stale_queued" : "live";
+  }
+  if (status === "active") return "active_without_live_runs";
+  return status || "unknown";
+}
+
+function legacyRoomInspectionRecommendation(summary, activeRuns, staleQueuedRuns) {
+  if (staleQueuedRuns.length && !activeRuns.length) return "pause_recover_orphan_queued_runs";
+  if (activeRuns.length) return "wait_or_inspect_running_agents";
+  if (summary === "paused") return "room_paused";
+  if (summary === "completed") return "room_completed";
+  return "no_active_run_recovery_needed";
+}
+
+function roomInspectionRecommendations({
+  room,
+  summary,
+  liveRunningRuns,
+  liveQueuedRuns,
+  staleQueuedRuns,
+  orphanedRunningRuns,
+  otherNonTerminalRuns,
+  queuedRunStaleSeconds = 21600
+}) {
+  const roomId = room?.id || "ROOM_ID";
+  const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
+  const out = [];
+  if (summary === "completed") {
+    out.push({
+      level: "info",
+      message: "Room is already completed. Export it if you need an archive or handoff artifact.",
+      command: `agent-bus room export ${roomId} --reports-only --out room-summary.md`
+    });
+    return out;
+  }
+  if (summary === "paused") {
+    out.push({
+      level: "warn",
+      message: "Paused rooms are archival on current gateways. Start a follow-up room if work must continue."
+    });
+    out.push({
+      level: "info",
+      message: "Export the paused room before creating the follow-up room.",
+      command: `agent-bus room export ${roomId} --reports-only --out room-summary.md`
+    });
+    return out;
+  }
+  if (summary === "stale_queued_recovery_candidate") {
+    out.push({
+      level: "warn",
+      message: "Only stale queued runs remain. Safe recovery is to pause this room so abandoned queued work cannot wake later.",
+      command: `agent-bus room recover ${roomId} --yes${thresholdFlag} --reason "orphan queued run recovery"`
+    });
+    out.push({
+      level: "info",
+      message: "If you prefer an explicit operator stop, `room pause` performs the same gateway-side pause without the recover guard.",
+      command: `agent-bus room pause ${roomId} --reason "orphan queued run recovery"`
+    });
+    out.push({
+      level: "info",
+      message: "Export the room before or after the pause for a share-safe handoff.",
+      command: `agent-bus room export ${roomId} --reports-only --out room-summary.md`
+    });
+    return out;
+  }
+  if (summary === "orphaned_running_candidate" || summary === "mixed_orphaned_running_and_stale_queued") {
+    out.push({
+      level: "warn",
+      message: "At least one running task is attached to a stale or missing node. Inspect the edge service or local agent process before queueing more room work."
+    });
+    out.push({
+      level: "warn",
+      message: "Use pause only to stop future wakes and cancel queued follow-ups. Pause does not kill already-running OS processes.",
+      command: `agent-bus room pause ${roomId} --reason "orphan running task investigation"`
+    });
+    return out;
+  }
+  if (summary === "mixed_live_and_stale_queued") {
+    out.push({
+      level: "warn",
+      message: "This room has live work and stale queued history at the same time. Do not issue a manual wake until the stale queued runs are understood."
+    });
+    out.push({
+      level: "info",
+      message: "If the stale queued entries are abandoned, pause or recover the room after live work settles and continue in a follow-up room."
+    });
+    return out;
+  }
+  if (summary === "active_without_live_runs") {
+    out.push({
+      level: "info",
+      message: "Room is active but has no live non-terminal runs. A manual wake is the current recovery path if you want to continue it.",
+      command: `agent-bus room wake ${roomId} --reason "operator recovery wake"`
+    });
+    out.push({
+      level: "info",
+      message: "If you need to add context before waking, post a room message and wake the next agent explicitly.",
+      command: `agent-bus room message ${roomId} --message "Operator recovery context." --wake`
+    });
+    return out;
+  }
+  if (liveRunningRuns.length || liveQueuedRuns.length || otherNonTerminalRuns.length) {
+    out.push({
+      level: "info",
+      message: "Room still has live work. Prefer waiting or tracing the active run before intervening."
+    });
+  }
+  if (!out.length && staleQueuedRuns.length) {
+    out.push({
+      level: "warn",
+      message: "Stale queued runs are present. Inspect the run history before issuing a manual wake."
+    });
+  }
+  return out;
+}
+
+function formatRoomStateInspection(result) {
+  const room = result?.room || {};
+  const analysis = result?.analysis || {};
+  const counts = analysis.counts || {};
+  const lines = [];
+  lines.push(`Agent Bus room inspect: ${room.id || "-"}`);
+  lines.push(`Status: ${room.status || "unknown"} (${analysis.summary || "unknown"})`);
+  lines.push(`Agents: ${Array.isArray(room.agents) && room.agents.length ? room.agents.join(", ") : "-"}`);
+  lines.push(`Trace: ${room.trace_id || "-"}`);
+  lines.push(`Created: ${room.created_at || "-"}`);
+  lines.push(`Updated: ${room.updated_at || "-"}`);
+  lines.push(`Runs: live_running=${counts.live_running_runs || 0} live_queued=${counts.live_queued_runs || 0} stale_queued=${counts.stale_queued_runs || 0} orphaned_running=${counts.orphaned_running_runs || 0} terminal=${counts.terminal_runs || 0}`);
+  lines.push(`Thresholds: node_stale=${analysis.thresholds?.node_stale_seconds || 0}s queued_stale=${analysis.thresholds?.queued_run_stale_seconds || 0}s`);
+  appendRoomInspectionRuns(lines, "Live running runs", analysis.live_running_runs);
+  appendRoomInspectionRuns(lines, "Live queued runs", analysis.live_queued_runs);
+  appendRoomInspectionRuns(lines, "Stale queued runs", analysis.stale_queued_runs);
+  appendRoomInspectionRuns(lines, "Orphaned running candidates", analysis.orphaned_running_runs);
+  appendRoomInspectionRuns(lines, "Other non-terminal runs", analysis.other_non_terminal_runs);
+  if (Array.isArray(analysis.recommendations) && analysis.recommendations.length) {
+    lines.push("", "Operator hints:");
+    for (const item of analysis.recommendations) {
+      lines.push(`- ${item.level || "info"}: ${item.message || ""}`.trimEnd());
+      if (item.command) lines.push(`  ${item.command}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function appendRoomInspectionRuns(lines, label, runs) {
+  if (!Array.isArray(runs) || !runs.length) return;
+  lines.push("", `${label}:`);
+  for (const run of runs) {
+    const age = Number.isFinite(run.age_seconds) ? formatAgeSeconds(run.age_seconds) : "unknown";
+    const nodeNote = run.node_freshness && run.node_freshness !== "unchecked"
+      ? ` node=${run.node_id || "-"} (${run.node_freshness})`
+      : ` node=${run.node_id || "-"}`;
+    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age} created=${run.created_at || "-"}`);
+  }
+}
+
+function elapsedSeconds(timestamp) {
+  const parsed = Date.parse(timestamp || "");
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.round((Date.now() - parsed) / 1000));
+}
+
+function formatAgeSeconds(seconds) {
+  if (!Number.isFinite(seconds)) return "unknown";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remSeconds = seconds % 60;
+  if (minutes < 60) return remSeconds ? `${minutes}m${remSeconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  if (hours < 24) return remMinutes ? `${hours}h${remMinutes}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours ? `${days}d${remHours}h` : `${days}d`;
 }
 
 async function trace(args) {
@@ -2481,7 +2801,7 @@ function activeRoomRunSummary(rooms, options = {}) {
 
 function staleRoomRecoveryHints(staleQueuedRuns, { queuedRunStaleSeconds = 21600 } = {}) {
   const byRoom = new Map();
-  const thresholdFlag = queuedRunStaleSeconds === 21600 ? "" : ` --queued-run-stale-seconds ${queuedRunStaleSeconds}`;
+  const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
   for (const run of staleQueuedRuns) {
     const roomId = run.room_id || "";
     if (!roomId) continue;
@@ -2490,6 +2810,7 @@ function staleRoomRecoveryHints(staleQueuedRuns, { queuedRunStaleSeconds = 21600
       stale_queued_runs: [],
       agents: [],
       inspect_command: `agent-bus room inspect ${roomId}${thresholdFlag}`,
+      pause_command: `agent-bus room pause ${roomId} --reason "orphan queued run recovery"`,
       recover_command: `agent-bus room recover ${roomId} --yes${thresholdFlag}`
     };
     if (run.id) hint.stale_queued_runs.push(run.id);
@@ -2497,6 +2818,10 @@ function staleRoomRecoveryHints(staleQueuedRuns, { queuedRunStaleSeconds = 21600
     byRoom.set(roomId, hint);
   }
   return [...byRoom.values()].sort((left, right) => left.room_id.localeCompare(right.room_id));
+}
+
+function queuedRunStaleThresholdFlag(queuedRunStaleSeconds = 21600) {
+  return queuedRunStaleSeconds === 21600 ? "" : ` --queued-run-stale-seconds ${queuedRunStaleSeconds}`;
 }
 
 function addRunsByAgent(byAgent, runs) {
@@ -2527,8 +2852,10 @@ function statusWarnings({ authWarning, staleQueuedRuns, queuedRunStaleSeconds, h
   const count = staleQueuedRuns.length;
   if (count) {
     const queueNote = Number(health?.queued || 0) === 0 ? "; gateway queue is empty" : "";
-    const roomNote = recoveryHints?.length ? ` Example: ${recoveryHints[0].inspect_command}` : "";
-    warnings.push(`Ignored ${count} stale queued room run${count === 1 ? "" : "s"} older than ${queuedRunStaleSeconds}s${queueNote}. Inspect or recover the old room.${roomNote}`);
+    const roomNote = recoveryHints?.length
+      ? ` Example: ${recoveryHints[0].inspect_command}`
+      : "";
+    warnings.push(`Ignored ${count} stale queued room run${count === 1 ? "" : "s"} older than ${queuedRunStaleSeconds}s${queueNote}. Inspect the old room before recovering or pausing it.${roomNote}`);
   }
   return warnings;
 }
@@ -2581,7 +2908,8 @@ function printStatus(result) {
   if (result.recovery_hints?.length) {
     console.log("\nRecovery hints:");
     for (const hint of result.recovery_hints) {
-      console.log(`- ${hint.room_id}: inspect=\`${hint.inspect_command}\`, recover=\`${hint.recover_command}\`, stale_runs=${hint.stale_queued_runs.join(",") || "-"}`);
+      const pause = hint.pause_command ? `, pause=\`${hint.pause_command}\`` : "";
+      console.log(`- ${hint.room_id}: inspect=\`${hint.inspect_command}\`, recover=\`${hint.recover_command}\`${pause}, stale_runs=${hint.stale_queued_runs.join(",") || "-"}`);
     }
   }
   if (result.nodes?.length) {

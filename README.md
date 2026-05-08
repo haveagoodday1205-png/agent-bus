@@ -410,9 +410,9 @@ DONE
 
 `DONE` requests completion; the room waits for all queued and running work to finish before becoming completed.
 
-For stale or orphaned rooms, start with `agent-bus room inspect ROOM_ID`. It shows active runs, stale queued runs, and a copyable recovery command; `room recover --yes` pauses the room and cancels stale queued work, while `room pause` is for deliberate operator stops.
-
 For demos, debugging, and future SDK compatibility work, `room export --format events` creates a redacted room event bundle from the room snapshot, and `room replay --in` rebuilds a deterministic offline summary from that bundle.
+
+For old or confusing rooms, start with `agent-bus room inspect ROOM_ID`. It summarizes live running work, live queued work, stale queued snapshots, and running tasks attached to stale or missing nodes, then prints safe operator actions. For abandoned queued work, `room recover --yes` pauses the room with a guard; `room pause` remains the explicit operator stop.
 
 ## OpenAI-Compatible Model Router
 

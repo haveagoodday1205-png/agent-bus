@@ -157,6 +157,10 @@ async function main() {
     activeRecoverRejected = /Refusing room recover --yes/.test(err.message || String(err));
   }
   assert(activeRecoverRejected, "room recover --yes should refuse active rooms without stale queued orphan runs");
+  const runningInspect = await runCliJson(["room", "inspect", room.id, "--json", "--gateway", gateway, "--token", token]);
+  assert(runningInspect.analysis?.summary === "live", "room inspect should classify the running room as live");
+  assert(runningInspect.analysis?.live_running_runs?.some((run) => run.agent_id === "slow-planner"), "room inspect did not expose the live planner run");
+  assert(runningInspect.analysis?.node_inventory_available === true, "room inspect should use node inventory when the gateway supports it");
   await waitForRunStatus(gateway, token, room.id, "slow-planner", "running");
 
   await requestJson(`${gateway}/edge/register`, {
@@ -208,11 +212,17 @@ async function main() {
   const inspectJson = await runCliJson(["room", "inspect", orphanRoom.id, "--json", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(inspectJson.counts?.stale_queued_runs === 1, "room inspect did not count stale queued runs");
   assert(inspectJson.recommendation === "pause_recover_orphan_queued_runs", "room inspect did not recommend stale queued recovery");
+  assert(inspectJson.analysis?.summary === "stale_queued_recovery_candidate", "room inspect did not classify the orphan room as a stale queued recovery candidate");
+  assert(inspectJson.analysis?.stale_queued_runs?.length === 1, "room inspect did not expose the stale queued run in analysis");
+  assert(inspectJson.analysis?.recommendations?.some((item) => item.command?.includes(`agent-bus room recover ${orphanRoom.id} --yes --queued-run-stale-seconds 1`)), "room inspect did not recommend guarded recovery with the tuned stale threshold");
+  assert(inspectJson.analysis?.recommendations?.some((item) => item.command?.includes(`agent-bus room pause ${orphanRoom.id}`)), "room inspect did not include the explicit pause option");
   const inspectHuman = await runCliText(["room", "inspect", orphanRoom.id, "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
-  assert(inspectHuman.includes("Recommendation: pause_recover_orphan_queued_runs"), "room inspect human output did not expose the recovery recommendation");
-  assert(inspectHuman.includes(`agent-bus room recover ${orphanRoom.id} --yes`), "room inspect human output did not include a room-specific recover command");
+  assert(inspectHuman.includes(`Agent Bus room inspect: ${orphanRoom.id}`), "room inspect human output did not include the room id");
+  assert(inspectHuman.includes("stale_queued_recovery_candidate"), "room inspect human output did not include the stale queued summary");
+  assert(inspectHuman.includes(`agent-bus room recover ${orphanRoom.id} --yes --queued-run-stale-seconds 1`), "room inspect human output did not include the guarded recovery hint with the tuned stale threshold");
   const recoverDryRun = await runCliText(["room", "recover", orphanRoom.id, "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(recoverDryRun.includes("Dry run. Re-run with --yes"), "room recover should dry-run without --yes");
+  assert(recoverDryRun.includes(`agent-bus room recover ${orphanRoom.id} --yes --queued-run-stale-seconds 1`), "room recover dry run did not preserve the tuned stale threshold");
   await runCliText(["room", "recover", orphanRoom.id, "--yes", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1", "--reason", "stale queued smoke recovery"]);
   const recoveredOrphan = await requestJson(`${gateway}/rooms/${encodeURIComponent(orphanRoom.id)}`, { headers: authHeaders(token) });
   assert(recoveredOrphan.status === "paused", "room recover --yes did not pause the orphan room");

@@ -36,7 +36,7 @@ Only runs still marked `queued` are placed back onto node queues. Runs already m
 Operational recovery checklist for stale/orphan room runs:
 
 1. Check `agent-bus status --gateway ... --token ...` and look for `stale_queued_runs` or stale nodes.
-2. Inspect the specific room with `agent-bus room inspect ROOM_ID --gateway ... --token ...`; lower `--queued-run-stale-seconds` only for tests or confirmed incidents.
+2. Inspect the specific room with `agent-bus room inspect ROOM_ID --gateway ... --token ...`; lower `--queued-run-stale-seconds` or `--stale-seconds` only for tests or confirmed incidents. Inspect separates live running work, live queued work, stale queued snapshots, and running tasks attached to stale or missing nodes.
 3. If the gateway queue is empty and the room only has old queued snapshots, run `agent-bus room recover ROOM_ID --yes --reason "stale queued run recovery"`. This pauses the room and cancels queued runs without deleting history. `room recover --yes` now refuses when inspect does not find stale queued orphan runs; use `room pause` for a deliberate operator stop, or `room recover --yes --force` only after separately confirming no live agent process should continue.
 4. If any run is actually running, first verify the edge OS process or let it finish; room recovery does not kill local agent processes.
 5. Export the paused room and create a new follow-up room if work should continue.
@@ -123,16 +123,17 @@ agent-bus serve --runtime python --config central.config.json
 ```
 
 
-### Live update rollout
+### Live Update Checklist
 
-For live deployments, roll changes out from central to edges in small reversible steps:
+For live deployments, roll changes out from central to edges in small reversible steps that avoid secrets and model quota:
 
 1. Pull the public repo on the target host and review `git log --oneline -1` plus `git diff` before restart.
-2. Run a zero-quota check first: `agent-bus --help`, `agent-bus health --gateway http://127.0.0.1:8788`, or a targeted smoke such as `npm run smoke:room-stale` on a non-production checkout.
-3. Restart the central Python service before edge bridge scripts when the change affects room prompts, queue recovery, trace lookup, or model routing. With systemd, use `systemctl restart agent-bus-central` and then check `journalctl -u agent-bus-central -n 100 --no-pager` plus `/health`.
-4. Restart edge services one node at a time when bridge scripts or edge config changed. Confirm each node reappears in `agent-bus status` before moving to the next node.
-5. For config-only changes, prefer adding new keys while keeping old keys valid until all edges have restarted. Do not rotate tokens and bridge commands in the same step; verify the new token or command with `agent-bus doctor --config edge.config.json` first.
-6. Keep secrets out of reports and commits: share service names, commit ids, room ids, and redacted command shapes rather than raw tokens, full private URLs, or model-provider quota details.
+2. Run a zero-quota check first: `agent-bus --help`, `agent-bus health --gateway http://127.0.0.1:8788`, or targeted smokes such as `npm run smoke:room-stale` and `node scripts/central-restart-smoke.mjs --json` on a non-production checkout.
+3. Check live room and node state before touching services: `agent-bus status --gateway ... --token ...`, then `agent-bus room inspect ROOM_ID --gateway ... --token ...` for any room flagged with stale queued work or unexpectedly old running work.
+4. Restart the central Python service before edge bridge scripts when the change affects room prompts, queue recovery, trace lookup, or model routing. With systemd, use `systemctl restart agent-bus-central` and then check `journalctl -u agent-bus-central -n 100 --no-pager` plus `/health`.
+5. Restart edge services one node at a time when bridge scripts or edge config changed. Confirm each node reappears in `agent-bus status` before moving to the next node.
+6. For config-only changes, prefer adding new keys while keeping old keys valid until all edges have restarted. Do not rotate tokens and bridge commands in the same step; verify the new token or command with `agent-bus doctor --config edge.config.json` first.
+7. Keep secrets out of reports and commits: share service names, commit ids, room ids, and redacted command shapes rather than raw tokens, full private URLs, or model-provider quota details.
 
 Use this impact matrix when deciding what to restart:
 

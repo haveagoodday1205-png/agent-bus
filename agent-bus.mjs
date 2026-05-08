@@ -1777,10 +1777,13 @@ function formatRoomInspection(inspection) {
   if (inspection.stale_queued_runs?.length) {
     lines.push("Stale queued runs:");
     for (const run of inspection.stale_queued_runs) lines.push(`- ${run.id || "-"}: ${run.agent_id || "-"} queued age=${run.age_seconds ?? "?"}s`);
-    lines.push("Recommended recovery: export the room if needed, then run `agent-bus room recover ROOM_ID --yes` to pause the orphan room and cancel stale queued runs.");
+    lines.push(`Recommendation: ${inspection.recommendation || "pause_recover_orphan_queued_runs"}`);
+    lines.push(`Recommended recovery: export the room if needed, then run \`agent-bus room recover ${room.id || "ROOM_ID"} --yes\` to pause the orphan room and cancel stale queued runs.`);
   } else if (inspection.active_runs?.length) {
+    lines.push(`Recommendation: ${inspection.recommendation || "wait_or_inspect_running_agents"}`);
     lines.push("No stale queued runs found. Wait for live runs or inspect the edge node/agent before pausing.");
   } else {
+    lines.push(`Recommendation: ${inspection.recommendation || "no_active_run_recovery_needed"}`);
     lines.push("No active run recovery needed.");
   }
   return `${lines.join("\n")}\n`;

@@ -208,6 +208,9 @@ async function main() {
   const inspectJson = await runCliJson(["room", "inspect", orphanRoom.id, "--json", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(inspectJson.counts?.stale_queued_runs === 1, "room inspect did not count stale queued runs");
   assert(inspectJson.recommendation === "pause_recover_orphan_queued_runs", "room inspect did not recommend stale queued recovery");
+  const inspectHuman = await runCliText(["room", "inspect", orphanRoom.id, "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
+  assert(inspectHuman.includes("Recommendation: pause_recover_orphan_queued_runs"), "room inspect human output did not expose the recovery recommendation");
+  assert(inspectHuman.includes(`agent-bus room recover ${orphanRoom.id} --yes`), "room inspect human output did not include a room-specific recover command");
   const recoverDryRun = await runCliText(["room", "recover", orphanRoom.id, "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(recoverDryRun.includes("Dry run. Re-run with --yes"), "room recover should dry-run without --yes");
   await runCliText(["room", "recover", orphanRoom.id, "--yes", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1", "--reason", "stale queued smoke recovery"]);

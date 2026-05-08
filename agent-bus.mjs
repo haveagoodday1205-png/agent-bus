@@ -193,6 +193,7 @@ Usage:
   agent-bus edge-agents --config edge.config.json
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--queued-run-stale-seconds 21600]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
@@ -200,6 +201,7 @@ Usage:
   agent-bus room replay --in room-events.json --format markdown
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
+  agent-bus room recover room_xxx --yes --reason "stale queued run recovery"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus trace export trace_xxx --format markdown --out trace.md
@@ -1605,6 +1607,15 @@ async function room(args) {
     const roomId = requiredPositional(args, 1, "room id");
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args }));
   }
+  if (action === "inspect") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
+    const inspection = inspectRoomRecovery(roomData, { queuedRunStaleSeconds });
+    if (args.includes("--json")) return printJson(inspection);
+    process.stdout.write(formatRoomInspection(inspection));
+    return;
+  }
   if (action === "export" || action === "dump") {
     const roomId = requiredPositional(args, 1, "room id");
     const format = optionValue(args, "--format") || (args.includes("--json") ? "json" : "markdown");
@@ -1682,6 +1693,22 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/pause`, { auth: true, args, method: "POST", body }));
   }
+  if (action === "recover") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
+    const inspection = inspectRoomRecovery(roomData, { queuedRunStaleSeconds });
+    const reason = optionValue(args, "--reason") || optionValue(args, "--message") || `Stale/orphan room recovery: cancelling ${inspection.stale_queued_runs.length || "old"} queued run(s).`;
+    if (!args.includes("--yes")) {
+      process.stdout.write(formatRoomInspection(inspection));
+      process.stdout.write(`\nDry run. Re-run with --yes to pause the room and cancel queued runs:\nagent-bus room recover ${roomId} --yes --reason ${JSON.stringify(reason)}\n`);
+      return;
+    }
+    const recovered = await gatewayJson(`/rooms/${pathPart(roomId)}/pause`, { auth: true, args, method: "POST", body: { reason } });
+    if (args.includes("--json")) return printJson(recovered);
+    console.log(`Recovered room ${roomId}: paused and cancelled queued runs. Use room export before creating a follow-up room if work should continue.`);
+    return;
+  }
   if (action === "message" || action === "say") {
     const roomId = requiredPositional(args, 1, "room id");
     const message = optionValue(args, "--message") || optionValue(args, "-m") || "";
@@ -1697,7 +1724,60 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|export|replay|create|wake|pause|message [options]");
+  throw new Error("Usage: agent-bus room list|show|inspect|export|replay|create|wake|pause|recover|message [options]");
+}
+
+function inspectRoomRecovery(room, { queuedRunStaleSeconds = 21600 } = {}) {
+  const buckets = activeRunBucketsForRoom(room, { queuedRunStaleSeconds });
+  const runs = Array.isArray(room?.runs) ? room.runs : [];
+  const activeRuns = buckets.liveRuns.map((run) => ({ ...run, age_seconds: runAgeSeconds(run) }));
+  const staleQueuedRuns = buckets.staleQueuedRuns.map((run) => ({ ...run, age_seconds: runAgeSeconds(run) }));
+  return {
+    room: {
+      id: room?.id || "",
+      title: room?.title || "",
+      status: room?.status || "unknown",
+      updated_at: room?.updated_at || null,
+      agents: room?.agents || []
+    },
+    thresholds: { queued_run_stale_seconds: queuedRunStaleSeconds },
+    counts: { runs: runs.length, active_runs: activeRuns.length, stale_queued_runs: staleQueuedRuns.length },
+    active_runs: activeRuns,
+    stale_queued_runs: staleQueuedRuns,
+    recommendation: staleQueuedRuns.length
+      ? "pause_recover_orphan_queued_runs"
+      : activeRuns.length
+      ? "wait_or_inspect_running_agents"
+      : "no_active_run_recovery_needed"
+  };
+}
+
+function runAgeSeconds(run) {
+  const at = Date.parse(run.started_at || run.created_at || "");
+  if (!Number.isFinite(at)) return null;
+  return Math.max(0, Math.round((Date.now() - at) / 1000));
+}
+
+function formatRoomInspection(inspection) {
+  const room = inspection.room || {};
+  const lines = [];
+  lines.push(`Room ${room.id || "-"}: ${room.status || "unknown"}${room.title ? ` (${room.title})` : ""}`);
+  lines.push(`Agents: ${(room.agents || []).join(",") || "-"}`);
+  lines.push(`Runs: ${inspection.counts?.runs || 0} total, ${inspection.counts?.active_runs || 0} active, ${inspection.counts?.stale_queued_runs || 0} stale queued`);
+  if (inspection.active_runs?.length) {
+    lines.push("Active runs:");
+    for (const run of inspection.active_runs) lines.push(`- ${run.id || "-"}: ${run.agent_id || "-"} ${run.status || "unknown"} age=${run.age_seconds ?? "?"}s`);
+  }
+  if (inspection.stale_queued_runs?.length) {
+    lines.push("Stale queued runs:");
+    for (const run of inspection.stale_queued_runs) lines.push(`- ${run.id || "-"}: ${run.agent_id || "-"} queued age=${run.age_seconds ?? "?"}s`);
+    lines.push("Recommended recovery: export the room if needed, then run `agent-bus room recover ROOM_ID --yes` to pause the orphan room and cancel stale queued runs.");
+  } else if (inspection.active_runs?.length) {
+    lines.push("No stale queued runs found. Wait for live runs or inspect the edge node/agent before pausing.");
+  } else {
+    lines.push("No active run recovery needed.");
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 async function trace(args) {

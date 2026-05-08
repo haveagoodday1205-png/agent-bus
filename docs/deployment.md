@@ -33,6 +33,14 @@ On startup, the Python central gateway rebuilds its in-memory view from the pers
 
 Only runs still marked `queued` are placed back onto node queues. Runs already marked `running` are kept visible for status, room detail, and trace inspection but are not replayed automatically, which avoids duplicate command execution after a central restart. Operators should inspect or pause old rooms whose running tasks no longer have a live edge process.
 
+Operational recovery checklist for stale/orphan room runs:
+
+1. Check `agent-bus status --gateway ... --token ...` and look for `stale_queued_runs` or stale nodes.
+2. Inspect the specific room with `agent-bus room inspect ROOM_ID --gateway ... --token ...`; lower `--queued-run-stale-seconds` only for tests or confirmed incidents.
+3. If the gateway queue is empty and the room only has old queued snapshots, run `agent-bus room recover ROOM_ID --yes --reason "stale queued run recovery"`. This pauses the room and cancels queued runs without deleting history.
+4. If any run is actually running, first verify the edge OS process or let it finish; room recovery does not kill local agent processes.
+5. Export the paused room and create a new follow-up room if work should continue.
+
 ### Container Deployment
 
 For a public central station, prefer Docker Compose plus a reverse proxy. The bundled container now runs the full Python central gateway by default, because that runtime includes rooms, reminders, traces, pairing, and agent-backed models.
@@ -113,6 +121,20 @@ For full AI-to-AI rooms and traces, use the Python runtime:
 ```bash
 agent-bus serve --runtime python --config central.config.json
 ```
+
+
+### Live update rollout
+
+For live deployments, roll changes out from central to edges in small reversible steps:
+
+1. Pull the public repo on the target host and review `git log --oneline -1` plus `git diff` before restart.
+2. Run a zero-quota check first: `agent-bus --help`, `agent-bus health --gateway http://127.0.0.1:8788`, or a targeted smoke such as `npm run smoke:room-stale` on a non-production checkout.
+3. Restart the central Python service before edge bridge scripts when the change affects room prompts, queue recovery, trace lookup, or model routing. With systemd, use `systemctl restart agent-bus-central` and then check `journalctl -u agent-bus-central -n 100 --no-pager` plus `/health`.
+4. Restart edge services one node at a time when bridge scripts or edge config changed. Confirm each node reappears in `agent-bus status` before moving to the next node.
+5. For config-only changes, prefer adding new keys while keeping old keys valid until all edges have restarted. Do not rotate tokens and bridge commands in the same step; verify the new token or command with `agent-bus doctor --config edge.config.json` first.
+6. Keep secrets out of reports and commits: share service names, commit ids, room ids, and redacted command shapes rather than raw tokens, full private URLs, or model-provider quota details.
+
+Central service changes usually require only a central restart. Edge bridge script changes require each edge node to pull the repo and restart its edge service because `runCommand` invokes local scripts from that checkout.
 
 ## Edge Node
 

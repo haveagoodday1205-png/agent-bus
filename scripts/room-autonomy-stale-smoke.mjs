@@ -194,6 +194,15 @@ async function main() {
   const staleQueuedHuman = await runCliText(["status", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(staleQueuedHuman.includes("Warning: Ignored 1 stale queued room run older than 1s; gateway queue is empty"), "CLI human status did not warn about the ignored stale queued room run");
   assert(staleQueuedHuman.includes("stale_queued="), "CLI human status did not label stale queued room runs");
+  const inspectJson = await runCliJson(["room", "inspect", orphanRoom.id, "--json", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
+  assert(inspectJson.counts?.stale_queued_runs === 1, "room inspect did not count stale queued runs");
+  assert(inspectJson.recommendation === "pause_recover_orphan_queued_runs", "room inspect did not recommend stale queued recovery");
+  const recoverDryRun = await runCliText(["room", "recover", orphanRoom.id, "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
+  assert(recoverDryRun.includes("Dry run. Re-run with --yes"), "room recover should dry-run without --yes");
+  await runCliText(["room", "recover", orphanRoom.id, "--yes", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1", "--reason", "stale queued smoke recovery"]);
+  const recoveredOrphan = await requestJson(`${gateway}/rooms/${encodeURIComponent(orphanRoom.id)}`, { headers: authHeaders(token) });
+  assert(recoveredOrphan.status === "paused", "room recover --yes did not pause the orphan room");
+  assert(recoveredOrphan.runs?.some((run) => run.id === orphanTask.task.run_id && run.status === "cancelled"), "room recover --yes did not cancel the stale queued run");
 
   await delay(2200);
   const busyAgents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });

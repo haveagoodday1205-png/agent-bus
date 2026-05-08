@@ -1,6 +1,7 @@
 const state = {
   health: null,
   manifest: null,
+  status: null,
   nodes: [],
   agents: [],
   models: [],
@@ -123,6 +124,14 @@ const messages = {
     prompt: "Prompt",
     queued: "Queued",
     quickstart: "Quickstart",
+    readiness: "Readiness",
+    readiness_central_unhealthy: "Central health did not report ok.",
+    readiness_queue_needs_agent: "Central has queued work, but no agent is currently marked busy.",
+    readiness_ready: "Central and edge agents are ready for work.",
+    readiness_stale_room_runs: "Central is usable, but old queued room runs need operator review.",
+    readiness_token_needed: "Gateway is reachable, but authenticated details are hidden.",
+    readiness_waiting_for_edge: "Central is up, but no online edge agents are ready to receive work.",
+    readiness_working: "Agents are connected and work is currently active.",
     refresh: "Refresh",
     reload: "Reload",
     reachable: "reachable",
@@ -162,6 +171,8 @@ const messages = {
     stopPolling: "Stop Polling",
     status: "Status",
     statusCommand: "Status command",
+    statusLoadFailed: "status failed: {message}",
+    statusLoaded: "readiness: {status}",
     task: "Task",
     taskFailed: "task failed: {message}",
     taskMessageEmpty: "task message is empty",
@@ -192,6 +203,8 @@ const messages = {
     not_configured: "not configured",
     waiting: "waiting..."
     ,
+    nextActions: "Next Actions",
+    noNextActions: "No pending next actions.",
     wake: "Wake",
     wakeAll: "all selected",
     wakeFirst: "first selected",
@@ -297,6 +310,14 @@ const messages = {
     prompt: "提示词",
     queued: "队列",
     quickstart: "快速状态",
+    readiness: "就绪状态",
+    readiness_central_unhealthy: "Central 健康检查未返回 ok。",
+    readiness_queue_needs_agent: "Central 有排队任务，但当前没有智能体被标记为忙碌。",
+    readiness_ready: "Central 和 Edge 智能体已准备好接收任务。",
+    readiness_stale_room_runs: "Central 可用，但旧的房间排队任务需要检查。",
+    readiness_token_needed: "网关可达，但认证后的详情被隐藏。",
+    readiness_waiting_for_edge: "Central 已启动，但还没有在线 Edge 智能体可接收任务。",
+    readiness_working: "智能体已连接，当前有任务正在运行。",
     refresh: "刷新",
     reload: "重新加载",
     reachable: "可达",
@@ -336,6 +357,8 @@ const messages = {
     stopPolling: "停止轮询",
     status: "状态",
     statusCommand: "状态命令",
+    statusLoadFailed: "状态加载失败：{message}",
+    statusLoaded: "就绪状态：{status}",
     task: "任务",
     taskFailed: "任务失败：{message}",
     taskMessageEmpty: "任务消息不能为空",
@@ -365,6 +388,8 @@ const messages = {
     unreachable: "不可达",
     not_configured: "未配置",
     waiting: "等待中...",
+    nextActions: "下一步",
+    noNextActions: "暂无待处理动作。",
     wake: "唤醒",
     wakeAll: "全部选中",
     wakeFirst: "第一个选中",
@@ -430,7 +455,10 @@ $("clearEventsButton").addEventListener("click", () => { $("eventLog").textConte
 
 refreshAll();
 syncTaskMode();
-setInterval(loadHealth, 8000);
+setInterval(() => {
+  loadHealth();
+  if (currentToken()) loadStatus({ silent: true });
+}, 8000);
 
 function activateTab(name) {
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
@@ -440,6 +468,7 @@ function activateTab(name) {
 
 async function refreshAll() {
   await loadHealth();
+  await loadStatus({ silent: true });
   await loadManifest();
   await loadEdgeTokens();
   await loadNodes();
@@ -453,6 +482,7 @@ async function saveToken() {
   $("tokenInput").value = token;
   if (!token) {
     sessionStorage.removeItem("agentBusToken");
+    state.status = null;
     state.edgeTokens = [];
     state.edgeJoinCommand = "";
     state.pairJoinCommand = "";
@@ -486,6 +516,25 @@ async function loadHealth() {
     setGatewayStatus("offline", "status failed");
     renderOverview();
     logEvent(t("healthFailed", { message: err.message }));
+  }
+}
+
+async function loadStatus({ silent = false } = {}) {
+  if (!currentToken()) {
+    state.status = null;
+    renderOverview();
+    return;
+  }
+  try {
+    const data = await request("v1/agent-bus/status");
+    state.status = data;
+    updateStatusSummaryStats(data.summary);
+    renderOverview();
+    if (!silent) logEvent(t("statusLoaded", { status: data.readiness?.status || "unknown" }));
+  } catch (err) {
+    state.status = null;
+    renderOverview();
+    if (!silent) logEvent(t("statusLoadFailed", { message: err.message }));
   }
 }
 
@@ -655,6 +704,7 @@ function renderNodes() {
 }
 
 function renderOverview() {
+  renderReadinessPanel();
   const checks = quickstartChecks();
   const list = $("quickstartList");
   list.textContent = "";
@@ -670,6 +720,71 @@ function renderOverview() {
   }
   $("quickstartCommands").textContent = quickstartCommandText();
   renderEdgeJoin();
+}
+
+function renderReadinessPanel() {
+  const panel = $("readinessPanel");
+  if (!panel) return;
+  const status = state.status;
+  const readiness = status?.readiness || (!currentToken()
+    ? { level: "limited", status: "token-needed", message: t("readiness_token_needed") }
+    : null);
+  if (!readiness) {
+    panel.className = "readiness-panel readiness-unknown";
+    panel.innerHTML = `
+      <div class="readiness-header">
+        <span class="status unknown">--</span>
+        <div>
+          <strong>${escapeHtml(t("readiness"))}</strong>
+          <span>${escapeHtml(t("waiting"))}</span>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  const summary = status?.summary || {};
+  const level = String(readiness.level || "unknown").toLowerCase();
+  const label = String(readiness.status || readiness.level || "unknown");
+  const actions = Array.isArray(status?.next_actions) ? status.next_actions : [];
+  panel.className = `readiness-panel readiness-${escapeClass(level)}`;
+  panel.innerHTML = `
+    <div class="readiness-header">
+      <span class="status ${readinessStatusClass(level)}">${escapeHtml(label)}</span>
+      <div>
+        <strong>${escapeHtml(t("readiness"))}</strong>
+        <span>${escapeHtml(readinessMessage(readiness))}</span>
+      </div>
+    </div>
+    <div class="readiness-metrics">
+      <span>${escapeHtml(t("nodes"))}: ${escapeHtml(summary.nodes ?? state.health?.nodes ?? "-")}/${escapeHtml(summary.registered_nodes ?? state.health?.registered_nodes ?? "-")}</span>
+      <span>${escapeHtml(t("agents"))}: ${escapeHtml(summary.agents ?? state.health?.agents ?? "-")}/${escapeHtml(summary.registered_agents ?? state.health?.registered_agents ?? "-")}</span>
+      <span>${escapeHtml(t("queued"))}: ${escapeHtml(summary.queued ?? state.health?.queued ?? "-")}</span>
+      <span>${escapeHtml(t("activeRooms"))}: ${escapeHtml(summary.active_rooms ?? "-")}</span>
+    </div>
+    <div class="readiness-actions">
+      <strong>${escapeHtml(t("nextActions"))}</strong>
+      ${actions.length
+        ? `<ul>${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join("")}</ul>`
+        : `<span>${escapeHtml(t("noNextActions"))}</span>`}
+    </div>
+  `;
+}
+
+function readinessMessage(readiness) {
+  const key = `readiness_${String(readiness.status || "").replace(/-/g, "_")}`;
+  if (messages[state.lang]?.[key] || messages.en[key]) return t(key);
+  return readiness.message || readiness.status || readiness.level || "unknown";
+}
+
+function readinessStatusClass(level) {
+  if (["ready", "active"].includes(level)) return "online";
+  if (["attention", "setup", "limited"].includes(level)) return "paused";
+  if (["critical"].includes(level)) return "failed";
+  return "unknown";
+}
+
+function escapeClass(value) {
+  return String(value || "unknown").replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
 }
 
 function quickstartChecks() {
@@ -1580,7 +1695,22 @@ function updateDashboardStats() {
   } else {
     $("activeRoomCount").textContent = "-";
   }
+  if (state.status?.summary) {
+    updateStatusSummaryStats(state.status.summary);
+  }
   renderOverview();
+}
+
+function updateStatusSummaryStats(summary = {}) {
+  const nodes = summary.nodes ?? state.health?.nodes ?? "-";
+  const registeredNodes = summary.registered_nodes ?? state.health?.registered_nodes;
+  const agents = summary.agents ?? state.health?.agents ?? "-";
+  const registeredAgents = summary.registered_agents ?? state.health?.registered_agents;
+  $("nodeCount").textContent = registeredNodes == null ? nodes : `${nodes}/${registeredNodes}`;
+  $("agentCount").textContent = registeredAgents == null ? agents : `${agents}/${registeredAgents}`;
+  $("onlineAgentCount").textContent = summary.online_agents ?? summary.agents ?? state.health?.agents ?? "-";
+  $("queuedCount").textContent = summary.queued ?? state.health?.queued ?? "-";
+  $("activeRoomCount").textContent = summary.active_rooms ?? "-";
 }
 
 function syncTaskMode() {

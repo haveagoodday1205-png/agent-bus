@@ -10,6 +10,7 @@ import secrets
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
@@ -397,16 +398,7 @@ class Handler(BaseHTTPRequestHandler):
             path = parsed.path
             query = parse_qs(parsed.query)
             if path == "/health":
-                agents = public_agents()
-                nodes = public_nodes()
-                return self.json({
-                    "ok": True,
-                    "nodes": len(nodes),
-                    "agents": len(agents),
-                    "registered_nodes": len(STATE["nodes"]),
-                    "registered_agents": sum(len(node.get("agents", [])) for node in STATE["nodes"].values()),
-                    "queued": sum(len(q) for q in STATE["queues"].values()),
-                })
+                return self.json(central_health())
             if path == "/.well-known/agent-bus.json":
                 return self.json(agent_bus_well_known())
             if path == "/console":
@@ -423,6 +415,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/nodes":
                 self.require_auth(("admin", "edge"))
                 return self.json(public_registered_nodes())
+            if path in ("/status", "/v1/agent-bus/status"):
+                self.require_auth(("admin",))
+                return self.json(public_status(self.config))
             if path in ("/manifest", "/v1/agent-bus/manifest"):
                 self.require_auth(("admin", "edge"))
                 return self.json(agent_bus_manifest(self.config))
@@ -839,6 +834,342 @@ def public_agents():
     return sorted(out, key=lambda item: item["id"])
 
 
+def central_health():
+    agents = public_agents()
+    nodes = public_nodes()
+    return {
+        "ok": True,
+        "nodes": len(nodes),
+        "agents": len(agents),
+        "registered_nodes": len(STATE["nodes"]),
+        "registered_agents": sum(len(node.get("agents", [])) for node in STATE["nodes"].values()),
+        "queued": sum(len(q) for q in STATE["queues"].values()),
+    }
+
+
+STATUS_ACTIVE_ROOM_STATUSES = {"active", "running", "finishing"}
+STATUS_QUEUED_RUN_STALE_SECONDS = 21600
+
+
+def public_status(config):
+    health = central_health()
+    agents = public_agents()
+    nodes = public_registered_nodes()
+    rooms = status_room_details(config)
+    active_rooms = [room for room in rooms if status_is_active_room(room)]
+    run_summary = status_room_run_summary(active_rooms)
+    recovery_hints = status_recovery_hints(run_summary["stale_queued_runs"])
+    busy_agent_ids = set(run_summary["live_by_agent"].keys())
+    for room in active_rooms:
+        if isinstance(room.get("runs"), list):
+            continue
+        for agent_id in room.get("agents") or []:
+            if agent_id:
+                busy_agent_ids.add(agent_id)
+    result = {
+        "ok": bool(health.get("ok")),
+        "health": health,
+        "summary": {
+            "nodes": health.get("nodes", 0),
+            "agents": health.get("agents", 0),
+            "registered_nodes": health.get("registered_nodes", health.get("nodes", 0)),
+            "registered_agents": health.get("registered_agents", health.get("agents", 0)),
+            "queued": health.get("queued", 0),
+            "online_agents": len([agent for agent in agents if agent.get("status") == "online"]),
+            "reachable_agents": len([agent for agent in agents if agent.get("ping_status") == "reachable"]),
+            "busy_agents": len([agent for agent in agents if agent.get("id") in busy_agent_ids]),
+            "rooms": len(rooms),
+            "active_rooms": len(active_rooms),
+            "active_runs": len(run_summary["live_runs"]),
+            "stale_queued_runs": len(run_summary["stale_queued_runs"]),
+        },
+        "nodes": [status_node_item(node) for node in nodes],
+        "agents": [status_agent_item(agent, active_rooms, run_summary) for agent in agents],
+        "rooms": [status_room_item(room) for room in rooms[:8]],
+        "recovery_hints": recovery_hints,
+    }
+    result["warnings"] = status_warnings(result, run_summary["stale_queued_runs"], recovery_hints)
+    result["readiness"] = status_readiness(result)
+    result["next_actions"] = status_next_actions(result)
+    return result
+
+
+def status_room_details(config):
+    by_id = {}
+    for room in read_snapshots(config, "rooms"):
+        if isinstance(room, dict) and room.get("id"):
+            by_id[room["id"]] = room
+    for room in STATE["rooms"].values():
+        if isinstance(room, dict) and room.get("id"):
+            by_id[room["id"]] = room
+    return sorted(
+        by_id.values(),
+        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        reverse=True,
+    )
+
+
+def status_is_active_room(room):
+    return str((room or {}).get("status") or "").lower() in STATUS_ACTIVE_ROOM_STATUSES
+
+
+def status_room_run_summary(rooms):
+    live_runs = []
+    stale_queued_runs = []
+    live_by_agent = {}
+    stale_queued_by_agent = {}
+    for room in rooms:
+        buckets = status_run_buckets(room)
+        live_runs.extend(buckets["live_runs"])
+        stale_queued_runs.extend(buckets["stale_queued_runs"])
+        status_add_runs_by_agent(live_by_agent, buckets["live_runs"])
+        status_add_runs_by_agent(stale_queued_by_agent, buckets["stale_queued_runs"])
+    status_sort_runs_by_newest(live_by_agent)
+    status_sort_runs_by_newest(stale_queued_by_agent)
+    return {
+        "live_runs": live_runs,
+        "stale_queued_runs": stale_queued_runs,
+        "live_by_agent": live_by_agent,
+        "stale_queued_by_agent": stale_queued_by_agent,
+    }
+
+
+def status_run_buckets(room):
+    live_runs = []
+    stale_queued_runs = []
+    room_id = room.get("id") or ""
+    for raw_run in room.get("runs") or []:
+        status = str(raw_run.get("status") or "queued").lower()
+        if status in TERMINAL_RUN_STATUSES:
+            continue
+        run = {
+            "id": raw_run.get("id"),
+            "room_id": raw_run.get("room_id") or room_id,
+            "agent_id": raw_run.get("agent_id"),
+            "status": raw_run.get("status") or "queued",
+            "created_at": raw_run.get("created_at"),
+            "started_at": raw_run.get("started_at"),
+        }
+        if status_is_stale_queued_run(run):
+            stale_queued_runs.append(run)
+        else:
+            live_runs.append(run)
+    return {"live_runs": live_runs, "stale_queued_runs": stale_queued_runs}
+
+
+def status_is_stale_queued_run(run):
+    if str(run.get("status") or "").lower() != "queued":
+        return False
+    created_at = status_timestamp(run.get("created_at"))
+    if created_at is None:
+        return False
+    return time.time() - created_at > STATUS_QUEUED_RUN_STALE_SECONDS
+
+
+def status_timestamp(value):
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except Exception:
+        pass
+    try:
+        return calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ"))
+    except Exception:
+        return None
+
+
+def status_add_runs_by_agent(by_agent, runs):
+    for run in runs:
+        agent_id = run.get("agent_id")
+        if not agent_id:
+            continue
+        by_agent.setdefault(agent_id, []).append(run)
+
+
+def status_sort_runs_by_newest(by_agent):
+    def key(run):
+        return status_timestamp(run.get("started_at") or run.get("created_at")) or 0
+    for runs in by_agent.values():
+        runs.sort(key=key, reverse=True)
+
+
+def status_node_agent_id(agent):
+    return agent if isinstance(agent, str) else (agent or {}).get("id")
+
+
+def status_node_item(node):
+    return {
+        "id": node.get("node_id") or node.get("id") or "unknown",
+        "status": node.get("status") or "unknown",
+        "last_seen_at": node.get("last_seen_at"),
+        "agents": [
+            status_node_agent_id(agent)
+            for agent in node.get("agents") or []
+            if status_node_agent_id(agent)
+        ],
+    }
+
+
+def status_agent_item(agent, active_rooms, run_summary):
+    agent_id = agent.get("id")
+    health = agent.get("health") if isinstance(agent.get("health"), dict) else {}
+    active_runs = run_summary["live_by_agent"].get(agent_id, [])
+    stale_queued_runs = run_summary["stale_queued_by_agent"].get(agent_id, [])
+    active_room_ids = status_unique(
+        [run.get("room_id") for run in active_runs if run.get("room_id")] +
+        [
+            room.get("id")
+            for room in active_rooms
+            if not isinstance(room.get("runs"), list) and agent_id in (room.get("agents") or [])
+        ]
+    )
+    latest_run = active_runs[0] if active_runs else None
+    return {
+        "id": agent_id,
+        "status": agent.get("status") or "unknown",
+        "ping_status": agent.get("ping_status") or health.get("ping_status") or "unknown",
+        "last_run_status": agent.get("last_run_status") or health.get("last_run_status"),
+        "last_seen_at": agent.get("last_seen_at") or agent.get("node_last_seen_at"),
+        "activity": status_agent_activity(active_runs, active_room_ids),
+        "active_rooms": active_room_ids,
+        "active_runs": active_runs,
+        "stale_queued_runs": stale_queued_runs,
+        "current_run": latest_run.get("id") if latest_run else None,
+    }
+
+
+def status_agent_activity(active_runs, active_room_ids):
+    if any(str(run.get("status") or "").lower() == "running" for run in active_runs):
+        return "running"
+    if any(str(run.get("status") or "").lower() == "queued" for run in active_runs):
+        return "queued"
+    return "busy/room-active" if active_room_ids else "idle"
+
+
+def status_room_item(room):
+    buckets = status_run_buckets(room)
+    return {
+        "id": room.get("id"),
+        "status": room.get("status"),
+        "agents": room.get("agents") or [],
+        "updated_at": room.get("updated_at"),
+        "reports": room.get("report_count") if room.get("report_count") is not None else len(room.get("reports") or []),
+        "messages": room.get("message_count") if room.get("message_count") is not None else len(room.get("messages") or []),
+        "active_runs": [run.get("id") for run in buckets["live_runs"] if run.get("id")],
+        "stale_queued_runs": [run.get("id") for run in buckets["stale_queued_runs"] if run.get("id")],
+    }
+
+
+def status_recovery_hints(stale_queued_runs):
+    by_room = {}
+    for run in stale_queued_runs:
+        room_id = run.get("room_id")
+        if not room_id:
+            continue
+        hint = by_room.setdefault(room_id, {
+            "room_id": room_id,
+            "stale_queued_runs": [],
+            "agents": [],
+            "inspect_command": f"agent-bus room inspect {room_id}",
+            "pause_command": f"agent-bus room pause {room_id} --reason \"orphan queued run recovery\"",
+            "recover_command": f"agent-bus room recover {room_id} --yes",
+        })
+        if run.get("id") and run.get("id") not in hint["stale_queued_runs"]:
+            hint["stale_queued_runs"].append(run["id"])
+        if run.get("agent_id") and run.get("agent_id") not in hint["agents"]:
+            hint["agents"].append(run["agent_id"])
+    return sorted(by_room.values(), key=lambda item: item.get("room_id") or "")
+
+
+def status_warnings(result, stale_queued_runs, recovery_hints):
+    warnings = []
+    if stale_queued_runs:
+        room_note = f" Example: {recovery_hints[0]['inspect_command']}" if recovery_hints else ""
+        queue_note = "; gateway queue is empty" if int((result.get("health") or {}).get("queued") or 0) == 0 else ""
+        warnings.append(
+            f"Ignored {len(stale_queued_runs)} stale queued room run(s) older than {STATUS_QUEUED_RUN_STALE_SECONDS}s{queue_note}. "
+            f"Inspect the old room before recovering or pausing it.{room_note}"
+        )
+    return warnings
+
+
+def status_readiness(result):
+    summary = result.get("summary") or {}
+    if not (result.get("health") or {}).get("ok"):
+        return {
+            "level": "critical",
+            "status": "central-unhealthy",
+            "message": "Central health did not report ok.",
+        }
+    if int(summary.get("nodes") or 0) == 0 or int(summary.get("online_agents") or 0) == 0:
+        return {
+            "level": "setup",
+            "status": "waiting-for-edge",
+            "message": "Central is up, but no online edge agents are ready to receive work.",
+        }
+    if int(summary.get("stale_queued_runs") or 0) > 0:
+        return {
+            "level": "attention",
+            "status": "stale-room-runs",
+            "message": "Central is usable, but old queued room runs need operator review.",
+        }
+    if int(summary.get("queued") or 0) > 0 and int(summary.get("busy_agents") or 0) == 0:
+        return {
+            "level": "attention",
+            "status": "queue-needs-agent",
+            "message": "Central has queued work, but no agent is currently marked busy.",
+        }
+    if int(summary.get("busy_agents") or 0) > 0 or int(summary.get("active_rooms") or 0) > 0:
+        return {
+            "level": "active",
+            "status": "working",
+            "message": "Agents are connected and work is currently active.",
+        }
+    return {
+        "level": "ready",
+        "status": "ready",
+        "message": "Central and edge agents are ready for work.",
+    }
+
+
+def status_next_actions(result):
+    summary = result.get("summary") or {}
+    actions = []
+    if not (result.get("health") or {}).get("ok"):
+        actions.append("Check the Central service logs and restart the central process.")
+    if int(summary.get("registered_nodes") or 0) == 0:
+        actions.append("Create the first edge join command with agent-bus setup central or the Web Console Edge Join panel.")
+    if int(summary.get("nodes") or 0) == 0 and int(summary.get("registered_nodes") or 0) > 0:
+        actions.append("Start or restart an edge with agent-bus connect --config edge.config.json.")
+    if int(summary.get("nodes") or 0) > 0 and int(summary.get("online_agents") or 0) == 0:
+        actions.append("Run agent-bus doctor --config edge.config.json on the edge host and restart its service.")
+    if int(summary.get("registered_agents") or 0) > int(summary.get("agents") or 0):
+        actions.append("Some registered agents are offline or stale; inspect the Nodes section before routing work to them.")
+    if int(summary.get("queued") or 0) > 0 and int(summary.get("busy_agents") or 0) == 0:
+        actions.append("Poll or restart edge services so queued runs can be claimed.")
+    if result.get("recovery_hints"):
+        actions.append(f"Inspect stale room work: {result['recovery_hints'][0]['inspect_command']}")
+    if int(summary.get("online_agents") or 0) > 0 and int(summary.get("active_rooms") or 0) == 0 and int(summary.get("queued") or 0) == 0:
+        actions.append("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.")
+    return status_unique(actions)[:6]
+
+
+def status_unique(values):
+    out = []
+    seen = set()
+    for value in values:
+        if value is None or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
 def agent_bus_manifest(config):
     return {
         "name": "agent-bus",
@@ -854,6 +1185,7 @@ def agent_bus_manifest(config):
         },
         "endpoints": {
             "health": "GET /health",
+            "status": "GET /v1/agent-bus/status",
             "manifest": "GET /v1/agent-bus/manifest",
             "nodes": "GET /nodes",
             "agents": "GET /agents",

@@ -143,7 +143,7 @@ agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
 ```
 
-`nodes` shows edge-machine presence. `status` combines node freshness, non-inference ping URLs for model/service reachability, and active room runs so `running` and `queued` mean a real Agent Bus run is currently in flight. `trace show` follows one request across rooms, agent-backed model calls, runs, and edge events.
+`nodes` shows edge-machine presence. `status` combines node freshness, non-inference ping URLs for model/service reachability, and active room runs so `running` and `queued` mean a real Agent Bus run is currently in flight. The central gateway also exposes the shared readiness/next-action summary at `GET /v1/agent-bus/status`, which the Web Console Quickstart panel uses after you save an admin token. `trace show` follows one request across rooms, agent-backed model calls, runs, and edge events.
 
 Or use a one-time pairing code so the new machine never needs the central token pasted into chat:
 

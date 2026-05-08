@@ -43,6 +43,7 @@
 - Adds Telegram slash-command registration so typing `/` in the chat can show `/new`, `/resume`, `/agents`, `/room`, and other Agent Bus controls in Telegram's native command menu.
 - Makes `agent-bus setup central` generate and print a first scoped edge token plus a copy/paste `setup edge --token ...` command, while still supporting pair-code onboarding.
 - Adds operator checklists to `agent-bus setup central|edge` and readiness/next-action hints to `agent-bus status` so new deploys show the next useful command instead of stopping at raw health counts.
+- Adds `GET /v1/agent-bus/status` as an authenticated central readiness summary, and surfaces the same readiness/next-action guidance in the Web Console Quickstart panel.
 - Adds a Web Console Edge Join panel that creates, lists, and revokes scoped edge tokens while copying a ready-to-run `agent-bus setup edge --gateway ... --token ...` command.
 - Adds Web Console pair-code onboarding so operators can create short-lived codes and copy `agent-bus setup edge --gateway ... --code ...` commands without exposing admin tokens.
 - Makes the bundled `compose.yaml` fail fast when `AGENT_BUS_TOKEN` is unset instead of silently starting a public central gateway with a placeholder token.

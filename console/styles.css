@@ -430,6 +430,85 @@ tbody tr:last-child td {
   margin-bottom: 12px;
 }
 
+.readiness-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.readiness-panel.readiness-ready {
+  border-left-color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.readiness-panel.readiness-active {
+  border-left-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.readiness-panel.readiness-attention,
+.readiness-panel.readiness-setup,
+.readiness-panel.readiness-limited {
+  border-left-color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.readiness-panel.readiness-critical {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.readiness-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.readiness-header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.readiness-header span:last-child,
+.readiness-actions li {
+  overflow-wrap: anywhere;
+}
+
+.readiness-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.readiness-metrics span {
+  padding: 3px 8px;
+  border: 1px solid rgba(102, 112, 133, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.readiness-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.readiness-actions ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
 .check-row {
   display: grid;
   grid-template-columns: 58px minmax(96px, 0.6fr) minmax(140px, 1fr);

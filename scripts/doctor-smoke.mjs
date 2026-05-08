@@ -112,6 +112,9 @@ async function main() {
   const status = JSON.parse(statusJson.stdout);
   assert(status.readiness?.status === "ready", `status readiness mismatch: ${JSON.stringify(status.readiness)}`);
   assert(Array.isArray(status.next_actions), "status omitted next_actions");
+  const centralStatus = await requestJson(`${gateway}/v1/agent-bus/status`, { headers: authJsonHeaders(token) });
+  assert(centralStatus.readiness?.status === "ready", `central status readiness mismatch: ${JSON.stringify(centralStatus.readiness)}`);
+  assert(Array.isArray(centralStatus.next_actions), "central status omitted next_actions");
   const statusHuman = await runCli(["status", "--gateway", gateway, "--token", token]);
   assert(statusHuman.stdout.includes("Readiness:"), "status human output omitted readiness");
   assert(statusHuman.stdout.includes("Next actions:"), "status human output omitted next actions");

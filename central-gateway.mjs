@@ -260,12 +260,7 @@ async function serve(config) {
     try {
       const url = new URL(req.url || "/", `http://${config.host}:${config.port}`);
       if (req.method === "GET" && url.pathname === "/health") {
-        return sendJson(res, {
-          ok: true,
-          nodes: state.nodes.size,
-          agents: publicAgents().length,
-          queued: [...state.queues.values()].reduce((sum, queue) => sum + queue.length, 0)
-        });
+        return sendJson(res, centralHealth());
       }
       if (req.method === "GET" && url.pathname === "/.well-known/agent-bus.json") {
         return sendJson(res, agentBusWellKnown());
@@ -289,6 +284,10 @@ async function serve(config) {
       if (req.method === "GET" && url.pathname === "/nodes") {
         requireAuth(req, config, ["admin", "edge"]);
         return sendJson(res, publicNodes());
+      }
+      if (req.method === "GET" && (url.pathname === "/status" || url.pathname === "/v1/agent-bus/status")) {
+        requireAuth(req, config, ["admin"]);
+        return sendJson(res, publicStatus(config));
       }
       if (req.method === "GET" && (url.pathname === "/manifest" || url.pathname === "/v1/agent-bus/manifest")) {
         requireAuth(req, config, ["admin", "edge"]);
@@ -653,6 +652,287 @@ function publicAgent(node, agent) {
   };
 }
 
+function centralHealth() {
+  const onlineNodes = [...state.nodes.values()].filter(nodeIsOnline);
+  return {
+    ok: true,
+    nodes: onlineNodes.length,
+    agents: publicAgents().length,
+    registered_nodes: state.nodes.size,
+    registered_agents: [...state.nodes.values()].reduce((sum, node) => sum + (node.agents || []).length, 0),
+    queued: [...state.queues.values()].reduce((sum, queue) => sum + queue.length, 0)
+  };
+}
+
+const STATUS_ACTIVE_ROOM_STATUSES = new Set(["active", "running", "finishing"]);
+const STATUS_QUEUED_RUN_STALE_SECONDS = 21600;
+
+function publicStatus(config) {
+  const health = centralHealth();
+  const agents = publicAgents();
+  const nodes = publicNodes();
+  const rooms = statusRoomDetails(config);
+  const activeRooms = rooms.filter(statusIsActiveRoom);
+  const runSummary = statusRoomRunSummary(activeRooms);
+  const recoveryHints = statusRecoveryHints(runSummary.staleQueuedRuns);
+  const busyAgentIds = new Set(runSummary.liveByAgent.keys());
+  for (const room of activeRooms) {
+    if (Array.isArray(room.runs)) continue;
+    for (const agentId of room.agents || []) {
+      if (agentId) busyAgentIds.add(agentId);
+    }
+  }
+  const result = {
+    ok: Boolean(health.ok),
+    health,
+    summary: {
+      nodes: health.nodes || 0,
+      agents: health.agents || 0,
+      registered_nodes: health.registered_nodes ?? health.nodes ?? 0,
+      registered_agents: health.registered_agents ?? health.agents ?? 0,
+      queued: health.queued || 0,
+      online_agents: agents.filter((agent) => agent.status === "online").length,
+      reachable_agents: agents.filter((agent) => agent.ping_status === "reachable").length,
+      busy_agents: agents.filter((agent) => busyAgentIds.has(agent.id)).length,
+      rooms: rooms.length,
+      active_rooms: activeRooms.length,
+      active_runs: runSummary.liveRuns.length,
+      stale_queued_runs: runSummary.staleQueuedRuns.length
+    },
+    nodes: nodes.map(statusNodeItem),
+    agents: agents.map((agent) => statusAgentItem(agent, activeRooms, runSummary)),
+    rooms: rooms.slice(0, 8).map(statusRoomItem),
+    recovery_hints: recoveryHints
+  };
+  result.warnings = statusWarnings(result, runSummary.staleQueuedRuns, recoveryHints);
+  result.readiness = statusReadiness(result);
+  result.next_actions = statusNextActions(result);
+  return result;
+}
+
+function statusRoomDetails(config) {
+  const byId = new Map();
+  for (const room of readSnapshots(config, "rooms")) {
+    if (room?.id) byId.set(room.id, room);
+  }
+  return [...byId.values()]
+    .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
+}
+
+function statusIsActiveRoom(room) {
+  return STATUS_ACTIVE_ROOM_STATUSES.has(String(room?.status || "").toLowerCase());
+}
+
+function statusRoomRunSummary(rooms) {
+  const liveRuns = [];
+  const staleQueuedRuns = [];
+  const liveByAgent = new Map();
+  const staleQueuedByAgent = new Map();
+  for (const room of rooms) {
+    const buckets = statusRunBuckets(room);
+    liveRuns.push(...buckets.liveRuns);
+    staleQueuedRuns.push(...buckets.staleQueuedRuns);
+    statusAddRunsByAgent(liveByAgent, buckets.liveRuns);
+    statusAddRunsByAgent(staleQueuedByAgent, buckets.staleQueuedRuns);
+  }
+  statusSortRunsByNewest(liveByAgent);
+  statusSortRunsByNewest(staleQueuedByAgent);
+  return { liveRuns, staleQueuedRuns, liveByAgent, staleQueuedByAgent };
+}
+
+function statusRunBuckets(room) {
+  const roomId = room?.id || "";
+  const liveRuns = [];
+  const staleQueuedRuns = [];
+  for (const rawRun of Array.isArray(room?.runs) ? room.runs : []) {
+    const status = String(rawRun.status || "queued").toLowerCase();
+    if (TERMINAL_RUN_STATUSES.has(status)) continue;
+    const run = {
+      id: rawRun.id,
+      room_id: rawRun.room_id || roomId,
+      agent_id: rawRun.agent_id,
+      status: rawRun.status || "queued",
+      created_at: rawRun.created_at || null,
+      started_at: rawRun.started_at || null
+    };
+    if (statusIsStaleQueuedRun(run)) staleQueuedRuns.push(run);
+    else liveRuns.push(run);
+  }
+  return { liveRuns, staleQueuedRuns };
+}
+
+function statusIsStaleQueuedRun(run) {
+  if (String(run.status || "").toLowerCase() !== "queued") return false;
+  const created = Date.parse(run.created_at || "");
+  if (!Number.isFinite(created)) return false;
+  return (Date.now() - created) / 1000 > STATUS_QUEUED_RUN_STALE_SECONDS;
+}
+
+function statusAddRunsByAgent(byAgent, runs) {
+  for (const run of runs) {
+    if (!run.agent_id) continue;
+    const list = byAgent.get(run.agent_id) || [];
+    list.push(run);
+    byAgent.set(run.agent_id, list);
+  }
+}
+
+function statusSortRunsByNewest(byAgent) {
+  for (const runs of byAgent.values()) {
+    runs.sort((a, b) => Date.parse(b.started_at || b.created_at || 0) - Date.parse(a.started_at || a.created_at || 0));
+  }
+}
+
+function statusNodeItem(node) {
+  return {
+    id: node.node_id || node.id || "unknown",
+    status: node.status || "unknown",
+    last_seen_at: node.last_seen_at || null,
+    agents: Array.isArray(node.agents)
+      ? node.agents.map((agent) => typeof agent === "string" ? agent : agent.id).filter(Boolean)
+      : []
+  };
+}
+
+function statusAgentItem(agent, activeRooms, runSummary) {
+  const activeRuns = runSummary.liveByAgent.get(agent.id) || [];
+  const staleQueuedRuns = runSummary.staleQueuedByAgent.get(agent.id) || [];
+  const activeRoomIds = statusUnique([
+    ...activeRuns.map((run) => run.room_id).filter(Boolean),
+    ...activeRooms
+      .filter((room) => !Array.isArray(room.runs) && Array.isArray(room.agents) && room.agents.includes(agent.id))
+      .map((room) => room.id)
+      .filter(Boolean)
+  ]);
+  const latestRun = activeRuns[0] || null;
+  return {
+    id: agent.id,
+    status: agent.status || "unknown",
+    ping_status: agent.ping_status || agent.health?.ping_status || "unknown",
+    last_run_status: agent.last_run_status || agent.health?.last_run_status || null,
+    last_seen_at: agent.last_seen_at || agent.node_last_seen_at || null,
+    activity: statusAgentActivity(activeRuns, activeRoomIds),
+    active_rooms: activeRoomIds,
+    active_runs: activeRuns,
+    stale_queued_runs: staleQueuedRuns,
+    current_run: latestRun?.id || null
+  };
+}
+
+function statusAgentActivity(activeRuns, activeRoomIds) {
+  if (activeRuns.some((run) => String(run.status || "").toLowerCase() === "running")) return "running";
+  if (activeRuns.some((run) => String(run.status || "").toLowerCase() === "queued")) return "queued";
+  return activeRoomIds.length ? "busy/room-active" : "idle";
+}
+
+function statusRoomItem(room) {
+  const buckets = statusRunBuckets(room);
+  return {
+    id: room.id,
+    status: room.status,
+    agents: room.agents || [],
+    updated_at: room.updated_at,
+    reports: room.report_count ?? (room.reports || []).length,
+    messages: room.message_count ?? (room.messages || []).length,
+    active_runs: buckets.liveRuns.map((run) => run.id).filter(Boolean),
+    stale_queued_runs: buckets.staleQueuedRuns.map((run) => run.id).filter(Boolean)
+  };
+}
+
+function statusRecoveryHints(staleQueuedRuns) {
+  const byRoom = new Map();
+  for (const run of staleQueuedRuns) {
+    const roomId = run.room_id || "";
+    if (!roomId) continue;
+    const hint = byRoom.get(roomId) || {
+      room_id: roomId,
+      stale_queued_runs: [],
+      agents: [],
+      inspect_command: `agent-bus room inspect ${roomId}`,
+      pause_command: `agent-bus room pause ${roomId} --reason "orphan queued run recovery"`,
+      recover_command: `agent-bus room recover ${roomId} --yes`
+    };
+    if (run.id && !hint.stale_queued_runs.includes(run.id)) hint.stale_queued_runs.push(run.id);
+    if (run.agent_id && !hint.agents.includes(run.agent_id)) hint.agents.push(run.agent_id);
+    byRoom.set(roomId, hint);
+  }
+  return [...byRoom.values()].sort((a, b) => String(a.room_id || "").localeCompare(String(b.room_id || "")));
+}
+
+function statusWarnings(result, staleQueuedRuns, recoveryHints) {
+  const warnings = [];
+  if (staleQueuedRuns.length) {
+    const queueNote = Number(result.health?.queued || 0) === 0 ? "; gateway queue is empty" : "";
+    const roomNote = recoveryHints.length ? ` Example: ${recoveryHints[0].inspect_command}` : "";
+    warnings.push(`Ignored ${staleQueuedRuns.length} stale queued room run(s) older than ${STATUS_QUEUED_RUN_STALE_SECONDS}s${queueNote}. Inspect the old room before recovering or pausing it.${roomNote}`);
+  }
+  return warnings;
+}
+
+function statusReadiness(result) {
+  const s = result.summary || {};
+  if (!result.health?.ok) {
+    return {
+      level: "critical",
+      status: "central-unhealthy",
+      message: "Central health did not report ok."
+    };
+  }
+  if (Number(s.nodes || 0) === 0 || Number(s.online_agents || 0) === 0) {
+    return {
+      level: "setup",
+      status: "waiting-for-edge",
+      message: "Central is up, but no online edge agents are ready to receive work."
+    };
+  }
+  if (Number(s.stale_queued_runs || 0) > 0) {
+    return {
+      level: "attention",
+      status: "stale-room-runs",
+      message: "Central is usable, but old queued room runs need operator review."
+    };
+  }
+  if (Number(s.queued || 0) > 0 && Number(s.busy_agents || 0) === 0) {
+    return {
+      level: "attention",
+      status: "queue-needs-agent",
+      message: "Central has queued work, but no agent is currently marked busy."
+    };
+  }
+  if (Number(s.busy_agents || 0) > 0 || Number(s.active_rooms || 0) > 0) {
+    return {
+      level: "active",
+      status: "working",
+      message: "Agents are connected and work is currently active."
+    };
+  }
+  return {
+    level: "ready",
+    status: "ready",
+    message: "Central and edge agents are ready for work."
+  };
+}
+
+function statusNextActions(result) {
+  const s = result.summary || {};
+  const actions = [];
+  if (!result.health?.ok) actions.push("Check the Central service logs and restart the central process.");
+  if (Number(s.registered_nodes || 0) === 0) actions.push("Create the first edge join command with agent-bus setup central or the Web Console Edge Join panel.");
+  if (Number(s.nodes || 0) === 0 && Number(s.registered_nodes || 0) > 0) actions.push("Start or restart an edge with agent-bus connect --config edge.config.json.");
+  if (Number(s.nodes || 0) > 0 && Number(s.online_agents || 0) === 0) actions.push("Run agent-bus doctor --config edge.config.json on the edge host and restart its service.");
+  if (Number(s.registered_agents || 0) > Number(s.agents || 0)) actions.push("Some registered agents are offline or stale; inspect the Nodes section before routing work to them.");
+  if (Number(s.queued || 0) > 0 && Number(s.busy_agents || 0) === 0) actions.push("Poll or restart edge services so queued runs can be claimed.");
+  if (result.recovery_hints?.length) actions.push(`Inspect stale room work: ${result.recovery_hints[0].inspect_command}`);
+  if (Number(s.online_agents || 0) > 0 && Number(s.active_rooms || 0) === 0 && Number(s.queued || 0) === 0) {
+    actions.push("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.");
+  }
+  return statusUnique(actions).slice(0, 6);
+}
+
+function statusUnique(values) {
+  return [...new Set(values.filter((value) => value != null))];
+}
+
 function agentBusManifest(config) {
   return {
     name: "agent-bus",
@@ -668,6 +948,7 @@ function agentBusManifest(config) {
     },
     endpoints: {
       health: "GET /health",
+      status: "GET /v1/agent-bus/status",
       manifest: "GET /v1/agent-bus/manifest",
       nodes: "GET /nodes",
       agents: "GET /agents",

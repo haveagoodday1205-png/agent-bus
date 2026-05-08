@@ -5,6 +5,15 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const jsonOut = process.argv.includes("--json");
 const steps = [];
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
 
 const jsFiles = [
   "agent-bus.mjs",
@@ -20,6 +29,8 @@ const jsFiles = [
   "scripts/demo-issue-pr.mjs",
   "scripts/compatibility-smoke.mjs",
   "scripts/doctor-smoke.mjs",
+  "scripts/diagnostics-redaction-smoke.mjs",
+  "scripts/compose-smoke.mjs",
   "scripts/adapter-preset-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
@@ -48,6 +59,8 @@ try {
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
+  step("diagnostics redaction smoke", process.execPath, ["scripts/diagnostics-redaction-smoke.mjs", "--json"]);
+  step("compose preflight smoke", process.execPath, ["scripts/compose-smoke.mjs", "--json"]);
   step("adapter preset smoke", process.execPath, ["scripts/adapter-preset-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
@@ -86,7 +99,7 @@ function run(command, args) {
     cwd: root,
     encoding: "utf8",
     windowsHide: true,
-    env: { ...process.env, npm_config_loglevel: "error" }
+    env: releaseStepEnv({ npm_config_loglevel: "error" })
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -122,6 +135,12 @@ function resolveCommand(command) {
     }
   }
   return "";
+}
+
+function releaseStepEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
 }
 
 function compact(text) {

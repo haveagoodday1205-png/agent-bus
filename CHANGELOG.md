@@ -24,6 +24,16 @@
 - Adds explicit cache scopes for direct `agent:<id>` model calls plus console controls for Chat Completions, Responses, timeout, model suggestions, and stable cache/session reuse.
 - Adds `agent-bus demo agent-model` / `npm run demo:agent-model`, a no-quota demo that exposes a command edge as `agent:model-agent` and proves Chat Completions and Responses can reuse one derived Agent Bus session key.
 
+### Diagnostics hardening
+
+- Redacts temporary and common private absolute paths such as `/tmp/...` and Windows home-directory paths from `agent-bus diagnostics bundle` by default, including doctor check details like `Read edge config`.
+- Adds `npm run diagnostics:redaction:smoke` and runs it inside `npm run release:check` so host/path toggle regressions stay covered without live model calls.
+
+### Deployment hardening
+
+- Makes the bundled `compose.yaml` fail fast when `AGENT_BUS_TOKEN` is unset instead of silently starting a public central gateway with a placeholder token.
+- Adds `npm run compose:smoke` plus Docker preflight docs so the single-service Python central deployment, persistent-volume story, and "database optional later" guidance stay aligned.
+
 ## 0.5.5 - Compact room session keys
 
 Agent Bus 0.5.5 makes room and thread session keys shorter while preserving stable per-agent/per-room cache identity.

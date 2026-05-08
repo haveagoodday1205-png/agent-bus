@@ -43,6 +43,8 @@
     "smoke:offline": "node scripts/offline-smoke.mjs",
     "compat:check": "node scripts/compatibility-smoke.mjs",
     "doctor:smoke": "node scripts/doctor-smoke.mjs",
+    "diagnostics:redaction:smoke": "node scripts/diagnostics-redaction-smoke.mjs",
+    "compose:smoke": "node scripts/compose-smoke.mjs",
     "adapter:preset:smoke": "node scripts/adapter-preset-smoke.mjs",
     "trace:smoke": "node scripts/trace-smoke.mjs",
     "smoke:central-restart": "node scripts/central-restart-smoke.mjs",

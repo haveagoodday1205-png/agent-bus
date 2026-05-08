@@ -12,7 +12,7 @@ services:
       AGENT_BUS_CONFIG: /config/central.config.json
       AGENT_BUS_CENTRAL_RUNTIME: python
       AGENT_BUS_DATA_DIR: /data/central
-      AGENT_BUS_TOKEN: ${AGENT_BUS_TOKEN:-change-me}
+      AGENT_BUS_TOKEN: "${AGENT_BUS_TOKEN:?set AGENT_BUS_TOKEN in .env or environment}"
       AGENT_BUS_MODEL_API_KEY: ${AGENT_BUS_MODEL_API_KEY:-}
       SUB2API_API_KEY: ${SUB2API_API_KEY:-}
       CLIPROXY_API_KEY: ${CLIPROXY_API_KEY:-}

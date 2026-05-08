@@ -28,13 +28,15 @@ npm run release:check
 
 `release:preflight` checks the package version, changelog section, release-note rendering, git branch, clean working tree, and local tag state, then prints the exact publication steps. It is offline by default; pass `-- --network` when you also want to check the remote tag and npm publish state.
 
-`release:check` runs syntax checks, Python compile checks, offline room smoke, stale-room autonomy smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
+`release:check` runs syntax checks, Python compile checks, diagnostics redaction smoke, Docker Compose preflight smoke, offline room smoke, stale-room autonomy smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
 
 `compat:check` starts a temporary gateway and `examples/hello-agent` edge, then verifies registration, scoped edge discovery, `agent:<id>` Chat Completions, `agent:<id>` Responses, and room directive parsing without calling paid model providers. The CI workflow runs this smoke on Ubuntu, Windows, and macOS so adapter regressions are caught before release.
 
 `pack:check` is the npm artifact gate. It runs `npm pack`, validates required runtime/docs files, rejects private or build paths, checks the CLI entrypoint, extracts the package, and runs `agent-bus --help` from the packed artifact.
 
 `portable:check` is the GitHub Release bundle gate. It builds a temporary portable archive, validates the bundle manifest, SHA-256 values, launcher executable bit, forbidden paths, release manifest, `SHA256SUMS`, archive extraction, and bundled `agent-bus --help`.
+
+`compose:smoke` is the Docker/docs gate. It checks `compose.yaml`, `Dockerfile`, `.env.example`, and the public docs for the single-service Python central deployment contract so the no-database-first path stays aligned without requiring Docker or model calls.
 
 `portable:check:zip` also builds and extracts the `.zip` artifact. It is required in the GitHub release workflow and useful locally when `zip`/`unzip` or PowerShell is available.
 

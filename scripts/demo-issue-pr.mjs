@@ -228,7 +228,7 @@ function demoPrDraft(issue) {
 function start(command, args, env = {}) {
   const child = spawn(command, args, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: demoChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -245,7 +245,7 @@ function runCli(args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(node, [path.join(root, "agent-bus.mjs"), ...args], {
       cwd: root,
-      env: { ...process.env },
+      env: demoChildEnv(),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -391,3 +391,19 @@ function quoteCommandArg(value) {
   if (process.platform === "win32") return `"${text.replace(/"/g, '""')}"`;
   return `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
 }
+
+function demoChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
+}
+
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];

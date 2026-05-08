@@ -75,7 +75,7 @@ async function main() {
 function start(args, env = {}) {
   const child = spawn(node, args, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: demoChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -92,7 +92,7 @@ function runNode(args, env = {}, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(node, args, {
       cwd: root,
-      env: { ...process.env, ...env },
+      env: demoChildEnv(env),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -169,3 +169,19 @@ async function requestJson(url, options = {}) {
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+function demoChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
+}
+
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];

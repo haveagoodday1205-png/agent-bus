@@ -104,9 +104,11 @@ async function main() {
 
   step("Starting one edge with two toy agents");
   const edge = start(node, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
-    AGENT_BUS_CONFIG: edgeConfig
+    AGENT_BUS_CONFIG: edgeConfig,
+    AGENT_BUS_GATEWAY_URL: gateway,
+    AGENT_BUS_TOKEN: edgeToken
   });
-  await waitForAgents(adminClient, ["starter-planner", "starter-worker"]);
+  await waitForAgents(adminClient, ["starter-planner", "starter-worker"], 10000, edge);
 
   step("Creating a two-agent room");
   const room = await adminClient.createRoom({
@@ -185,7 +187,7 @@ function step(message) {
 function start(command, commandArgs, env = {}) {
   const child = spawn(command, commandArgs, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: smokeChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -213,7 +215,7 @@ function runCli(cliArgs, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const child = spawn(node, [path.join(root, "agent-bus.mjs"), ...cliArgs], {
       cwd: root,
-      env: { ...process.env },
+      env: smokeChildEnv(),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -237,19 +239,26 @@ function runCli(cliArgs, timeoutMs = 10000) {
   });
 }
 
-async function waitForAgents(client, agentIds, timeoutMs = 10000) {
+async function waitForAgents(client, agentIds, timeoutMs = 10000, child = null) {
   const started = Date.now();
+  let lastError = null;
   while (Date.now() - started < timeoutMs) {
+    if (child && childFailed(child)) {
+      throw new Error(`Process exited before agents became ready.\n${formatChildDiagnostics(child)}`);
+    }
     try {
       const agents = await client.agents();
       const online = new Set(agents.filter((agent) => agent.status === "online").map((agent) => agent.id));
       if (agentIds.every((id) => online.has(id))) return;
-    } catch {
+    } catch (err) {
+      lastError = err;
       // Retry until the edge registers.
     }
     await delay(250);
   }
-  throw new Error(`Timed out waiting for agents: ${agentIds.join(", ")}`);
+  const cause = lastError ? `: ${lastError.message || String(lastError)}` : "";
+  const diagnostics = child ? `\n${formatChildDiagnostics(child)}` : "";
+  throw new Error(`Timed out waiting for agents: ${agentIds.join(", ")}${cause}${diagnostics}`);
 }
 
 async function waitForRoomComplete(client, roomId, timeoutMs = 20000) {
@@ -417,6 +426,22 @@ function quoteCommandArg(value) {
 function unique(values) {
   return [...new Set(values)];
 }
+
+function smokeChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
+}
+
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
 
 function redactDiagnostics(text) {
   return String(text || "")

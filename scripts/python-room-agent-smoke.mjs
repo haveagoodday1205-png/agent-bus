@@ -7,6 +7,7 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const jsonOut = process.argv.includes("--json");
 const procs = [];
+const childLogs = new WeakMap();
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-python-room-agent-"));
 
 main().catch((err) => {
@@ -77,7 +78,7 @@ async function main() {
 
   step("Starting Node edge with Python room agent");
   const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig]);
-  const agent = await waitForAgent(gateway, token, "python-room-agent");
+  const agent = await waitForAgent(gateway, token, "python-room-agent", 10000, edge);
   assert(agent.status === "online", "Python room agent did not register online");
   assert(agent.kind === "python", "Python room agent did not expose kind=python");
   assert(agent.ping_status === "not_configured", "Python room agent should not require a pingUrl");
@@ -141,17 +142,29 @@ async function main() {
 function start(command, args, env = {}) {
   const child = spawn(command, args, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: smokeChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
-  if (!jsonOut) {
-    child.stdout.on("data", (chunk) => {
+  const logs = { command, args, stdout: "", stderr: "", error: "", exit: null };
+  childLogs.set(child, logs);
+  child.stdout.on("data", (chunk) => {
+    appendLog(logs, "stdout", chunk);
+    if (!jsonOut) {
       const text = chunk.toString("utf8");
       if (/listening|connected/.test(text)) process.stdout.write(text);
-    });
-    child.stderr.on("data", (chunk) => process.stderr.write(chunk));
-  }
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    appendLog(logs, "stderr", chunk);
+    if (!jsonOut) process.stderr.write(chunk);
+  });
+  child.on("error", (err) => {
+    logs.error = err.message || String(err);
+  });
+  child.on("exit", (code, signal) => {
+    logs.exit = { code, signal };
+  });
   procs.push(child);
   return child;
 }
@@ -160,7 +173,7 @@ function runCli(args, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
       cwd: root,
-      env: { ...process.env },
+      env: smokeChildEnv(),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -184,19 +197,26 @@ function runCli(args, timeoutMs = 10000) {
   });
 }
 
-async function waitForAgent(gateway, token, agentId, timeoutMs = 10000) {
+async function waitForAgent(gateway, token, agentId, timeoutMs = 10000, child = null) {
   const started = Date.now();
+  let lastError = null;
   while (Date.now() - started < timeoutMs) {
+    if (child && childFailed(child)) {
+      throw new Error(`Process exited before ${agentId} became ready.\n${formatChildDiagnostics(child)}`);
+    }
     try {
       const agents = await requestJson(`${gateway}/agents`, { headers: authHeaders(token) });
       const agent = agents.find((item) => item.id === agentId && item.status === "online");
       if (agent) return agent;
-    } catch {
+    } catch (err) {
+      lastError = err;
       // Retry until the edge registers.
     }
     await delay(250);
   }
-  throw new Error(`Timed out waiting for ${agentId}`);
+  const cause = lastError ? `: ${lastError.message || String(lastError)}` : "";
+  const diagnostics = child ? `\n${formatChildDiagnostics(child)}` : "";
+  throw new Error(`Timed out waiting for ${agentId}${cause}${diagnostics}`);
 }
 
 async function waitForRoomComplete(gateway, token, roomId, timeoutMs = 15000) {
@@ -214,8 +234,8 @@ async function waitForJson(url, timeoutMs = 10000, child = null) {
   const started = Date.now();
   let lastError = null;
   while (Date.now() - started < timeoutMs) {
-    if (child && (child.exitCode !== null || child.signalCode)) {
-      throw new Error(`Process exited before ${url} became ready.`);
+    if (child && childFailed(child)) {
+      throw new Error(`Process exited before ${url} became ready.\n${formatChildDiagnostics(child)}`);
     }
     try {
       return await requestJson(url);
@@ -224,7 +244,8 @@ async function waitForJson(url, timeoutMs = 10000, child = null) {
       await delay(250);
     }
   }
-  throw new Error(`Timed out waiting for ${url}: ${lastError?.message || "no response"}`);
+  const diagnostics = child ? `\n${formatChildDiagnostics(child)}` : "";
+  throw new Error(`Timed out waiting for ${url}: ${lastError?.message || "no response"}${diagnostics}`);
 }
 
 async function requestJson(url, options = {}) {
@@ -306,6 +327,54 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function appendLog(logs, key, chunk) {
+  const limit = 24000;
+  logs[key] += chunk.toString();
+  if (logs[key].length > limit) logs[key] = logs[key].slice(-limit);
+}
+
+function childFailed(child) {
+  const logs = childLogs.get(child);
+  return Boolean(logs?.error || child.exitCode !== null || child.signalCode);
+}
+
+function formatChildDiagnostics(child) {
+  const logs = childLogs.get(child);
+  if (!logs) return "child diagnostics unavailable";
+  const exit = logs.exit || { code: child.exitCode, signal: child.signalCode };
+  const lines = [
+    `child: ${logs.command} ${logs.args.join(" ")}`,
+    `exit: code=${exit.code ?? "running"} signal=${exit.signal ?? ""}`
+  ];
+  if (logs.error) lines.push(`spawn_error: ${logs.error}`);
+  if (logs.stdout.trim()) lines.push(`stdout:\n${redactDiagnostics(logs.stdout.trim())}`);
+  if (logs.stderr.trim()) lines.push(`stderr:\n${redactDiagnostics(logs.stderr.trim())}`);
+  return lines.join("\n");
+}
+
 function unique(values) {
   return [...new Set(values)];
+}
+
+function smokeChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
+}
+
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
+
+function redactDiagnostics(text) {
+  return String(text || "")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "sk-[REDACTED]")
+    .replace(/\babt_edge_[A-Za-z0-9_-]{12,}\b/g, "abt_edge_[REDACTED]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, "Bearer [REDACTED]");
 }

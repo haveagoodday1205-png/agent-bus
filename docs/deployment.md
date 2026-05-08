@@ -39,8 +39,11 @@ For a public central station, prefer Docker Compose plus a reverse proxy. The bu
 
 ```bash
 cp .env.example .env
+# Replace AGENT_BUS_TOKEN in .env with a long random secret before continuing.
 agent-bus init central --out central.config.json
-# Edit .env and central.config.json before exposing the service.
+docker compose config >/tmp/agent-bus-compose.rendered.yaml
+docker compose run --rm --no-deps agent-bus-central --help
+# Edit central.config.json before exposing the service.
 docker compose up -d --build
 docker compose logs -f agent-bus-central
 ```
@@ -48,10 +51,16 @@ docker compose logs -f agent-bus-central
 Important settings:
 
 - Put a long random `AGENT_BUS_TOKEN` in `.env`.
+- The default Compose stack intentionally has no database service; keep the `agent-bus-data` volume on persistent storage instead.
 - Keep `AGENT_BUS_DATA_DIR=/data/central` in the container.
 - Mount `/data` as a persistent volume.
 - Put HTTPS in front of port `8788`; do not expose plain HTTP directly to the public internet.
 - Back up the `agent-bus-data` volume.
+
+Preflight notes:
+
+- `docker compose config` fails fast when `AGENT_BUS_TOKEN` is unset or the checked-in mounts/config cannot render cleanly.
+- `docker compose run --rm --no-deps agent-bus-central --help` is a cheap smoke that exercises the image entrypoint and bundled Python runtime without calling a model provider.
 
 Useful container checks:
 

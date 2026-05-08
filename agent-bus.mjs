@@ -1291,7 +1291,8 @@ function redactDiagnosticsText(value, options = {}) {
   if (options.redactPaths !== false) {
     text = text
       .replace(/\b[A-Za-z]:\\(?:[^\\\s"',}]+\\)*[^\\\s"',}]*/g, "[REDACTED_PATH]")
-      .replace(/(?:^|[\s"'(])\/(?:Users|home|root)\/[^\s"',)}]+/g, (match) => `${match[0].trim() ? match[0] : ""}[REDACTED_PATH]`);
+      .replace(/(^|[\s"'(])\/(?:Users|home|root|tmp|private|var(?:\/folders)?|opt|srv|mnt|Volumes|workspace|workspaces)(?:\/[^\s"',)}]+)+/g, (_, prefix) => `${prefix}[REDACTED_PATH]`)
+      .replace(/(^|[\s"'(])\/(?:[^/\s"',)}]+\/)+[^/\s"',)}]+\.[A-Za-z0-9._-]+/g, (_, prefix) => `${prefix}[REDACTED_PATH]`);
   }
   return text;
 }
@@ -1830,7 +1831,7 @@ function redactExportText(value) {
     .replace(/\b(abt_edge_[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_EDGE_TOKEN]")
     .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,})\b/g, "[REDACTED_TOKEN]")
     .replace(/\b(npm_[A-Za-z0-9]{20,})\b/g, "[REDACTED_TOKEN]")
-    .replace(/\b((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)(["']?)[^\s"',}]+/gi, "$1$2[REDACTED]")
+    .replace(/\b((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)(["']?)(?:[A-Za-z]+\s+)?[^\s"',}]+/gi, "$1$2[REDACTED]")
     .replace(/:\/\/([^:/@\s]+):([^/@\s]+)@/g, "://[REDACTED]@");
 }
 

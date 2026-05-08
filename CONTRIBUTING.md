@@ -60,6 +60,8 @@ Use the smallest useful check while developing, then run the broader checks befo
 npm run smoke:offline                 # room path with no model calls
 npm run compat:check -- --json        # local gateway + hello-agent compatibility
 npm run doctor:smoke -- --json        # zero-quota diagnostics
+npm run diagnostics:redaction:smoke -- --json
+npm run compose:smoke -- --json
 npm run adapter:preset:smoke -- --json # fake Codex/OpenClaw/Hermes/Ollama preset contracts
 npm run trace:smoke -- --json         # trace export/show behavior
 npm run smoke:central-restart -- --json

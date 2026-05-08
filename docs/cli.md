@@ -359,11 +359,16 @@ Run a central gateway in a container:
 
 ```bash
 cp .env.example .env
+# replace AGENT_BUS_TOKEN in .env before continuing
 agent-bus init central --out central.config.json
+docker compose config >/tmp/agent-bus-compose.rendered.yaml
+docker compose run --rm --no-deps agent-bus-central --help
 docker compose up -d --build
 ```
 
-The Compose service runs the full Python central gateway by default and stores central data in the `agent-bus-data` Docker volume. The image still uses the same CLI entrypoint:
+The Compose service runs the full Python central gateway by default and stores central data in the `agent-bus-data` Docker volume. The checked-in stack intentionally does not include a database container; JSONL plus redacted snapshots are the first deployment path. `docker compose config` is the fail-fast preflight for missing tokens or mounts, and `docker compose run --rm --no-deps agent-bus-central --help` is a no-model smoke that proves the container entrypoint boots.
+
+The image still uses the same CLI entrypoint:
 
 ```bash
 docker run --rm agent-bus:local --help

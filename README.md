@@ -164,11 +164,14 @@ Run with Docker:
 
 ```bash
 cp .env.example .env
+# replace AGENT_BUS_TOKEN in .env before continuing
 agent-bus init central --out central.config.json
+docker compose config >/tmp/agent-bus-compose.rendered.yaml
 docker compose up -d --build
+docker compose exec agent-bus-central node /app/agent-bus.mjs health --gateway http://127.0.0.1:8788
 ```
 
-The central station does not need a database to start. It stores append-only JSONL logs and redacted JSON snapshots under `AGENT_BUS_DATA_DIR`; use a persistent disk or Docker volume and regular backups. Add SQLite/Postgres later when you need multi-instance writes, large trace queries, or hosted multi-tenant operations.
+The bundled Compose stack intentionally starts one `agent-bus-central` service plus the persistent `agent-bus-data` volume. The central station does not need a database to start. It stores append-only JSONL logs and redacted JSON snapshots under `AGENT_BUS_DATA_DIR`; use a persistent disk or Docker volume and regular backups. Add SQLite/Postgres later when you need multi-instance writes, large trace queries, or hosted multi-tenant operations.
 
 Generate a long-running service:
 

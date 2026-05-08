@@ -8,6 +8,15 @@ const root = path.resolve(import.meta.dirname, "..");
 const jsonOut = process.argv.includes("--json");
 const procs = [];
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-room-stale-smoke-"));
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
 
 main().catch((err) => {
   if (jsonOut) {
@@ -229,7 +238,7 @@ async function main() {
 function start(command, args, env = {}) {
   const child = spawn(command, args, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: smokeChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -321,7 +330,7 @@ function runCliText(args, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
       cwd: root,
-      env: { ...process.env, AGENT_BUS_GATEWAY_URL: "", AGENT_BUS_TOKEN: "" },
+      env: smokeChildEnv({ AGENT_BUS_GATEWAY_URL: "", AGENT_BUS_TOKEN: "" }),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -379,13 +388,14 @@ function freePort() {
 
 function findPython() {
   const candidates = [
+    process.env.AGENT_BUS_PYTHON,
     process.env.PYTHON,
     ...commonBundledPythonPaths(),
     process.platform === "win32" ? "python.exe" : "python3",
     "python3",
     "python"
   ].filter(Boolean);
-  for (const command of candidates) {
+  for (const command of [...new Set(candidates)]) {
     try {
       const result = spawnSync(command, ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"], {
         cwd: root,
@@ -410,6 +420,12 @@ function commonBundledPythonPaths() {
     ? ["python.exe"]
     : ["bin/python3", "bin/python", "python3", "python"];
   return roots.flatMap((rootDir) => names.map((name) => path.join(rootDir, name)));
+}
+
+function smokeChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
 }
 
 function quoteCommandArg(value) {

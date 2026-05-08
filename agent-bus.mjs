@@ -2329,7 +2329,7 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
   const activeRooms = roomList.filter(isActiveRoom);
   const runSummary = activeRoomRunSummary(activeRooms, { queuedRunStaleSeconds });
-  const recoveryHints = staleRoomRecoveryHints(runSummary.staleQueuedRuns);
+  const recoveryHints = staleRoomRecoveryHints(runSummary.staleQueuedRuns, { queuedRunStaleSeconds });
   const activeRunsByAgent = runSummary.liveByAgent;
   const fallbackBusyAgentIds = new Set(activeRooms
     .filter((room) => !Array.isArray(room.runs))
@@ -2479,8 +2479,9 @@ function activeRoomRunSummary(rooms, options = {}) {
   return { liveRuns, staleQueuedRuns, liveByAgent, staleQueuedByAgent };
 }
 
-function staleRoomRecoveryHints(staleQueuedRuns) {
+function staleRoomRecoveryHints(staleQueuedRuns, { queuedRunStaleSeconds = 21600 } = {}) {
   const byRoom = new Map();
+  const thresholdFlag = queuedRunStaleSeconds === 21600 ? "" : ` --queued-run-stale-seconds ${queuedRunStaleSeconds}`;
   for (const run of staleQueuedRuns) {
     const roomId = run.room_id || "";
     if (!roomId) continue;
@@ -2488,8 +2489,8 @@ function staleRoomRecoveryHints(staleQueuedRuns) {
       room_id: roomId,
       stale_queued_runs: [],
       agents: [],
-      inspect_command: `agent-bus room inspect ${roomId}`,
-      recover_command: `agent-bus room recover ${roomId} --yes`
+      inspect_command: `agent-bus room inspect ${roomId}${thresholdFlag}`,
+      recover_command: `agent-bus room recover ${roomId} --yes${thresholdFlag}`
     };
     if (run.id) hint.stale_queued_runs.push(run.id);
     if (run.agent_id && !hint.agents.includes(run.agent_id)) hint.agents.push(run.agent_id);

@@ -198,7 +198,7 @@ async function main() {
   assert(orphanRoomStatus?.active_runs?.length === 0, "CLI status should exclude stale queued runs from room active_runs");
   assert(orphanRoomStatus?.stale_queued_runs?.length === 1, "CLI status did not expose stale queued run metadata on the room");
   assert(staleQueuedStatus.warnings?.some((warning) => /Ignored 1 stale queued room run older than 1s; gateway queue is empty/.test(warning)), "CLI status did not warn about the ignored stale queued room run");
-  assert(staleQueuedStatus.recovery_hints?.some((hint) => hint.room_id === orphanRoom.id && hint.inspect_command === `agent-bus room inspect ${orphanRoom.id}`), "CLI status JSON did not include room recovery hints");
+  assert(staleQueuedStatus.recovery_hints?.some((hint) => hint.room_id === orphanRoom.id && hint.inspect_command === `agent-bus room inspect ${orphanRoom.id} --queued-run-stale-seconds 1` && hint.recover_command === `agent-bus room recover ${orphanRoom.id} --yes --queued-run-stale-seconds 1`), "CLI status JSON did not include threshold-stable room recovery hints");
   assert(stillRunningPlanner?.activity === "running", "CLI status should not mark a genuine running planner as stale");
   const staleQueuedHuman = await runCliText(["status", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(staleQueuedHuman.includes("Warning: Ignored 1 stale queued room run older than 1s; gateway queue is empty"), "CLI human status did not warn about the ignored stale queued room run");

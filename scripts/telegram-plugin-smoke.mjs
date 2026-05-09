@@ -134,6 +134,10 @@ async function main() {
   assert(pollerCallback.commands.includes("room"), "telegram poller --set-commands did not register /room");
   const commandMenu = await runTelegramCommandMenuSmoke();
   assert(commandMenu.ok === true && commandMenu.commands.includes("room"), "telegram command menu smoke did not register /room");
+  const doctorSmoke = await runTelegramDoctorSmoke(gateway, adminToken, telegramChatId, webhookSecret);
+  assert(doctorSmoke.ok === true && doctorSmoke.transport === "poller", "telegram doctor smoke did not pass in poller mode");
+  const setupSmoke = await runTelegramSetupSmoke(gateway, telegramChatId, webhookSecret, dataDir);
+  assert(setupSmoke.ok === true && setupSmoke.commands.includes("room"), "telegram setup smoke did not write env/service and register commands");
   const agentsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/agents");
   assert(agentsWebhook.ok === true && agentsWebhook.command === "agents", "telegram /agents webhook failed");
   const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-smoke-agent Run webhook command smoke.");
@@ -251,6 +255,8 @@ async function main() {
     events: notifications.map((item) => item.event),
     notifications: notifications.length,
     plugin_test_status: pluginTest.notification.status,
+    doctor_checks: doctorSmoke.checks,
+    setup_files: setupSmoke.files,
     webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command, roomStartWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
@@ -537,11 +543,112 @@ async function runTelegramCommandMenuSmoke() {
   }
 }
 
-async function startTelegramApiMock(updates) {
-  const state = { updates, calls: [], allowedUpdates: [], commands: [] };
+async function runTelegramDoctorSmoke(gateway, adminToken, chatId, secret) {
+  const mock = await startTelegramApiMock([], { commands: smokeTelegramCommands() });
+  try {
+    const result = await runAgentBusJsonAsync([
+      "plugin",
+      "telegram",
+      "doctor",
+      "--gateway",
+      gateway,
+      "--token",
+      adminToken,
+      "--api-base-url",
+      mock.url,
+      "--bot-token",
+      "telegram-doctor-smoke-token",
+      "--chat-id",
+      chatId,
+      "--secret-token",
+      secret,
+      "--transport",
+      "poller",
+      "--json"
+    ]);
+    return {
+      ok: result.ok === true,
+      transport: result.checks.find((item) => item.name === "telegram doctor")?.detail,
+      checks: result.counts
+    };
+  } finally {
+    await mock.close();
+  }
+}
+
+async function runTelegramSetupSmoke(gateway, chatId, secret, dataDir) {
+  const mock = await startTelegramApiMock([]);
+  const envFile = path.join(dataDir, "telegram-setup-smoke.env");
+  const serviceFile = path.join(dataDir, "telegram-setup-smoke.service");
+  try {
+    await runAgentBusTextAsync([
+      "setup",
+      "telegram",
+      "--gateway",
+      gateway,
+      "--api-base-url",
+      mock.url,
+      "--bot-token",
+      "telegram-setup-smoke-token",
+      "--chat-id",
+      chatId,
+      "--secret-token",
+      secret,
+      "--set-commands",
+      "--service",
+      "systemd",
+      "--out",
+      envFile,
+      "--service-out",
+      serviceFile,
+      "--force"
+    ]);
+    const envText = fs.readFileSync(envFile, "utf8");
+    const serviceText = fs.readFileSync(serviceFile, "utf8");
+    assert(/AGENT_BUS_TELEGRAM_ENABLED=true/.test(envText), "telegram setup env did not enable plugin");
+    assert(/AGENT_BUS_TELEGRAM_CONTROL_ENABLED=true/.test(envText), "telegram setup env did not enable control");
+    assert(/plugin telegram poll/.test(serviceText), "telegram setup service did not run poller");
+    return {
+      ok: true,
+      commands: mock.commands.map((item) => item.command),
+      calls: mock.calls,
+      files: [envFile, serviceFile]
+    };
+  } finally {
+    await mock.close();
+  }
+}
+
+function smokeTelegramCommands() {
+  return [
+    "start",
+    "help",
+    "status",
+    "agents",
+    "new",
+    "resume",
+    "agent",
+    "rooms",
+    "room",
+    "run"
+  ].map((command) => ({ command, description: `${command} command` }));
+}
+
+async function startTelegramApiMock(updates, options = {}) {
+  const state = { updates, calls: [], allowedUpdates: [], commands: options.commands ? [...options.commands] : [] };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     state.calls.push(url.pathname);
+    if (url.pathname.endsWith("/getMe")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: { id: 100200300, is_bot: true, username: "agent_bus_smoke_bot" } }));
+      return;
+    }
+    if (url.pathname.endsWith("/getWebhookInfo")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: { url: "", pending_update_count: 0 } }));
+      return;
+    }
     if (url.pathname.endsWith("/getUpdates")) {
       const allowed = parseJson(url.searchParams.get("allowed_updates") || "[]");
       state.allowedUpdates = Array.isArray(allowed) ? allowed : [];
@@ -589,6 +696,9 @@ async function startTelegramApiMock(updates) {
     },
     get commands() {
       return state.commands;
+    },
+    get calls() {
+      return state.calls;
     },
     close() {
       return new Promise((resolve) => server.close(resolve));
@@ -691,6 +801,47 @@ function runAgentBus(args) {
     throw new Error(`agent-bus ${args.join(" ")} failed with ${result.status}: ${result.stderr || result.stdout}`);
   }
   return JSON.parse(result.stdout);
+}
+
+function runAgentBusText(args) {
+  const result = spawnSync(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`agent-bus ${args.join(" ")} failed with ${result.status}: ${result.stderr || result.stdout}`);
+  }
+  return result.stdout;
+}
+
+async function runAgentBusJsonAsync(args) {
+  const stdout = await runAgentBusTextAsync(args);
+  return JSON.parse(stdout);
+}
+
+function runAgentBusTextAsync(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        reject(new Error(`agent-bus ${args.join(" ")} failed with ${code}: ${stderr || stdout}`));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
 }
 
 function runNodeJson(args, env = {}) {

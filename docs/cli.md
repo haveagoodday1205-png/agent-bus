@@ -150,6 +150,21 @@ After the gateway is running, the Web Console at `/console/` can create addition
 
 Use `--no-first-edge-token` if you prefer the stricter pair-code path only. Pair codes remain useful when the edge operator should never see or paste a standing token.
 
+Use `setup telegram` on the Central host when you want the Telegram control bot path generated as an operator artifact instead of hand-copying environment variables:
+
+```bash
+agent-bus setup telegram \
+  --gateway http://127.0.0.1:8788 \
+  --bot-token 123456:telegram-bot-token \
+  --chat-id 123456789 \
+  --transport poller \
+  --set-commands \
+  --service auto \
+  --out /etc/agent-bus/telegram.env
+```
+
+The command writes an env file with `AGENT_BUS_TELEGRAM_ENABLED`, control, conversation, bot token, chat id, webhook secret, gateway, and poller settings. With `--service auto`, it also writes a poller service template so local-only Centrals can receive Telegram updates without exposing a public webhook. Pass `--transport webhook` if you plan to configure Telegram's webhook directly instead.
+
 Run a zero-quota offline smoke test:
 
 ```bash
@@ -286,6 +301,19 @@ AGENT_BUS_TELEGRAM_BOT_TOKEN=... agent-bus plugin telegram commands set
 agent-bus plugin telegram commands list
 agent-bus plugin telegram commands delete
 ```
+
+Run the Telegram-specific doctor when the bot appears connected but buttons, command suggestions, or poller/webhook delivery are suspect:
+
+```bash
+agent-bus plugin telegram doctor \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --token ADMIN_TOKEN \
+  --bot-token 123456:telegram-bot-token \
+  --chat-id 123456789 \
+  --transport poller
+```
+
+The doctor checks Central plugin wiring, local env presence, Telegram `getMe`, installed slash commands, webhook status, and pending updates. It does not call any model provider. Use `--local-only` to skip Telegram Bot API calls, `--transport poller` when a local poller should own updates, or `--transport webhook` when Telegram should deliver directly to the Central webhook URL.
 
 The registered command menu includes:
 

@@ -66,6 +66,8 @@
 - Adds `agent-bus doctor --mode central` for quota-safe Central preflight checks covering admin token strength, data directory persistence, edge token shape, model router backends, Telegram plugin wiring, and readiness endpoints.
 - Splits Central doctor edge-token checks into static config tokens, runtime token registry, and live edge connectivity so Web Console/pair-code deployments do not look misconfigured just because `central.config.json` has no `edgeTokens`.
 - Adds a Central doctor `--production` profile that escalates short admin tokens, missing live edges, missing active runtime edge tokens, and incomplete enabled Telegram control wiring from warnings to failures.
+- Adds `agent-bus plugin telegram doctor` for Telegram-specific Central wiring, Bot API, command menu, webhook/poller, and pending-update checks without model calls.
+- Adds `agent-bus setup telegram` to write a Central Telegram env file, optionally register slash commands, clear webhooks for poller mode, and generate a poller service template.
 
 ## 0.5.5 - Compact room session keys
 

@@ -212,6 +212,7 @@ Usage:
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
   agent-bus setup central --gateway https://YOUR-DOMAIN/agent-bus --out central.config.json --service auto
   agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --auto --service auto
+  agent-bus setup telegram --gateway http://127.0.0.1:8788 --bot-token ... --chat-id ... --service auto
   agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
   agent-bus edge-agents --config edge.config.json
@@ -235,6 +236,7 @@ Usage:
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
   agent-bus plugin status --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus plugin telegram test --message "hello" --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus plugin telegram doctor --gateway https://YOUR-DOMAIN/agent-bus --token ... --transport poller
   agent-bus plugin telegram commands set
   agent-bus plugin telegram poll --gateway http://127.0.0.1:8788 --delete-webhook
 
@@ -403,8 +405,12 @@ async function setup(args) {
     await setupCentral(args.slice(1));
     return;
   }
+  if (target === "telegram" || target === "tg") {
+    await setupTelegram(args.slice(1));
+    return;
+  }
   if (target !== "edge") {
-    throw new Error("Usage: agent-bus setup central|edge [options]");
+    throw new Error("Usage: agent-bus setup central|edge|telegram [options]");
   }
 
   const out = optionValue(args, "--out") || "edge.config.json";
@@ -536,8 +542,237 @@ async function setupCentral(args) {
   console.log("6. If Telegram webhooks are blocked: agent-bus plugin telegram poll --gateway http://127.0.0.1:8788 --delete-webhook --set-commands");
 }
 
+async function setupTelegram(args) {
+  const out = optionValue(args, "--out") || "agent-bus-telegram.env";
+  const force = args.includes("--force");
+  if (fs.existsSync(out) && !force) {
+    throw new Error(`Refusing to overwrite ${out}; pass --force to replace it.`);
+  }
+
+  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
+  const botToken = optionValue(args, "--bot-token") || process.env.AGENT_BUS_TELEGRAM_BOT_TOKEN || "";
+  const chatId = optionValue(args, "--chat-id") || process.env.AGENT_BUS_TELEGRAM_CHAT_ID || "";
+  const webhookSecret = optionValue(args, "--secret-token") || process.env.AGENT_BUS_TELEGRAM_WEBHOOK_SECRET || randomToken("abt_tg_secret");
+  const apiBaseUrl = optionValue(args, "--api-base-url") || process.env.AGENT_BUS_TELEGRAM_API_BASE_URL || "https://api.telegram.org";
+  const agent = optionValue(args, "--agent") || process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENT || "";
+  const agents = optionValue(args, "--agents") || process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS || "";
+  const pollerOffsetFile = optionValue(args, "--offset-file") || process.env.AGENT_BUS_TELEGRAM_POLLER_OFFSET_FILE || "";
+  const transport = telegramTransport(args);
+  const setCommands = args.includes("--set-commands") || args.includes("--install-commands");
+  const deleteWebhook = args.includes("--delete-webhook") || (transport === "poller" && botToken && !args.includes("--no-delete-webhook"));
+
+  const env = telegramSetupEnv({
+    gateway,
+    botToken,
+    chatId,
+    webhookSecret,
+    apiBaseUrl,
+    agent,
+    agents,
+    pollerOffsetFile,
+    setCommands: setCommands || transport === "poller"
+  });
+  fs.writeFileSync(out, `${env.join("\n")}\n`, { mode: 0o600 });
+
+  console.log("Agent Bus Telegram setup");
+  console.log(`Step 1/3: wrote ${out}`);
+  console.log(`         gateway: ${gateway}`);
+  console.log(`         transport: ${transport}`);
+  console.log(`         bot token: ${botToken ? "configured" : "missing"}`);
+  console.log(`         chat id: ${chatId ? "configured" : "missing"}`);
+
+  if ((setCommands || deleteWebhook) && !botToken) {
+    throw new Error("--bot-token or AGENT_BUS_TELEGRAM_BOT_TOKEN is required for --set-commands or --delete-webhook.");
+  }
+  if (deleteWebhook) {
+    await telegramApi(botToken, "deleteWebhook", {
+      drop_pending_updates: args.includes("--drop-pending") ? "true" : "false"
+    }, apiBaseUrl);
+  }
+  if (setCommands) {
+    await telegramApi(botToken, "setMyCommands", {
+      commands: JSON.stringify(defaultTelegramCommands())
+    }, apiBaseUrl);
+  }
+  console.log(`Step 2/3: Telegram API ${deleteWebhook ? "deleteWebhook " : ""}${setCommands ? "setMyCommands" : "not changed"}`);
+
+  const serviceTarget = resolveSetupServiceTarget(optionValue(args, "--service") || "");
+  if (serviceTarget && transport === "webhook") {
+    console.log("Step 3/3: poller service skipped for webhook transport");
+  } else if (serviceTarget) {
+    const serviceOut = optionValue(args, "--service-out") || defaultServiceOut(serviceTarget, "telegram-poller");
+    const cwd = optionValue(args, "--cwd") || process.cwd();
+    const agentBusPath = optionValue(args, "--agent-bus-path") || defaultAgentBusPath();
+    const name = optionValue(args, "--name") || "agent-bus-telegram-poller";
+    const content = telegramPollerService(serviceTarget, {
+      name,
+      cwd,
+      gateway,
+      envFile: path.resolve(out),
+      agentBusPath,
+      deleteWebhook: true,
+      setCommands: setCommands || transport === "poller"
+    });
+    fs.writeFileSync(serviceOut, content);
+    console.log(`Step 3/3: wrote ${serviceTarget} service template to ${serviceOut}`);
+    console.log(serviceInstallHint(serviceTarget, serviceOut));
+  } else {
+    console.log("Step 3/3: service template skipped; pass --service auto to generate one");
+  }
+
+  console.log("\nOperator checklist:");
+  console.log(`1. Enable Telegram in Central env: load ${out} before starting agent-bus serve`);
+  console.log(`2. Validate Telegram: agent-bus plugin telegram doctor --gateway ${gateway} --token ADMIN_TOKEN --transport ${transport}`);
+  console.log(transport === "webhook"
+    ? "3. Configure Telegram webhook to /v1/agent-bus/plugins/telegram/webhook with the generated secret token"
+    : `3. Start poller if using poller transport: agent-bus plugin telegram poll --gateway ${gateway} --delete-webhook --set-commands`);
+}
+
 function randomToken(prefix) {
   return `${prefix}_${crypto.randomBytes(32).toString("base64url")}`;
+}
+
+function telegramTransport(args) {
+  const value = String(optionValue(args, "--transport") || (args.includes("--webhook") ? "webhook" : args.includes("--poller") ? "poller" : "poller")).toLowerCase();
+  if (!["poller", "webhook", "auto"].includes(value)) throw new Error("--transport must be poller, webhook, or auto");
+  return value;
+}
+
+function telegramSetupEnv(options) {
+  const lines = [
+    "# Agent Bus Telegram control bot.",
+    "AGENT_BUS_TELEGRAM_ENABLED=true",
+    `AGENT_BUS_TELEGRAM_BOT_TOKEN=${shellEnvValue(options.botToken)}`,
+    `AGENT_BUS_TELEGRAM_CHAT_ID=${shellEnvValue(options.chatId)}`,
+    "AGENT_BUS_TELEGRAM_CONTROL_ENABLED=true",
+    `AGENT_BUS_TELEGRAM_WEBHOOK_SECRET=${shellEnvValue(options.webhookSecret)}`,
+    "AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true",
+    `AGENT_BUS_GATEWAY_URL=${shellEnvValue(options.gateway)}`,
+    `AGENT_BUS_TELEGRAM_API_BASE_URL=${shellEnvValue(options.apiBaseUrl)}`,
+    `AGENT_BUS_TELEGRAM_SET_COMMANDS=${options.setCommands ? "true" : "false"}`
+  ];
+  if (options.agent) lines.push(`AGENT_BUS_TELEGRAM_CONVERSATION_AGENT=${shellEnvValue(options.agent)}`);
+  if (options.agents) lines.push(`AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS=${shellEnvValue(options.agents)}`);
+  if (options.pollerOffsetFile) lines.push(`AGENT_BUS_TELEGRAM_POLLER_OFFSET_FILE=${shellEnvValue(options.pollerOffsetFile)}`);
+  return lines;
+}
+
+function shellEnvValue(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  return `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function defaultTelegramCommands() {
+  return [
+    ["start", "Open the Agent Bus control menu"],
+    ["help", "Show Telegram control commands"],
+    ["status", "Show central, edge, queue, and room status"],
+    ["agents", "List online agents and choose process agents"],
+    ["new", "Start a new Telegram process/thread"],
+    ["resume", "Resume a previous process/thread"],
+    ["agent", "Set, toggle, or clear process agents"],
+    ["rooms", "List Agent Bus rooms"],
+    ["room", "Inspect or create rooms, set agents and steps"],
+    ["run", "Queue one task for a specific agent"]
+  ].map(([command, description]) => ({ command, description }));
+}
+
+async function telegramApi(botToken, method, params = {}, apiBaseUrl = "https://api.telegram.org", timeoutMs = 10000) {
+  if (!botToken) throw new Error("Telegram bot token is required.");
+  const root = String(apiBaseUrl || "https://api.telegram.org").replace(/\/+$/, "");
+  const url = new URL(`${root}/bot${botToken}/${method}`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method: "POST", signal: controller.signal });
+    const text = await res.text();
+    const body = parseJsonText(text);
+    if (!res.ok || body?.ok === false) {
+      throw new Error(body?.description || text || `${res.status} ${res.statusText}`);
+    }
+    return body;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function telegramPollerService(target, options) {
+  if (target === "systemd") return telegramPollerSystemdService(options);
+  if (target === "launchd") return telegramPollerLaunchdService(options);
+  return telegramPollerWindowsService(options);
+}
+
+function telegramPollerCommandParts(options) {
+  const base = options.agentBusPath
+    ? [options.agentBusPath]
+    : [process.execPath, process.argv[1] && fs.existsSync(process.argv[1]) ? process.argv[1] : path.join(__dirname, "agent-bus.mjs")];
+  const parts = [...base, "plugin", "telegram", "poll", "--gateway", options.gateway || "http://127.0.0.1:8788"];
+  if (options.deleteWebhook) parts.push("--delete-webhook");
+  if (options.setCommands) parts.push("--set-commands");
+  return parts;
+}
+
+function telegramPollerSystemdService(options) {
+  return `[Unit]
+Description=${options.name}
+After=network-online.target agent-bus-central.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${options.cwd}
+EnvironmentFile=${options.envFile}
+ExecStart=${telegramPollerCommandParts(options).map(quoteForShell).join(" ")}
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+`;
+}
+
+function telegramPollerLaunchdService(options) {
+  const parts = telegramPollerCommandParts(options);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${escapeXml(options.name)}</string>
+  <key>WorkingDirectory</key><string>${escapeXml(options.cwd)}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AGENT_BUS_TELEGRAM_ENV_FILE</key><string>${escapeXml(options.envFile)}</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-lc</string>
+    <string>. ${escapeXml(quoteForShell(options.envFile))} && exec ${parts.map(quoteForShell).join(" ")}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/${escapeXml(options.name)}.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/${escapeXml(options.name)}.err.log</string>
+</dict>
+</plist>
+`;
+}
+
+function telegramPollerWindowsService(options) {
+  const command = telegramPollerCommandParts(options).map(quoteForShell).join(" ").replace(/"/g, '\\"');
+  return `# Run in an elevated PowerShell prompt.
+# Load ${options.envFile} into the service account environment first, or set the variables below with setx.
+setx AGENT_BUS_GATEWAY_URL "${String(options.gateway || "").replace(/"/g, '\\"')}" /M
+sc.exe create ${options.name} binPath= "${command}" start= auto DisplayName= "${options.name}"
+sc.exe failure ${options.name} reset= 60 actions= restart/5000
+sc.exe start ${options.name}
+`;
 }
 
 async function writePairedEdgeConfig({ args, gateway, code, out, force, preset, auto, nodeId }) {
@@ -571,6 +806,11 @@ function resolveSetupServiceTarget(value) {
 }
 
 function defaultServiceOut(target, mode) {
+  if (mode === "telegram-poller") {
+    if (target === "launchd") return "com.agent-bus.telegram-poller.plist";
+    if (target === "windows") return "agent-bus-telegram-poller-service.ps1";
+    return "agent-bus-telegram-poller.service";
+  }
   if (target === "launchd") return mode === "central" ? "com.agent-bus.central.plist" : "com.agent-bus.edge.plist";
   if (target === "windows") return mode === "central" ? "agent-bus-central-service.ps1" : "agent-bus-edge-service.ps1";
   return mode === "central" ? "agent-bus-central.service" : "agent-bus-edge.service";
@@ -3367,6 +3607,10 @@ async function plugin(args) {
         body
       }));
     }
+    if (subcommand === "doctor" || subcommand === "diagnose") {
+      await telegramDoctor(rest);
+      return;
+    }
     if (subcommand === "poll" || subcommand === "poller") {
       await runScript("scripts/telegram-poller.mjs", stripCliOnlyArgs(rest));
       return;
@@ -3376,7 +3620,106 @@ async function plugin(args) {
       return;
     }
   }
-  throw new Error("Usage: agent-bus plugin status | agent-bus plugin telegram status | agent-bus plugin telegram test [--message text] [--dry-run|--live] | agent-bus plugin telegram commands set|list|delete | agent-bus plugin telegram poll");
+  throw new Error("Usage: agent-bus plugin status | agent-bus plugin telegram status | agent-bus plugin telegram doctor [--transport poller|webhook|auto] | agent-bus plugin telegram test [--message text] [--dry-run|--live] | agent-bus plugin telegram commands set|list|delete | agent-bus plugin telegram poll");
+}
+
+async function telegramDoctor(args) {
+  const checks = [];
+  const jsonOut = args.includes("--json");
+  const localOnly = args.includes("--local-only");
+  const transport = telegramTransport(args);
+  const apiBaseUrl = optionValue(args, "--api-base-url") || process.env.AGENT_BUS_TELEGRAM_API_BASE_URL || "https://api.telegram.org";
+  const botToken = optionValue(args, "--bot-token") || process.env.AGENT_BUS_TELEGRAM_BOT_TOKEN || "";
+  const chatId = optionValue(args, "--chat-id") || process.env.AGENT_BUS_TELEGRAM_CHAT_ID || "";
+  const webhookSecret = optionValue(args, "--secret-token") || process.env.AGENT_BUS_TELEGRAM_WEBHOOK_SECRET || "";
+  const timeoutMs = positiveIntegerOption(optionValue(args, "--timeout-ms") || process.env.AGENT_BUS_TELEGRAM_DOCTOR_TIMEOUT_MS, 10000, 120000);
+
+  addCheck(checks, "pass", "telegram doctor", transport);
+  if (botToken) {
+    addCheck(checks, "pass", "telegram bot token", "configured");
+  } else {
+    addCheck(checks, "fail", "telegram bot token", "missing", "Set AGENT_BUS_TELEGRAM_BOT_TOKEN or pass --bot-token.");
+  }
+  addCheck(checks, chatId ? "pass" : "warn", "telegram chat id", chatId ? "configured" : "missing", "Set AGENT_BUS_TELEGRAM_CHAT_ID or pass --chat-id so Central can send operator notifications.");
+  addCheck(checks, webhookSecret ? "pass" : "warn", "telegram webhook secret", webhookSecret ? "configured" : "missing", "Set AGENT_BUS_TELEGRAM_WEBHOOK_SECRET so poller/webhook callbacks can be authenticated.");
+
+  await checkTelegramGatewayStatus(checks, args);
+  if (!localOnly && botToken) {
+    await checkTelegramBotApi(checks, { botToken, apiBaseUrl, transport, timeoutMs });
+  } else if (localOnly) {
+    addCheck(checks, "pass", "telegram Bot API checks skipped", "--local-only");
+  }
+
+  printDoctorResult(checks, jsonOut);
+  if (checks.some((item) => item.status === "fail")) {
+    process.exitCode = 1;
+  }
+}
+
+async function checkTelegramGatewayStatus(checks, args) {
+  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || "";
+  if (!token) {
+    addCheck(checks, "warn", "telegram central plugin status", "skipped", "Pass --token or AGENT_BUS_TOKEN to verify Central plugin wiring.");
+    return;
+  }
+  try {
+    const plugins = await gatewayJson("/v1/agent-bus/plugins", { auth: true, args });
+    const status = plugins.telegramBot || {};
+    addCheck(checks, status.enabled ? "pass" : "warn", "telegram central plugin", status.enabled ? "enabled" : "disabled", "Set AGENT_BUS_TELEGRAM_ENABLED=true for the Central service.");
+    addCheck(checks, status.configured ? "pass" : "warn", "telegram central notification config", status.configured ? "bot token and chat id visible to Central" : "incomplete", "Load the Telegram env file into the Central service environment.");
+    const control = status.control || {};
+    addCheck(checks, control.enabled ? "pass" : "warn", "telegram central control", control.enabled ? "enabled" : "disabled", "Set AGENT_BUS_TELEGRAM_CONTROL_ENABLED=true to accept /status, /run, /room, and callbacks.");
+    addCheck(checks, control.secret_configured ? "pass" : "warn", "telegram central control secret", control.secret_configured ? "configured" : "missing", "Set AGENT_BUS_TELEGRAM_WEBHOOK_SECRET in Central.");
+    addCheck(checks, Number(control.allowed_chat_count || 0) > 0 ? "pass" : "warn", "telegram central allowed chats", `${Number(control.allowed_chat_count || 0)} configured`, "Restrict production control bots to your Telegram chat id.");
+    const conversation = control.conversation || {};
+    addCheck(checks, conversation.enabled ? "pass" : "warn", "telegram central conversation", conversation.enabled ? `enabled (${(conversation.agents || []).join(", ") || "default routing"})` : "disabled", "Set AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true for persistent Telegram processes.");
+  } catch (err) {
+    addCheck(checks, "warn", "telegram central plugin status", trimOneLine(err.message || String(err)), "Check --gateway, --token, and whether Central is running.");
+  }
+}
+
+async function checkTelegramBotApi(checks, options) {
+  try {
+    const me = await telegramApi(options.botToken, "getMe", {}, options.apiBaseUrl, options.timeoutMs);
+    const user = me.result || {};
+    addCheck(checks, "pass", "telegram getMe", user.username ? `@${user.username}` : (user.first_name || "bot reachable"));
+  } catch (err) {
+    addCheck(checks, "fail", "telegram getMe", trimOneLine(err.message || String(err)), "Verify the bot token and outbound network access to Telegram.");
+    return;
+  }
+
+  try {
+    const commands = await telegramApi(options.botToken, "getMyCommands", {}, options.apiBaseUrl, options.timeoutMs);
+    const installed = Array.isArray(commands.result) ? commands.result.map((item) => item.command).filter(Boolean) : [];
+    const missing = defaultTelegramCommands().map((item) => item.command).filter((command) => !installed.includes(command));
+    addCheck(checks, missing.length ? "warn" : "pass", "telegram command menu", missing.length ? `missing: ${missing.join(", ")}` : `${installed.length} command(s) installed`, "Run agent-bus plugin telegram commands set or agent-bus setup telegram --set-commands.");
+  } catch (err) {
+    addCheck(checks, "warn", "telegram command menu", trimOneLine(err.message || String(err)), "Command menu checks use Telegram getMyCommands.");
+  }
+
+  try {
+    const webhook = await telegramApi(options.botToken, "getWebhookInfo", {}, options.apiBaseUrl, options.timeoutMs);
+    const info = webhook.result || {};
+    const url = String(info.url || "");
+    const lastError = trimOneLine(info.last_error_message || "");
+    if (options.transport === "poller") {
+      addCheck(checks, url ? "warn" : "pass", "telegram update transport", url ? "webhook still configured" : "poller-ready (no webhook URL)", "Run agent-bus plugin telegram poll --delete-webhook before using poller mode.");
+    } else if (options.transport === "webhook") {
+      addCheck(checks, url ? "pass" : "fail", "telegram update transport", url ? `webhook ${url}` : "no webhook URL", "Set a Telegram webhook to /v1/agent-bus/plugins/telegram/webhook or use --transport poller.");
+    } else {
+      addCheck(checks, "pass", "telegram update transport", url ? `webhook ${url}` : "no webhook URL; poller mode is available");
+    }
+    if (lastError) {
+      addCheck(checks, "warn", "telegram webhook last error", lastError);
+    }
+    if (Number(info.pending_update_count || 0) > 0) {
+      addCheck(checks, "warn", "telegram pending updates", `${info.pending_update_count} pending`, "Start the poller or fix the webhook to drain updates.");
+    } else {
+      addCheck(checks, "pass", "telegram pending updates", "0 pending");
+    }
+  } catch (err) {
+    addCheck(checks, "warn", "telegram webhook info", trimOneLine(err.message || String(err)), "Webhook info checks use Telegram getWebhookInfo.");
+  }
 }
 
 function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds = 180, queuedRunStaleSeconds = 21600 }) {

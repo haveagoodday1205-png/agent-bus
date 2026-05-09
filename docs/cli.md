@@ -165,6 +165,8 @@ agent-bus setup telegram \
 
 The command writes an env file with `AGENT_BUS_TELEGRAM_ENABLED`, control, conversation, bot token, chat id, webhook secret, gateway, and poller settings. With `--service auto`, it also writes a poller service template so local-only Centrals can receive Telegram updates without exposing a public webhook. Pass `--transport webhook` if you plan to configure Telegram's webhook directly instead.
 
+Because Telegram control can queue real Agent Bus tasks, `setup telegram` requires `--chat-id` or `AGENT_BUS_TELEGRAM_CHAT_ID` by default. Use `--allow-unrestricted-control` only for isolated local tests.
+
 Run a zero-quota offline smoke test:
 
 ```bash

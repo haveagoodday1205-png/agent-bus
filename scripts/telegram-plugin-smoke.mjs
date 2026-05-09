@@ -138,6 +138,8 @@ async function main() {
   assert(doctorSmoke.ok === true && doctorSmoke.transport === "poller", "telegram doctor smoke did not pass in poller mode");
   const setupSmoke = await runTelegramSetupSmoke(gateway, telegramChatId, webhookSecret, dataDir);
   assert(setupSmoke.ok === true && setupSmoke.commands.includes("room"), "telegram setup smoke did not write env/service and register commands");
+  const setupRestrictionSmoke = await runTelegramSetupRequiresChatSmoke(gateway, dataDir);
+  assert(setupRestrictionSmoke.ok === true, "telegram setup should refuse unrestricted control envs by default");
   const agentsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/agents");
   assert(agentsWebhook.ok === true && agentsWebhook.command === "agents", "telegram /agents webhook failed");
   const runWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/run telegram-smoke-agent Run webhook command smoke.");
@@ -257,6 +259,7 @@ async function main() {
     plugin_test_status: pluginTest.notification.status,
     doctor_checks: doctorSmoke.checks,
     setup_files: setupSmoke.files,
+    setup_restriction: setupRestrictionSmoke.error,
     webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command, roomStartWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
@@ -608,6 +611,9 @@ async function runTelegramSetupSmoke(gateway, chatId, secret, dataDir) {
     assert(/AGENT_BUS_TELEGRAM_ENABLED=true/.test(envText), "telegram setup env did not enable plugin");
     assert(/AGENT_BUS_TELEGRAM_CONTROL_ENABLED=true/.test(envText), "telegram setup env did not enable control");
     assert(/plugin telegram poll/.test(serviceText), "telegram setup service did not run poller");
+    const execStart = serviceExecStart(serviceText);
+    assert(/agent-bus\.mjs/.test(execStart), "telegram setup service should use the current CLI script when --agent-bus-path is omitted");
+    assert(!/[/\\]agent-bus(\s|")/.test(execStart.replace(/agent-bus\.mjs/g, "")), "telegram setup service should not point at a guessed agent-bus executable");
     return {
       ok: true,
       commands: mock.commands.map((item) => item.command),
@@ -617,6 +623,26 @@ async function runTelegramSetupSmoke(gateway, chatId, secret, dataDir) {
   } finally {
     await mock.close();
   }
+}
+
+async function runTelegramSetupRequiresChatSmoke(gateway, dataDir) {
+  const envFile = path.join(dataDir, "telegram-unsafe-setup.env");
+  const result = await runAgentBusFailureAsync([
+    "setup",
+    "telegram",
+    "--gateway",
+    gateway,
+    "--out",
+    envFile,
+    "--force"
+  ]);
+  assert(/requires --chat-id/.test(result.stderr || result.stdout), "telegram setup missing-chat failure was not actionable");
+  assert(!fs.existsSync(envFile), "telegram setup wrote env file before rejecting missing chat id");
+  const lines = (result.stderr || result.stdout).trim().split(/\r?\n/);
+  return {
+    ok: true,
+    error: lines.find((line) => /requires --chat-id/.test(line)) || lines[0] || ""
+  };
 }
 
 function smokeTelegramCommands() {
@@ -844,6 +870,28 @@ function runAgentBusTextAsync(args) {
   });
 }
 
+function runAgentBusFailureAsync(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
+      cwd: root,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        reject(new Error(`agent-bus ${args.join(" ")} unexpectedly succeeded: ${stdout}`));
+        return;
+      }
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
 function runNodeJson(args, env = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
@@ -994,4 +1042,8 @@ function parseJson(text) {
   } catch {
     return {};
   }
+}
+
+function serviceExecStart(text) {
+  return String(text || "").split(/\r?\n/).find((line) => line.startsWith("ExecStart=")) || "";
 }

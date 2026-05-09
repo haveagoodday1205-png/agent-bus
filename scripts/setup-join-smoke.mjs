@@ -10,6 +10,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-setup-join-"));
 
 try {
   const centralConfig = path.join(tempDir, "central.config.json");
+  const centralService = path.join(tempDir, "agent-bus-central.service");
   const edgeConfig = path.join(tempDir, "edge.config.json");
   const gateway = "https://central.example/agent-bus";
   const central = run([
@@ -20,7 +21,9 @@ try {
     "--out",
     centralConfig,
     "--service",
-    "none",
+    "systemd",
+    "--service-out",
+    centralService,
     "--preset",
     "echo"
   ]);
@@ -31,6 +34,11 @@ try {
   assert(edgeToken.startsWith("abt_edge_"), "central setup did not generate first edge token");
   assert(central.stdout.includes("first edge token:"), "central setup did not print first edge token");
   assert(central.stdout.includes(`agent-bus setup edge --gateway ${gateway} --token ${edgeToken}`), "central setup did not print direct edge join command");
+  const centralServiceText = fs.readFileSync(centralService, "utf8");
+  assert(/ExecStart=/.test(centralServiceText), "central setup did not write a service ExecStart");
+  const centralExecStart = serviceExecStart(centralServiceText);
+  assert(/agent-bus\.mjs/.test(centralExecStart), "central setup service should use the current CLI script when --agent-bus-path is omitted");
+  assert(!/[/\\]agent-bus(\s|")/.test(centralExecStart.replace(/agent-bus\.mjs/g, "")), "central setup service should not point at a guessed agent-bus executable");
 
   run([
     "setup",
@@ -54,6 +62,7 @@ try {
     ok: true,
     quota: "no_model_calls",
     central_config: path.relative(root, centralConfig).replace(/\\/g, "/"),
+    central_service: path.relative(root, centralService).replace(/\\/g, "/"),
     edge_config: path.relative(root, edgeConfig).replace(/\\/g, "/"),
     gateway,
     edge_token_prefix: edgeToken.slice(0, 12)
@@ -94,4 +103,8 @@ function run(args) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function serviceExecStart(text) {
+  return String(text || "").split(/\r?\n/).find((line) => line.startsWith("ExecStart=")) || "";
 }

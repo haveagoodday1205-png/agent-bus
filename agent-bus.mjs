@@ -439,7 +439,7 @@ async function setup(args) {
   if (serviceTarget) {
     const serviceOut = optionValue(args, "--service-out") || defaultServiceOut(serviceTarget, "edge");
     const cwd = optionValue(args, "--cwd") || path.dirname(path.resolve(out));
-    const agentBusPath = optionValue(args, "--agent-bus-path") || defaultAgentBusPath();
+    const agentBusPath = optionValue(args, "--agent-bus-path") || "";
     const content = serviceTarget === "systemd"
       ? systemdService({ mode: "edge", configPath: out, name: optionValue(args, "--name") || "agent-bus-edge", cwd, gateway, dataDir: optionValue(args, "--data-dir") || "", tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath })
       : serviceTarget === "launchd"
@@ -507,7 +507,7 @@ async function setupCentral(args) {
   if (serviceTarget) {
     const serviceOut = optionValue(args, "--service-out") || defaultServiceOut(serviceTarget, "central");
     const cwd = optionValue(args, "--cwd") || path.dirname(path.resolve(out));
-    const agentBusPath = optionValue(args, "--agent-bus-path") || defaultAgentBusPath();
+    const agentBusPath = optionValue(args, "--agent-bus-path") || "";
     const content = serviceTarget === "systemd"
       ? systemdService({ mode: "central", configPath: out, name: optionValue(args, "--name") || "agent-bus-central", cwd, gateway, dataDir: config.dataDir, tokenEnv: optionValue(args, "--token-env") || "AGENT_BUS_TOKEN", agentBusPath })
       : serviceTarget === "launchd"
@@ -552,6 +552,7 @@ async function setupTelegram(args) {
   const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
   const botToken = optionValue(args, "--bot-token") || process.env.AGENT_BUS_TELEGRAM_BOT_TOKEN || "";
   const chatId = optionValue(args, "--chat-id") || process.env.AGENT_BUS_TELEGRAM_CHAT_ID || "";
+  const allowUnrestrictedControl = args.includes("--allow-unrestricted-control");
   const webhookSecret = optionValue(args, "--secret-token") || process.env.AGENT_BUS_TELEGRAM_WEBHOOK_SECRET || randomToken("abt_tg_secret");
   const apiBaseUrl = optionValue(args, "--api-base-url") || process.env.AGENT_BUS_TELEGRAM_API_BASE_URL || "https://api.telegram.org";
   const agent = optionValue(args, "--agent") || process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENT || "";
@@ -560,6 +561,9 @@ async function setupTelegram(args) {
   const transport = telegramTransport(args);
   const setCommands = args.includes("--set-commands") || args.includes("--install-commands");
   const deleteWebhook = args.includes("--delete-webhook") || (transport === "poller" && botToken && !args.includes("--no-delete-webhook"));
+  if (!chatId && !allowUnrestrictedControl) {
+    throw new Error("setup telegram requires --chat-id or AGENT_BUS_TELEGRAM_CHAT_ID because Telegram control is enabled. Pass --allow-unrestricted-control only for isolated tests.");
+  }
 
   const env = telegramSetupEnv({
     gateway,
@@ -602,7 +606,7 @@ async function setupTelegram(args) {
   } else if (serviceTarget) {
     const serviceOut = optionValue(args, "--service-out") || defaultServiceOut(serviceTarget, "telegram-poller");
     const cwd = optionValue(args, "--cwd") || process.cwd();
-    const agentBusPath = optionValue(args, "--agent-bus-path") || defaultAgentBusPath();
+    const agentBusPath = optionValue(args, "--agent-bus-path") || "";
     const name = optionValue(args, "--name") || "agent-bus-telegram-poller";
     const content = telegramPollerService(serviceTarget, {
       name,
@@ -814,11 +818,6 @@ function defaultServiceOut(target, mode) {
   if (target === "launchd") return mode === "central" ? "com.agent-bus.central.plist" : "com.agent-bus.edge.plist";
   if (target === "windows") return mode === "central" ? "agent-bus-central-service.ps1" : "agent-bus-edge-service.ps1";
   return mode === "central" ? "agent-bus-central.service" : "agent-bus-edge.service";
-}
-
-function defaultAgentBusPath() {
-  if (process.platform === "win32") return path.join(process.cwd(), "agent-bus.cmd");
-  return path.join(process.cwd(), "agent-bus");
 }
 
 function serviceInstallHint(target, file) {

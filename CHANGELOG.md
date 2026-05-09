@@ -68,6 +68,8 @@
 - Adds a Central doctor `--production` profile that escalates short admin tokens, missing live edges, missing active runtime edge tokens, and incomplete enabled Telegram control wiring from warnings to failures.
 - Adds `agent-bus plugin telegram doctor` for Telegram-specific Central wiring, Bot API, command menu, webhook/poller, and pending-update checks without model calls.
 - Adds `agent-bus setup telegram` to write a Central Telegram env file, optionally register slash commands, clear webhooks for poller mode, and generate a poller service template.
+- Fixes setup-generated service templates so omitted `--agent-bus-path` uses the currently running CLI script instead of guessing a non-existent `./agent-bus` executable.
+- Makes `setup telegram` require a Telegram chat id by default so control-bot environments are restricted at generation time; isolated tests can opt out with `--allow-unrestricted-control`.
 
 ## 0.5.5 - Compact room session keys
 

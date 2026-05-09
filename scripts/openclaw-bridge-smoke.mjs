@@ -120,6 +120,7 @@ setInterval(() => {}, 1000);
     env: {
       ...process.env,
       OPENCLAW_BIN: signalOpenClaw,
+      OPENCLAW_AGENT_BUS_SIGNAL_GRACE_SECONDS: "1",
       AGENT_MESSAGE: "signal forwarding smoke"
     },
     readyFile
@@ -129,6 +130,88 @@ setInterval(() => {}, 1000);
   }
   if (!fs.existsSync(signalFile) || fs.readFileSync(signalFile, "utf8") !== "SIGTERM") {
     throw new Error("OpenClaw child did not receive forwarded SIGTERM");
+  }
+
+  const stubbornSignalFile = path.join(tempDir, "openclaw-stubborn-signal.txt");
+  const stubbornReadyFile = path.join(tempDir, "openclaw-stubborn-ready.txt");
+  const stubbornOpenClaw = path.join(binDir, "stubborn-openclaw");
+  fs.writeFileSync(
+    stubbornOpenClaw,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+fs.writeFileSync(${JSON.stringify(stubbornReadyFile)}, "ready");
+process.on("SIGTERM", () => {
+  fs.writeFileSync(${JSON.stringify(stubbornSignalFile)}, "SIGTERM");
+});
+setInterval(() => {}, 1000);
+`
+  );
+  fs.chmodSync(stubbornOpenClaw, 0o755);
+  const stubbornResult = await runAndTerminateWrapper({
+    bash,
+    wrapper: path.join(root, "scripts", "openclaw-agent-bus.sh"),
+    cwd: root,
+    env: {
+      ...process.env,
+      OPENCLAW_BIN: stubbornOpenClaw,
+      OPENCLAW_AGENT_BUS_SIGNAL_GRACE_SECONDS: "1",
+      AGENT_MESSAGE: "stubborn signal forwarding smoke"
+    },
+    readyFile: stubbornReadyFile
+  });
+  if (stubbornResult.status !== 143) {
+    throw new Error(`stubborn terminated wrapper should exit 143, got ${stubbornResult.status}: ${stubbornResult.stderr || stubbornResult.stdout}`);
+  }
+  if (!fs.existsSync(stubbornSignalFile) || fs.readFileSync(stubbornSignalFile, "utf8") !== "SIGTERM") {
+    throw new Error("stubborn OpenClaw child did not receive forwarded SIGTERM before SIGKILL watchdog");
+  }
+  if (!stubbornResult.stderr.includes("sending SIGKILL")) {
+    throw new Error(`stubborn OpenClaw watchdog diagnostic missing: ${stubbornResult.stderr}`);
+  }
+
+  const lockLogFile = path.join(tempDir, "openclaw-session-lock-log.jsonl");
+  const lockingOpenClaw = path.join(binDir, "locking-openclaw");
+  fs.writeFileSync(
+    lockingOpenClaw,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+const id = process.env.AGENT_MESSAGE || "unknown";
+const delayMs = Number(process.env.OPENCLAW_LOCK_SMOKE_DELAY_MS || 350);
+fs.appendFileSync(${JSON.stringify(lockLogFile)}, JSON.stringify({ id, event: "start", at: Date.now() }) + "\\n");
+setTimeout(() => {
+  fs.appendFileSync(${JSON.stringify(lockLogFile)}, JSON.stringify({ id, event: "end", at: Date.now() }) + "\\n");
+  console.log('{"result":{"payloads":[{"text":"LOCK_OK_' + id + '"}]}}');
+}, delayMs);
+`
+  );
+  fs.chmodSync(lockingOpenClaw, 0o755);
+  const lockEnv = {
+    ...process.env,
+    OPENCLAW_BIN: lockingOpenClaw,
+    OPENCLAW_STATE_DIR: stateDir,
+    OPENCLAW_AGENT_ID: "lock-agent",
+    OPENCLAW_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "2",
+    OPENCLAW_AGENT_BUS_SESSION_LOCK_TOUCH_SECONDS: "1",
+    OPENCLAW_LOCK_SMOKE_DELAY_MS: "2500",
+    AGENT_SESSION_ID: "shared-lock-session"
+  };
+  const [lockFirst, lockSecond] = await Promise.all([
+    runWrapper({ bash, wrapper: path.join(root, "scripts", "openclaw-agent-bus.sh"), cwd: root, env: { ...lockEnv, AGENT_MESSAGE: "first" } }),
+    runWrapper({ bash, wrapper: path.join(root, "scripts", "openclaw-agent-bus.sh"), cwd: root, env: { ...lockEnv, AGENT_MESSAGE: "second" } })
+  ]);
+  if (lockFirst.status !== 0 || lockSecond.status !== 0) {
+    throw new Error(`session lock smoke wrappers failed: first=${lockFirst.status} ${lockFirst.stderr}; second=${lockSecond.status} ${lockSecond.stderr}`);
+  }
+  const lockEvents = fs.readFileSync(lockLogFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const firstEndIndex = lockEvents.findIndex((event) => event.id === "first" && event.event === "end");
+  const secondStartIndex = lockEvents.findIndex((event) => event.id === "second" && event.event === "start");
+  const secondEndIndex = lockEvents.findIndex((event) => event.id === "second" && event.event === "end");
+  const firstStartIndex = lockEvents.findIndex((event) => event.id === "first" && event.event === "start");
+  if (firstStartIndex === -1 || firstEndIndex === -1 || secondStartIndex === -1 || secondEndIndex === -1) {
+    throw new Error(`session lock smoke missing events: ${JSON.stringify(lockEvents)}`);
+  }
+  if (!(firstEndIndex < secondStartIndex || secondEndIndex < firstStartIndex)) {
+    throw new Error(`session lock did not serialize concurrent same-session runs: ${JSON.stringify(lockEvents)}`);
   }
 
   const agentId = "agent bus/weird \"id";
@@ -185,6 +268,18 @@ function sanitize(value) {
   return safe || "main";
 }
 
+function runWrapper({ bash, wrapper, cwd, env }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bash, [wrapper], { cwd, env, windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", reject);
+    child.on("close", (status, signal) => resolve({ status, signal, stdout, stderr }));
+  });
+}
+
 function runAndTerminateWrapper({ bash, wrapper, cwd, env, readyFile }) {
   return new Promise((resolve, reject) => {
     const child = spawn(bash, [wrapper], { cwd, env, windowsHide: true });
@@ -206,8 +301,12 @@ function runAndTerminateWrapper({ bash, wrapper, cwd, env, readyFile }) {
       try { child.kill("SIGKILL"); } catch {}
       finish(reject, new Error(`timed out waiting for signal forwarding smoke; stdout=${stdout} stderr=${stderr}`));
     }, 5000);
+    let signalSent = false;
     const poll = setInterval(() => {
-      if (fs.existsSync(readyFile)) child.kill("SIGTERM");
+      if (!signalSent && fs.existsSync(readyFile)) {
+        signalSent = true;
+        child.kill("SIGTERM");
+      }
     }, 25);
   });
 }

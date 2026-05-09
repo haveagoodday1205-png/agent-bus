@@ -770,6 +770,12 @@ def normalize_agents(node_id, agents):
             "enabled": agent.get("enabled", True) is not False,
             "capabilities": agent.get("capabilities") or [],
         }
+        try:
+            heartbeat_interval_ms = int(agent.get("run_heartbeat_interval_ms") or agent.get("runHeartbeatIntervalMs") or 0)
+        except Exception:
+            heartbeat_interval_ms = 0
+        if heartbeat_interval_ms > 0:
+            item["run_heartbeat_interval_ms"] = heartbeat_interval_ms
         if agent.get("adapter"):
             item["adapter"] = agent.get("adapter")
         if isinstance(agent.get("health"), dict):
@@ -797,13 +803,20 @@ def public_node(node):
 
 
 def public_node_agent(agent):
-    return {
+    item = {
         "id": agent.get("id"),
         "kind": agent.get("kind"),
         "role": agent.get("role"),
         "enabled": agent.get("enabled") is not False,
         "capabilities": agent.get("capabilities") or [],
     }
+    try:
+        heartbeat_interval_ms = int(agent.get("run_heartbeat_interval_ms") or 0)
+    except Exception:
+        heartbeat_interval_ms = 0
+    if heartbeat_interval_ms > 0:
+        item["run_heartbeat_interval_ms"] = heartbeat_interval_ms
+    return item
 
 
 def node_is_online(node):
@@ -2862,6 +2875,9 @@ def record_event(config, body):
     if event.get("type") == "run.started":
         run["status"] = "running"
         run["started_at"] = run.get("started_at") or event["at"]
+        run["last_heartbeat_at"] = run.get("last_heartbeat_at") or event["at"]
+    if event.get("type") == "run.heartbeat":
+        run["last_heartbeat_at"] = event["at"]
     if event.get("stream") == "stdout" and event.get("text"):
         run["stdout"] = run.get("stdout", "") + event["text"]
     if event.get("stream") == "stderr" and event.get("text"):
@@ -2904,7 +2920,7 @@ def complete_run(config, body):
             raise err
         touch_node_seen(body.get("node_id") or run.get("node_id"))
         STATE["runs"][run["id"]] = run
-        if str(run.get("status") or "").lower() in TERMINAL_RUN_STATUSES:
+        if (run.get("status") or "").lower() in TERMINAL_RUN_STATUSES:
             if stored_completion_state(run) == requested_completion_state(run, body):
                 return run
             err = Exception("run already completed with different result")

@@ -29,6 +29,7 @@ const ROOM_EVENT_TYPES = [
   "wake.cancelled",
   "policy.denied"
 ];
+const DEFAULT_RUN_HEARTBEAT_STALE_SECONDS = 90;
 
 const OPENCLAW_AGENT_BUS_AGENTS_MD = `# Agent Bus Runtime
 
@@ -221,7 +222,7 @@ Usage:
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room memory room_xxx --query "cache decision" --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room expand room_xxx 'messages[7]' --around 1 --gateway https://YOUR-DOMAIN/agent-bus --token ...
-  agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--running-run-stale-seconds 180]
+  agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
@@ -234,7 +235,7 @@ Usage:
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus trace export trace_xxx --format markdown --out trace.md
-  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
+  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus status --config edge.config.json [--json]
   agent-bus plugin status --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus plugin telegram test --message "hello" --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -2512,10 +2513,10 @@ async function room(args) {
     const roomId = requiredPositional(args, 1, "room id");
     const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
     const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
-    const runningRunStaleSeconds = positiveIntegerOption(optionValue(args, "--running-run-stale-seconds") || process.env.AGENT_BUS_RUNNING_RUN_STALE_SECONDS, staleSeconds, 604800);
+    const runHeartbeatStaleSeconds = positiveIntegerOption(runHeartbeatStaleOption(args), DEFAULT_RUN_HEARTBEAT_STALE_SECONDS, 86400);
     const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
     const nodes = await optionalGatewayJson("/nodes", { auth: true, args }, []);
-    const inspection = inspectRoomState(roomData, { nodes, staleSeconds, queuedRunStaleSeconds, runningRunStaleSeconds });
+    const inspection = inspectRoomState(roomData, { nodes, staleSeconds, queuedRunStaleSeconds, runHeartbeatStaleSeconds });
     if (args.includes("--json")) return printJson(inspection);
     process.stdout.write(formatRoomStateInspection(inspection));
     return;
@@ -2762,8 +2763,14 @@ function formatRoomInspection(inspection) {
   return `${lines.join("\n")}\n`;
 }
 
-function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStaleSeconds = 21600, runningRunStaleSeconds = 180 } = {}) {
+function inspectRoomState(room, {
+  nodes = [],
+  staleSeconds = 180,
+  queuedRunStaleSeconds = 21600,
+  runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS
+} = {}) {
   const nodeLookupAvailable = Array.isArray(nodes) && nodes.length > 0;
+  const heartbeatIntervalByAgentId = agentHeartbeatIntervalById(nodes);
   const nodeById = new Map(
     (Array.isArray(nodes) ? nodes : [])
       .map((node) => [String(node?.node_id || node?.id || "").trim(), node])
@@ -2773,10 +2780,11 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
   const liveRunningRuns = [];
   const liveQueuedRuns = [];
   const staleQueuedRuns = [];
+  const staleRunningRuns = [];
   const orphanedRunningRuns = [];
   const otherNonTerminalRuns = [];
   for (const rawRun of Array.isArray(room?.runs) ? room.runs : []) {
-    const run = roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailable);
+    const run = roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailable, heartbeatIntervalByAgentId);
     const status = String(run.status || "queued").toLowerCase();
     if (STATUS_TERMINAL_RUNS.has(status)) {
       terminalRuns.push(run);
@@ -2788,12 +2796,10 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
       continue;
     }
     if (status === "running") {
-      if (
-        run.node_freshness.startsWith("stale")
-        || (nodeLookupAvailable && run.node_freshness === "unknown")
-        || isStaleRunningRun(run, runningRunStaleSeconds)
-      ) {
+      if (isOrphanedRunningRun(run, nodeLookupAvailable)) {
         orphanedRunningRuns.push(run);
+      } else if (isStaleRunningRun(run, runHeartbeatStaleSeconds)) {
+        staleRunningRuns.push(run);
       } else {
         liveRunningRuns.push(run);
       }
@@ -2805,14 +2811,16 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
     room,
     liveRunningRuns,
     liveQueuedRuns,
-      staleQueuedRuns,
-      orphanedRunningRuns,
-      otherNonTerminalRuns,
-      queuedRunStaleSeconds
-    });
+    staleQueuedRuns,
+    staleRunningRuns,
+    orphanedRunningRuns,
+    otherNonTerminalRuns,
+    queuedRunStaleSeconds
+  });
   const nonTerminalRuns = [
     ...liveRunningRuns,
     ...liveQueuedRuns,
+    ...staleRunningRuns,
     ...orphanedRunningRuns,
     ...otherNonTerminalRuns
   ];
@@ -2823,6 +2831,7 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
     live_running_runs: liveRunningRuns.length,
     live_queued_runs: liveQueuedRuns.length,
     stale_queued_runs: staleQueuedRuns.length,
+    stale_running_runs: staleRunningRuns.length,
     orphaned_running_runs: orphanedRunningRuns.length,
     other_non_terminal_runs: otherNonTerminalRuns.length
   };
@@ -2832,9 +2841,11 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
     liveRunningRuns,
     liveQueuedRuns,
     staleQueuedRuns,
+    staleRunningRuns,
     orphanedRunningRuns,
     otherNonTerminalRuns,
-    queuedRunStaleSeconds
+    queuedRunStaleSeconds,
+    runHeartbeatStaleSeconds
   });
   const operatorHints = roomInspectionOperatorHints(recommendations);
   return {
@@ -2852,85 +2863,80 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
       thresholds: {
         node_stale_seconds: staleSeconds,
         queued_run_stale_seconds: queuedRunStaleSeconds,
-        running_run_stale_seconds: runningRunStaleSeconds
+        run_heartbeat_stale_seconds: runHeartbeatStaleSeconds
       },
       counts,
       node_inventory_available: nodeLookupAvailable,
       live_running_runs: liveRunningRuns,
       live_queued_runs: liveQueuedRuns,
       stale_queued_runs: staleQueuedRuns,
+      stale_running_runs: staleRunningRuns,
       orphaned_running_runs: orphanedRunningRuns,
       other_non_terminal_runs: otherNonTerminalRuns,
       recommendations,
       operator_hints: operatorHints
     },
-    thresholds: { queued_run_stale_seconds: queuedRunStaleSeconds, node_stale_seconds: staleSeconds, running_run_stale_seconds: runningRunStaleSeconds },
+    thresholds: {
+      queued_run_stale_seconds: queuedRunStaleSeconds,
+      node_stale_seconds: staleSeconds,
+      run_heartbeat_stale_seconds: runHeartbeatStaleSeconds
+    },
     counts: {
       runs: counts.total_runs,
       active_runs: nonTerminalRuns.length,
       stale_queued_runs: staleQueuedRuns.length,
+      stale_running_runs: staleRunningRuns.length,
       orphaned_running_runs: orphanedRunningRuns.length
     },
     active_runs: nonTerminalRuns,
     stale_queued_runs: staleQueuedRuns,
+    stale_running_runs: staleRunningRuns,
     recommendation: legacyRoomInspectionRecommendation(summary, nonTerminalRuns, staleQueuedRuns),
     operator_hints: operatorHints
   };
 }
 
-function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailable) {
+function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailable, heartbeatIntervalByAgentId = new Map()) {
   const nodeId = String(rawRun?.node_id || "").trim();
+  const agentId = String(rawRun?.agent_id || "").trim();
   const node = nodeById.get(nodeId);
   const seenAt = node?.last_seen_at || null;
-  const runLastActivityAt = lastRunActivityAt(rawRun);
-  const runActivityAgeSeconds = elapsedSeconds(runLastActivityAt);
+  const lastHeartbeatAt = rawRun?.last_heartbeat_at || rawRun?.started_at || null;
   return {
     id: rawRun?.id || "",
     room_id: rawRun?.room_id || rawRun?.thread_id || "",
-    agent_id: rawRun?.agent_id || "",
+    agent_id: agentId,
     node_id: nodeId,
     status: rawRun?.status || "queued",
     created_at: rawRun?.created_at || null,
     started_at: rawRun?.started_at || null,
     completed_at: rawRun?.completed_at || null,
+    last_heartbeat_at: lastHeartbeatAt,
+    run_heartbeat_interval_ms: heartbeatIntervalByAgentId.get(agentId) || null,
     node_status: node?.status || null,
     node_last_seen_at: seenAt,
     node_freshness: node
       ? statusFreshness(node.status, seenAt, staleSeconds)
       : (nodeLookupAvailable ? "unknown" : "unchecked"),
-    run_last_activity_at: runLastActivityAt,
-    run_activity_age_seconds: runActivityAgeSeconds,
-    run_freshness: runActivityAgeSeconds == null ? "unknown" : `last activity ${runActivityAgeSeconds}s ago`,
-    age_seconds: elapsedSeconds(rawRun?.started_at || rawRun?.created_at || rawRun?.completed_at || null)
+    age_seconds: elapsedSeconds(rawRun?.started_at || rawRun?.created_at || rawRun?.completed_at || null),
+    heartbeat_age_seconds: elapsedSeconds(lastHeartbeatAt)
   };
 }
 
-function lastRunActivityAt(rawRun) {
-  const events = Array.isArray(rawRun?.events) ? rawRun.events : [];
-  const activityTimes = events
-    .filter((event) => ["run.heartbeat", "run.output", "run.started"].includes(String(event?.type || "")))
-    .map((event) => event?.at)
-    .filter(Boolean);
-  activityTimes.push(rawRun?.started_at || rawRun?.created_at || "");
-  const newest = activityTimes
-    .map((value) => ({ value, time: Date.parse(value) }))
-    .filter((item) => Number.isFinite(item.time))
-    .sort((left, right) => right.time - left.time)[0];
-  return newest?.value || null;
-}
-
-function isStaleRunningRun(run, runningRunStaleSeconds = 180) {
-  if (String(run.status || "").toLowerCase() !== "running") return false;
-  if (!Number.isFinite(run.run_activity_age_seconds)) return false;
-  return run.run_activity_age_seconds > runningRunStaleSeconds;
-}
-
-function summarizeRoomInspection({ room, liveRunningRuns, liveQueuedRuns, staleQueuedRuns, orphanedRunningRuns, otherNonTerminalRuns }) {
+function summarizeRoomInspection({ room, liveRunningRuns, liveQueuedRuns, staleQueuedRuns, staleRunningRuns, orphanedRunningRuns, otherNonTerminalRuns }) {
   const status = String(room?.status || "unknown").toLowerCase();
   if (status === "completed") return "completed";
   if (status === "paused") return "paused";
   if (orphanedRunningRuns.length) {
     return staleQueuedRuns.length ? "mixed_orphaned_running_and_stale_queued" : "orphaned_running_candidate";
+  }
+  if (staleRunningRuns.length) {
+    if (staleQueuedRuns.length && !liveRunningRuns.length && !liveQueuedRuns.length && !otherNonTerminalRuns.length) {
+      return "mixed_stale_running_and_stale_queued";
+    }
+    return (liveRunningRuns.length || liveQueuedRuns.length || otherNonTerminalRuns.length)
+      ? "mixed_live_and_stale_running"
+      : "stale_running_candidate";
   }
   if (staleQueuedRuns.length && !liveRunningRuns.length && !liveQueuedRuns.length && !otherNonTerminalRuns.length) {
     return "stale_queued_recovery_candidate";
@@ -2956,12 +2962,16 @@ function roomInspectionRecommendations({
   liveRunningRuns,
   liveQueuedRuns,
   staleQueuedRuns,
+  staleRunningRuns,
   orphanedRunningRuns,
   otherNonTerminalRuns,
-  queuedRunStaleSeconds = 21600
+  queuedRunStaleSeconds = 21600,
+  runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS
 }) {
   const roomId = room?.id || "ROOM_ID";
   const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
+  const heartbeatThresholdFlag = runHeartbeatStaleThresholdFlag(runHeartbeatStaleSeconds);
+  const inspectCommand = `agent-bus room inspect ${roomId}${heartbeatThresholdFlag}${thresholdFlag ? `${thresholdFlag}` : ""}`.trim();
   const out = [];
   if (summary === "completed") {
     out.push({
@@ -3004,13 +3014,69 @@ function roomInspectionRecommendations({
   if (summary === "orphaned_running_candidate" || summary === "mixed_orphaned_running_and_stale_queued") {
     out.push({
       level: "warn",
-      message: "At least one running task is attached to a stale/missing node or has stopped emitting run activity. Inspect the edge service or local agent process before queueing more room work."
+      message: "At least one running task is attached to a stale or missing node. Inspect the edge service or local agent process before queueing more room work."
     });
     out.push({
       level: "warn",
       message: "Use pause only to stop future wakes and cancel queued follow-ups. Pause does not kill already-running OS processes.",
       command: `agent-bus room pause ${roomId} --reason "orphan running task investigation"`
     });
+    return out;
+  }
+  if (summary === "stale_running_candidate" || summary === "mixed_live_and_stale_running" || summary === "mixed_stale_running_and_stale_queued") {
+    const cadenceMismatchRuns = staleRunningRuns.filter((run) => runHeartbeatThresholdBelowCadence(run, runHeartbeatStaleSeconds));
+    const recommendedThresholdSeconds = recommendedHeartbeatThresholdSecondsForRuns(cadenceMismatchRuns);
+    const allCadenceMismatch = cadenceMismatchRuns.length > 0 && cadenceMismatchRuns.length === staleRunningRuns.length;
+    if (cadenceMismatchRuns.length && recommendedThresholdSeconds) {
+      out.push({
+        kind: "adjust_stale_running_threshold",
+        level: allCadenceMismatch ? "warn" : "info",
+        message: `The current stale-running threshold (${runHeartbeatStaleSeconds}s) is lower than the configured heartbeat cadence for ${cadenceMismatchRuns.length} affected run${cadenceMismatchRuns.length === 1 ? "" : "s"}. Re-run inspect with at least ${recommendedThresholdSeconds}s before treating ${allCadenceMismatch ? "this room" : "those runs"} as heartbeat loss.`,
+        command: `agent-bus room inspect ${roomId} --run-heartbeat-stale-seconds ${recommendedThresholdSeconds}${thresholdFlag ? `${thresholdFlag}` : ""}`.trim()
+      });
+    }
+    if (allCadenceMismatch) {
+      if (room?.trace_id) {
+        out.push({
+          kind: "inspect_trace",
+          level: "info",
+          message: "If the run still looks stuck after relaxing the stale-running threshold, inspect the room trace before pausing it.",
+          command: `agent-bus trace show ${room.trace_id}`
+        });
+      }
+      if (summary === "mixed_stale_running_and_stale_queued") {
+        out.push({
+          level: "info",
+          message: "Do not recover the stale queued follow-up until the stale-running threshold is relaxed and the live run state is understood.",
+          command: `agent-bus room inspect ${roomId} --run-heartbeat-stale-seconds ${recommendedThresholdSeconds}${thresholdFlag ? `${thresholdFlag}` : ""}`.trim()
+        });
+      }
+      return out;
+    }
+    out.push({
+      level: "warn",
+      message: `At least one running task has not reported a run heartbeat for more than ${runHeartbeatStaleSeconds}s even though the node still looks reachable. Inspect the agent process or adapter session before waking the room again.`
+    });
+    if (room?.trace_id) {
+      out.push({
+        kind: "inspect_trace",
+        level: "info",
+        message: "Inspect the room trace before deciding whether to pause or replace the stale-running agent.",
+        command: `agent-bus trace show ${room.trace_id}`
+      });
+    }
+    out.push({
+      level: "warn",
+      message: "Pause stops future wakes and queued follow-ups, but it does not kill already-running OS processes.",
+      command: `agent-bus room pause ${roomId} --reason "stale running task investigation"`
+    });
+    if (summary === "mixed_stale_running_and_stale_queued") {
+      out.push({
+        level: "info",
+        message: "Do not recover the stale queued follow-up until the stale-running task is understood; otherwise the room can fork into duplicate work.",
+        command: inspectCommand
+      });
+    }
     return out;
   }
   if (summary === "mixed_live_and_stale_queued") {
@@ -3075,6 +3141,7 @@ function roomInspectionHintKind(item) {
   if (command.includes(" trace show ")) return "inspect_trace";
   if (command.includes(" room recover ")) return "recover_room";
   if (command.includes(" room pause ")) return "pause_room";
+  if (command.includes(" room inspect ") && command.includes("--run-heartbeat-stale-seconds")) return "adjust_stale_running_threshold";
   if (command.includes(" room export ")) return "export_room_summary";
   if (command.includes(" room wake ")) return "wake_room";
   if (command.includes(" room message ")) return "message_room";
@@ -3092,11 +3159,12 @@ function formatRoomStateInspection(result) {
   lines.push(`Trace: ${room.trace_id || "-"}`);
   lines.push(`Created: ${room.created_at || "-"}`);
   lines.push(`Updated: ${room.updated_at || "-"}`);
-  lines.push(`Runs: live_running=${counts.live_running_runs || 0} live_queued=${counts.live_queued_runs || 0} stale_queued=${counts.stale_queued_runs || 0} orphaned_running=${counts.orphaned_running_runs || 0} terminal=${counts.terminal_runs || 0}`);
-  lines.push(`Thresholds: node_stale=${analysis.thresholds?.node_stale_seconds || 0}s queued_stale=${analysis.thresholds?.queued_run_stale_seconds || 0}s running_stale=${analysis.thresholds?.running_run_stale_seconds || 0}s`);
+  lines.push(`Runs: live_running=${counts.live_running_runs || 0} live_queued=${counts.live_queued_runs || 0} stale_queued=${counts.stale_queued_runs || 0} stale_running=${counts.stale_running_runs || 0} orphaned_running=${counts.orphaned_running_runs || 0} terminal=${counts.terminal_runs || 0}`);
+  lines.push(`Thresholds: node_stale=${analysis.thresholds?.node_stale_seconds || 0}s queued_stale=${analysis.thresholds?.queued_run_stale_seconds || 0}s heartbeat_stale=${analysis.thresholds?.run_heartbeat_stale_seconds || 0}s`);
   appendRoomInspectionRuns(lines, "Live running runs", analysis.live_running_runs);
   appendRoomInspectionRuns(lines, "Live queued runs", analysis.live_queued_runs);
   appendRoomInspectionRuns(lines, "Stale queued runs", analysis.stale_queued_runs);
+  appendRoomInspectionRuns(lines, "Stale running candidates", analysis.stale_running_runs);
   appendRoomInspectionRuns(lines, "Orphaned running candidates", analysis.orphaned_running_runs);
   appendRoomInspectionRuns(lines, "Other non-terminal runs", analysis.other_non_terminal_runs);
   if (Array.isArray(analysis.recommendations) && analysis.recommendations.length) {
@@ -3114,11 +3182,15 @@ function appendRoomInspectionRuns(lines, label, runs) {
   lines.push("", `${label}:`);
   for (const run of runs) {
     const age = Number.isFinite(run.age_seconds) ? formatAgeSeconds(run.age_seconds) : "unknown";
+    const heartbeat = Number.isFinite(run.heartbeat_age_seconds) ? ` heartbeat=${formatAgeSeconds(run.heartbeat_age_seconds)}` : "";
+    const heartbeatAt = run.last_heartbeat_at ? ` last_heartbeat=${run.last_heartbeat_at}` : "";
+    const heartbeatEvery = positiveHeartbeatIntervalMs(run.run_heartbeat_interval_ms)
+      ? ` heartbeat_every=${formatHeartbeatCadence(run.run_heartbeat_interval_ms)}`
+      : "";
     const nodeNote = run.node_freshness && run.node_freshness !== "unchecked"
       ? ` node=${run.node_id || "-"} (${run.node_freshness})`
       : ` node=${run.node_id || "-"}`;
-    const runNote = run.run_freshness && run.run_freshness !== "unknown" ? ` run=${run.run_freshness}` : "";
-    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote}${runNote} age=${age} created=${run.created_at || "-"}`);
+    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age}${heartbeat}${heartbeatAt}${heartbeatEvery} created=${run.created_at || "-"}`);
   }
 }
 
@@ -3754,7 +3826,19 @@ async function status(args) {
 
   const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
   const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
-  const result = summarizeStatus({ health, agents, rooms, nodes, authWarning, roomAccess, roomAccessWarning, staleSeconds, queuedRunStaleSeconds });
+  const runHeartbeatStaleSeconds = positiveIntegerOption(runHeartbeatStaleOption(args), DEFAULT_RUN_HEARTBEAT_STALE_SECONDS, 86400);
+  const result = summarizeStatus({
+    health,
+    agents,
+    rooms,
+    nodes,
+    authWarning,
+    roomAccess,
+    roomAccessWarning,
+    staleSeconds,
+    queuedRunStaleSeconds,
+    runHeartbeatStaleSeconds
+  });
   if (hydrationMeta || roomAccess !== "full") {
     result.status_meta = {
       ...(result.status_meta || {}),
@@ -3989,7 +4073,8 @@ function summarizeStatus({
   roomAccess = "full",
   roomAccessWarning = "",
   staleSeconds = 180,
-  queuedRunStaleSeconds = 21600
+  queuedRunStaleSeconds = 21600,
+  runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS
 }) {
   const agentList = Array.isArray(agents) ? agents : [];
   const roomList = Array.isArray(rooms) ? rooms : [];
@@ -3997,8 +4082,24 @@ function summarizeStatus({
   const onlineAgents = agentList.filter((agent) => agent.status === "online");
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
   const activeRooms = roomList.filter(isActiveRoom);
-  const runSummary = activeRoomRunSummary(activeRooms, { queuedRunStaleSeconds });
+  const heartbeatIntervalByAgentId = agentHeartbeatIntervalById(nodeList);
+  const nodeById = new Map(
+    nodeList
+      .map((node) => [String(node?.node_id || node?.id || "").trim(), node])
+      .filter(([nodeId]) => nodeId)
+  );
+  const nodeLookupAvailable = nodeById.size > 0;
+  const runSummary = activeRoomRunSummary(activeRooms, {
+    queuedRunStaleSeconds,
+    staleSeconds,
+    nodeById,
+    nodeLookupAvailable,
+    heartbeatIntervalByAgentId,
+    runHeartbeatStaleSeconds
+  });
   const recoveryHints = staleRoomRecoveryHints(runSummary.staleQueuedRuns, { queuedRunStaleSeconds });
+  const staleRunningHints = staleRunningRoomHints(runSummary.staleRunningRuns, { runHeartbeatStaleSeconds });
+  const orphanedRunningHints = orphanedRunningRoomHints(runSummary.orphanedRunningRuns, { staleSeconds });
   const activeRunsByAgent = runSummary.liveByAgent;
   const fallbackBusyAgentIds = new Set(activeRooms
     .filter((room) => !Array.isArray(room.runs))
@@ -4019,7 +4120,9 @@ function summarizeStatus({
       rooms: roomList.length,
       active_rooms: activeRooms.length,
       active_runs: runSummary.liveRuns.length,
-      stale_queued_runs: runSummary.staleQueuedRuns.length
+      stale_running_runs: runSummary.staleRunningRuns.length,
+      stale_queued_runs: runSummary.staleQueuedRuns.length,
+      orphaned_running_runs: runSummary.orphanedRunningRuns.length
     },
     nodes: nodeList.map((node) => ({
       id: node.node_id || node.id || "unknown",
@@ -4033,32 +4136,41 @@ function summarizeStatus({
       const lastRunStatus = agent.last_run_status || agent.health?.last_run_status || null;
       const lastSeenAt = agent.last_seen_at || agent.node_last_seen_at || null;
       const activeRuns = activeRunsByAgent.get(agent.id) || [];
+      const staleRunningRuns = runSummary.staleRunningByAgent.get(agent.id) || [];
       const staleQueuedRuns = runSummary.staleQueuedByAgent.get(agent.id) || [];
+      const orphanedRunningRuns = runSummary.orphanedRunningByAgent.get(agent.id) || [];
       const activeRoomIds = unique([
         ...activeRuns.map((run) => run.room_id).filter(Boolean),
+        ...staleRunningRuns.map((run) => run.room_id).filter(Boolean),
+        ...orphanedRunningRuns.map((run) => run.room_id).filter(Boolean),
         ...activeRooms
           .filter((room) => !Array.isArray(room.runs) && Array.isArray(room.agents) && room.agents.includes(agent.id))
           .map((room) => room.id)
           .filter(Boolean)
       ]);
-      const latestRun = activeRuns[0] || null;
+      const latestRun = activeRuns[0] || staleRunningRuns[0] || orphanedRunningRuns[0] || null;
       return {
         id: agent.id,
         status: agent.status || "unknown",
         ping_status: pingStatus,
         last_run_status: lastRunStatus,
         last_seen_at: lastSeenAt,
+        run_heartbeat_interval_ms: positiveHeartbeatIntervalMs(agent.run_heartbeat_interval_ms),
         freshness: statusFreshness(agent.status, lastSeenAt, staleSeconds),
-        activity: agentActivity(activeRuns, activeRoomIds),
+        activity: agentActivity(activeRuns, activeRoomIds, orphanedRunningRuns, staleRunningRuns),
         active_rooms: activeRoomIds,
         active_runs: activeRuns,
+        stale_running_runs: staleRunningRuns,
         stale_queued_runs: staleQueuedRuns,
+        orphaned_running_runs: orphanedRunningRuns,
         current_run: latestRun?.id || null,
         ping_label: pingLabel(pingStatus),
         last_run_health: lastRunHealth(lastRunStatus)
       };
     }),
     recovery_hints: recoveryHints,
+    stale_running_hints: staleRunningHints,
+    orphaned_running_hints: orphanedRunningHints,
     rooms: roomList.slice(0, 8).map((room) => ({
       id: room.id,
       status: room.status,
@@ -4066,12 +4178,29 @@ function summarizeStatus({
       updated_at: room.updated_at,
       reports: room.report_count ?? null,
       messages: room.message_count ?? null,
-      active_runs: activeRunsForRoom(room, { queuedRunStaleSeconds })
+      active_runs: activeRunsForRoom(room, { queuedRunStaleSeconds, staleSeconds, nodeById, nodeLookupAvailable, heartbeatIntervalByAgentId, runHeartbeatStaleSeconds })
         .map((run) => run.id),
-      stale_queued_runs: staleQueuedRunsForRoom(room, { queuedRunStaleSeconds })
+      stale_running_runs: staleRunningRunsForRoom(room, { queuedRunStaleSeconds, staleSeconds, nodeById, nodeLookupAvailable, heartbeatIntervalByAgentId, runHeartbeatStaleSeconds })
+        .map((run) => run.id),
+      stale_queued_runs: staleQueuedRunsForRoom(room, { queuedRunStaleSeconds, staleSeconds, nodeById, nodeLookupAvailable, heartbeatIntervalByAgentId })
+        .map((run) => run.id),
+      orphaned_running_runs: orphanedRunningRunsForRoom(room, { queuedRunStaleSeconds, staleSeconds, nodeById, nodeLookupAvailable, heartbeatIntervalByAgentId })
         .map((run) => run.id)
     })),
-    warnings: statusWarnings({ authWarning, roomAccessWarning, staleQueuedRuns: runSummary.staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints })
+    warnings: statusWarnings({
+      authWarning,
+      roomAccessWarning,
+      staleRunningRuns: runSummary.staleRunningRuns,
+      staleQueuedRuns: runSummary.staleQueuedRuns,
+      orphanedRunningRuns: runSummary.orphanedRunningRuns,
+      runHeartbeatStaleSeconds,
+      queuedRunStaleSeconds,
+      staleSeconds,
+      health,
+      staleRunningHints,
+      recoveryHints,
+      orphanedRunningHints
+    })
   };
   result.readiness = statusReadiness(result, { authWarning });
   result.next_actions = statusNextActions(result, { authWarning, roomAccess });
@@ -4099,6 +4228,20 @@ function statusReadiness(result, { authWarning = "" } = {}) {
       level: "setup",
       status: "waiting-for-edge",
       message: "Central is up, but no online edge agents are ready to receive work."
+    };
+  }
+  if (Number(s.orphaned_running_runs || 0) > 0) {
+    return {
+      level: "attention",
+      status: "orphaned-running-runs",
+      message: "Central is reachable, but at least one running room task is attached to a stale or missing node."
+    };
+  }
+  if (Number(s.stale_running_runs || 0) > 0) {
+    return {
+      level: "attention",
+      status: "stale-running-runs",
+      message: "Central is reachable, but at least one running room task has not reported a run heartbeat within the current threshold while its node still looks online."
     };
   }
   if (Number(s.stale_queued_runs || 0) > 0) {
@@ -4155,6 +4298,17 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
   }
   if (Number(s.queued || 0) > 0 && Number(s.busy_agents || 0) === 0) {
     actions.push("Poll or restart edge services so queued runs can be claimed.");
+  }
+  if (result.orphaned_running_hints?.length) {
+    const hint = result.orphaned_running_hints[0];
+    actions.push(`Inspect orphaned running room work: ${hint.inspect_command}`);
+  }
+  if (result.stale_running_hints?.length) {
+    const hint = result.stale_running_hints[0];
+    if (hint.adjust_threshold_command) {
+      actions.push(`If this edge heartbeats more slowly than your stale-running threshold, re-check with: ${hint.adjust_threshold_command}`);
+    }
+    actions.push(`Inspect stale-running room work: ${hint.inspect_command}`);
   }
   if (result.recovery_hints?.length) {
     const hint = result.recovery_hints[0];
@@ -4244,45 +4398,118 @@ function staleQueuedRunsForRoom(room, options = {}) {
   return activeRunBucketsForRoom(room, options).staleQueuedRuns;
 }
 
-function activeRunBucketsForRoom(room, { queuedRunStaleSeconds = 21600 } = {}) {
+function staleRunningRunsForRoom(room, options = {}) {
+  return activeRunBucketsForRoom(room, options).staleRunningRuns;
+}
+
+function orphanedRunningRunsForRoom(room, options = {}) {
+  return activeRunBucketsForRoom(room, options).orphanedRunningRuns;
+}
+
+function activeRunBucketsForRoom(room, {
+  queuedRunStaleSeconds = 21600,
+  staleSeconds = 180,
+  nodeById = new Map(),
+  nodeLookupAvailable = nodeById instanceof Map && nodeById.size > 0,
+  heartbeatIntervalByAgentId = new Map(),
+  runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS
+} = {}) {
   const roomId = room?.id || "";
   const liveRuns = [];
+  const staleRunningRuns = [];
   const staleQueuedRuns = [];
+  const orphanedRunningRuns = [];
   for (const rawRun of Array.isArray(room?.runs) ? room.runs : []) {
-    const status = String(rawRun.status || "queued").toLowerCase();
+    const run = statusRunRecord(rawRun, roomId, { staleSeconds, nodeById, nodeLookupAvailable, heartbeatIntervalByAgentId });
+    const status = String(run.status || "queued").toLowerCase();
     if (STATUS_TERMINAL_RUNS.has(status)) continue;
-    const run = {
-      id: rawRun.id,
-      room_id: rawRun.room_id || roomId,
-      agent_id: rawRun.agent_id,
-      status: rawRun.status || "queued",
-      created_at: rawRun.created_at || null,
-      started_at: rawRun.started_at || null
-    };
     if (isStaleQueuedRun(run, queuedRunStaleSeconds)) {
       staleQueuedRuns.push(run);
+    } else if (isOrphanedRunningRun(run, nodeLookupAvailable)) {
+      orphanedRunningRuns.push(run);
+    } else if (isStaleRunningRun(run, runHeartbeatStaleSeconds)) {
+      staleRunningRuns.push(run);
     } else {
       liveRuns.push(run);
     }
   }
-  return { liveRuns, staleQueuedRuns };
+  return { liveRuns, staleRunningRuns, staleQueuedRuns, orphanedRunningRuns };
 }
 
 function activeRoomRunSummary(rooms, options = {}) {
   const liveRuns = [];
+  const staleRunningRuns = [];
   const staleQueuedRuns = [];
+  const orphanedRunningRuns = [];
   const liveByAgent = new Map();
+  const staleRunningByAgent = new Map();
   const staleQueuedByAgent = new Map();
+  const orphanedRunningByAgent = new Map();
   for (const room of rooms) {
     const buckets = activeRunBucketsForRoom(room, options);
     liveRuns.push(...buckets.liveRuns);
+    staleRunningRuns.push(...buckets.staleRunningRuns);
     staleQueuedRuns.push(...buckets.staleQueuedRuns);
+    orphanedRunningRuns.push(...buckets.orphanedRunningRuns);
     addRunsByAgent(liveByAgent, buckets.liveRuns);
+    addRunsByAgent(staleRunningByAgent, buckets.staleRunningRuns);
     addRunsByAgent(staleQueuedByAgent, buckets.staleQueuedRuns);
+    addRunsByAgent(orphanedRunningByAgent, buckets.orphanedRunningRuns);
   }
   sortRunsByNewest(liveByAgent);
+  sortRunsByNewest(staleRunningByAgent);
   sortRunsByNewest(staleQueuedByAgent);
-  return { liveRuns, staleQueuedRuns, liveByAgent, staleQueuedByAgent };
+  sortRunsByNewest(orphanedRunningByAgent);
+  return {
+    liveRuns,
+    staleRunningRuns,
+    staleQueuedRuns,
+    orphanedRunningRuns,
+    liveByAgent,
+    staleRunningByAgent,
+    staleQueuedByAgent,
+    orphanedRunningByAgent
+  };
+}
+
+function staleRunningRoomHints(staleRunningRuns, { runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS } = {}) {
+  const byRoom = new Map();
+  const thresholdFlag = runHeartbeatStaleThresholdFlag(runHeartbeatStaleSeconds);
+  for (const run of staleRunningRuns) {
+    const roomId = run.room_id || "";
+    if (!roomId) continue;
+    const hint = byRoom.get(roomId) || {
+      room_id: roomId,
+      stale_running_runs: [],
+      agents: [],
+      inspect_command: `agent-bus room inspect ${roomId}${thresholdFlag}`,
+      cadence_mismatch_runs: [],
+      pause_command: `agent-bus room pause ${roomId} --reason "stale running task investigation"`
+    };
+    if (run.id && !hint.stale_running_runs.includes(run.id)) hint.stale_running_runs.push(run.id);
+    if (run.agent_id && !hint.agents.includes(run.agent_id)) hint.agents.push(run.agent_id);
+    if (runHeartbeatThresholdBelowCadence(run, runHeartbeatStaleSeconds)) {
+      if (run.id && !hint.cadence_mismatch_runs.includes(run.id)) hint.cadence_mismatch_runs.push(run.id);
+      const recommendedThresholdSeconds = recommendedHeartbeatThresholdSecondsForRun(run);
+      if (recommendedThresholdSeconds) {
+        hint.recommended_run_heartbeat_stale_seconds = Math.max(Number(hint.recommended_run_heartbeat_stale_seconds || 0), recommendedThresholdSeconds);
+        hint.adjust_threshold_command = `agent-bus room inspect ${roomId} --run-heartbeat-stale-seconds ${hint.recommended_run_heartbeat_stale_seconds}`;
+      }
+    }
+    byRoom.set(roomId, hint);
+  }
+  return [...byRoom.values()]
+    .map((hint) => {
+      if (!hint.cadence_mismatch_runs.length) {
+        delete hint.cadence_mismatch_runs;
+        delete hint.recommended_run_heartbeat_stale_seconds;
+        delete hint.adjust_threshold_command;
+      } else if (hint.cadence_mismatch_runs.length === hint.stale_running_runs.length) {
+        delete hint.pause_command;
+      }
+      return hint;
+    })
+    .sort((left, right) => left.room_id.localeCompare(right.room_id));
 }
 
 function staleRoomRecoveryHints(staleQueuedRuns, { queuedRunStaleSeconds = 21600 } = {}) {
@@ -4306,8 +4533,82 @@ function staleRoomRecoveryHints(staleQueuedRuns, { queuedRunStaleSeconds = 21600
   return [...byRoom.values()].sort((left, right) => left.room_id.localeCompare(right.room_id));
 }
 
+function orphanedRunningRoomHints(orphanedRunningRuns, { staleSeconds = 180 } = {}) {
+  const byRoom = new Map();
+  const thresholdFlag = staleThresholdFlag(staleSeconds);
+  for (const run of orphanedRunningRuns) {
+    const roomId = run.room_id || "";
+    if (!roomId) continue;
+    const hint = byRoom.get(roomId) || {
+      room_id: roomId,
+      orphaned_running_runs: [],
+      agents: [],
+      inspect_command: `agent-bus room inspect ${roomId}${thresholdFlag}`,
+      pause_command: `agent-bus room pause ${roomId} --reason "orphan running task investigation"`
+    };
+    if (run.id && !hint.orphaned_running_runs.includes(run.id)) hint.orphaned_running_runs.push(run.id);
+    if (run.agent_id && !hint.agents.includes(run.agent_id)) hint.agents.push(run.agent_id);
+    byRoom.set(roomId, hint);
+  }
+  return [...byRoom.values()].sort((left, right) => left.room_id.localeCompare(right.room_id));
+}
+
 function queuedRunStaleThresholdFlag(queuedRunStaleSeconds = 21600) {
   return queuedRunStaleSeconds === 21600 ? "" : ` --queued-run-stale-seconds ${queuedRunStaleSeconds}`;
+}
+
+function staleThresholdFlag(staleSeconds = 180) {
+  return staleSeconds === 180 ? "" : ` --stale-seconds ${staleSeconds}`;
+}
+
+function runHeartbeatStaleThresholdFlag(runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS) {
+  return runHeartbeatStaleSeconds === DEFAULT_RUN_HEARTBEAT_STALE_SECONDS
+    ? ""
+    : ` --run-heartbeat-stale-seconds ${runHeartbeatStaleSeconds}`;
+}
+
+function positiveHeartbeatIntervalMs(value) {
+  const intervalMs = Number(value);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return null;
+  return Math.round(intervalMs);
+}
+
+function agentHeartbeatIntervalById(nodes = []) {
+  const byAgent = new Map();
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    for (const agent of Array.isArray(node?.agents) ? node.agents : []) {
+      if (!agent || typeof agent !== "object") continue;
+      const agentId = String(agent.id || "").trim();
+      const intervalMs = positiveHeartbeatIntervalMs(agent.run_heartbeat_interval_ms || agent.runHeartbeatIntervalMs);
+      if (!agentId || !intervalMs) continue;
+      byAgent.set(agentId, intervalMs);
+    }
+  }
+  return byAgent;
+}
+
+function runHeartbeatThresholdBelowCadence(run, runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS) {
+  const intervalMs = positiveHeartbeatIntervalMs(run?.run_heartbeat_interval_ms);
+  if (!intervalMs) return false;
+  return runHeartbeatStaleSeconds * 1000 < intervalMs;
+}
+
+function recommendedHeartbeatThresholdSecondsForRun(run) {
+  const intervalMs = positiveHeartbeatIntervalMs(run?.run_heartbeat_interval_ms);
+  if (!intervalMs) return 0;
+  return Math.max(1, Math.ceil(intervalMs / 1000) + 1);
+}
+
+function recommendedHeartbeatThresholdSecondsForRuns(runs = []) {
+  return (Array.isArray(runs) ? runs : []).reduce((max, run) => Math.max(max, recommendedHeartbeatThresholdSecondsForRun(run)), 0);
+}
+
+function formatHeartbeatCadence(value) {
+  const intervalMs = positiveHeartbeatIntervalMs(value);
+  if (!intervalMs) return "unknown";
+  if (intervalMs < 1000) return `${intervalMs}ms`;
+  if (intervalMs % 1000) return `${(intervalMs / 1000).toFixed(1).replace(/\.0$/, "")}s`;
+  return formatAgeSeconds(intervalMs / 1000);
 }
 
 function addRunsByAgent(byAgent, runs) {
@@ -4333,9 +4634,88 @@ function isStaleQueuedRun(run, queuedRunStaleSeconds) {
   return (Date.now() - created) / 1000 > queuedRunStaleSeconds;
 }
 
-function statusWarnings({ authWarning, roomAccessWarning, staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints }) {
+function statusRunRecord(rawRun, roomId, {
+  staleSeconds = 180,
+  nodeById = new Map(),
+  nodeLookupAvailable = nodeById instanceof Map && nodeById.size > 0,
+  heartbeatIntervalByAgentId = new Map()
+} = {}) {
+  const nodeId = String(rawRun?.node_id || "").trim();
+  const agentId = String(rawRun?.agent_id || "").trim();
+  const node = nodeById.get(nodeId);
+  const seenAt = node?.last_seen_at || null;
+  const lastHeartbeatAt = rawRun?.last_heartbeat_at || rawRun?.started_at || null;
+  return {
+    id: rawRun?.id || "",
+    room_id: rawRun?.room_id || roomId,
+    agent_id: agentId,
+    node_id: nodeId,
+    status: rawRun?.status || "queued",
+    created_at: rawRun?.created_at || null,
+    started_at: rawRun?.started_at || null,
+    last_heartbeat_at: lastHeartbeatAt,
+    run_heartbeat_interval_ms: heartbeatIntervalByAgentId.get(agentId) || null,
+    heartbeat_age_seconds: elapsedSeconds(lastHeartbeatAt),
+    node_status: node?.status || null,
+    node_last_seen_at: seenAt,
+    node_freshness: node
+      ? statusFreshness(node.status, seenAt, staleSeconds)
+      : (nodeLookupAvailable ? "unknown" : "unchecked")
+  };
+}
+
+function isOrphanedRunningRun(run, nodeLookupAvailable) {
+  if (String(run.status || "").toLowerCase() !== "running") return false;
+  return run.node_freshness.startsWith("stale") || (nodeLookupAvailable && run.node_freshness === "unknown");
+}
+
+function isStaleRunningRun(run, runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS) {
+  if (String(run.status || "").toLowerCase() !== "running") return false;
+  const heartbeatAgeSeconds = Number(run.heartbeat_age_seconds);
+  if (!Number.isFinite(heartbeatAgeSeconds)) return false;
+  return heartbeatAgeSeconds > runHeartbeatStaleSeconds;
+}
+
+function statusWarnings({
+  authWarning,
+  roomAccessWarning,
+  staleRunningRuns = [],
+  staleQueuedRuns,
+  orphanedRunningRuns = [],
+  runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS,
+  queuedRunStaleSeconds,
+  staleSeconds = 180,
+  health,
+  staleRunningHints = [],
+  recoveryHints,
+  orphanedRunningHints = []
+}) {
   const warnings = authWarning ? [authWarning] : [];
   if (roomAccessWarning) warnings.push(roomAccessWarning);
+  const staleRunningCount = staleRunningRuns.length;
+  if (staleRunningCount) {
+    const cadenceMismatchRuns = staleRunningRuns.filter((run) => runHeartbeatThresholdBelowCadence(run, runHeartbeatStaleSeconds));
+    const mismatchCount = cadenceMismatchRuns.length;
+    const recommendedThresholdSeconds = recommendedHeartbeatThresholdSecondsForRuns(cadenceMismatchRuns);
+    const roomNote = staleRunningHints?.length
+      ? ` Example: ${staleRunningHints[0].inspect_command}`
+      : "";
+    if (mismatchCount && mismatchCount === staleRunningCount) {
+      warnings.push(`Detected ${staleRunningCount} stale running room run${staleRunningCount === 1 ? "" : "s"} older than ${runHeartbeatStaleSeconds}s while the node still looks reachable, but the current stale-running threshold is lower than the configured heartbeat cadence for the affected edge${staleRunningCount === 1 ? "" : "s"}. Re-run status or room inspect with at least ${recommendedThresholdSeconds}s before treating this as heartbeat loss.${roomNote}`);
+    } else {
+      warnings.push(`Detected ${staleRunningCount} stale running room run${staleRunningCount === 1 ? "" : "s"} that has not reported a run heartbeat within ${runHeartbeatStaleSeconds}s while the node still looks reachable. Inspect the agent process or adapter session before waking that room again.${roomNote}`);
+      if (mismatchCount) {
+        warnings.push(`The current stale-running threshold (${runHeartbeatStaleSeconds}s) is lower than the configured heartbeat cadence for ${mismatchCount} affected run${mismatchCount === 1 ? "" : "s"}. Re-run status or room inspect with at least ${recommendedThresholdSeconds}s before treating those runs as heartbeat loss.`);
+      }
+    }
+  }
+  const orphanedCount = orphanedRunningRuns.length;
+  if (orphanedCount) {
+    const roomNote = orphanedRunningHints?.length
+      ? ` Example: ${orphanedRunningHints[0].inspect_command}`
+      : "";
+    warnings.push(`Detected ${orphanedCount} orphaned running room run${orphanedCount === 1 ? "" : "s"} at the current ${staleSeconds}s node threshold. Inspect the stale or missing edge before waking that room again.${roomNote}`);
+  }
   const count = staleQueuedRuns.length;
   if (count) {
     const queueNote = Number(health?.queued || 0) === 0 ? "; gateway queue is empty" : "";
@@ -4377,9 +4757,11 @@ function applyStatusRoomDetailCoverage(result) {
   return result;
 }
 
-function agentActivity(activeRuns, activeRoomIds) {
+function agentActivity(activeRuns, activeRoomIds, orphanedRunningRuns = [], staleRunningRuns = []) {
   if (activeRuns.some((run) => String(run.status || "").toLowerCase() === "running")) return "running";
   if (activeRuns.some((run) => String(run.status || "").toLowerCase() === "queued")) return "queued";
+  if (orphanedRunningRuns.length) return "orphaned-running";
+  if (staleRunningRuns.length) return "stale-running";
   return activeRoomIds.length ? "busy/room-active" : "idle";
 }
 
@@ -4418,7 +4800,7 @@ function lastRunHealth(status) {
 function printStatus(result) {
   const s = result.summary || {};
   console.log(`Agent Bus status: ${result.ok ? "OK" : "WARN"}`);
-  console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, queued ${s.queued}`);
+  console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, stale_running ${s.stale_running_runs || 0}, orphaned_running ${s.orphaned_running_runs || 0}, queued ${s.queued}`);
   if (result.readiness) {
     console.log(`Readiness: ${result.readiness.status} (${result.readiness.level}) - ${result.readiness.message}`);
   }
@@ -4428,6 +4810,22 @@ function printStatus(result) {
   if (result.next_actions?.length) {
     console.log("\nNext actions:");
     for (const action of result.next_actions) console.log(`- ${action}`);
+  }
+  if (result.orphaned_running_hints?.length) {
+    console.log("\nOrphaned running hints:");
+    for (const hint of result.orphaned_running_hints) {
+      const pause = hint.pause_command ? `, pause=\`${hint.pause_command}\`` : "";
+      console.log(`- ${hint.room_id}: inspect=\`${hint.inspect_command}\`${pause}, orphaned_runs=${hint.orphaned_running_runs.join(",") || "-"}`);
+    }
+  }
+  if (result.stale_running_hints?.length) {
+    console.log("\nStale running hints:");
+    for (const hint of result.stale_running_hints) {
+      const pause = hint.pause_command ? `, pause=\`${hint.pause_command}\`` : "";
+      const adjust = hint.adjust_threshold_command ? `, threshold=\`${hint.adjust_threshold_command}\`` : "";
+      const cadenceMismatch = hint.cadence_mismatch_runs?.length ? `, cadence_mismatch=${hint.cadence_mismatch_runs.join(",")}` : "";
+      console.log(`- ${hint.room_id}: inspect=\`${hint.inspect_command}\`${pause}${adjust}, stale_running=${hint.stale_running_runs.join(",") || "-"}${cadenceMismatch}`);
+    }
   }
   if (result.recovery_hints?.length) {
     console.log("\nRecovery hints:");
@@ -4449,16 +4847,23 @@ function printStatus(result) {
       const seen = agent.last_seen_at ? ` seen=${agent.last_seen_at}` : " seen=unknown";
       const active = agent.active_rooms?.length ? ` rooms=${agent.active_rooms.join(",")}` : "";
       const run = agent.current_run ? ` run=${agent.current_run}` : "";
+      const heartbeatEvery = positiveHeartbeatIntervalMs(agent.run_heartbeat_interval_ms) && (agent.activity === "running" || agent.activity === "stale-running")
+        ? ` heartbeat_every=${formatHeartbeatCadence(agent.run_heartbeat_interval_ms)}`
+        : "";
+      const staleRunning = agent.stale_running_runs?.length ? ` stale_running=${agent.stale_running_runs.map((item) => item.id).join(",")}` : "";
       const staleQueued = agent.stale_queued_runs?.length ? ` stale_queued=${agent.stale_queued_runs.map((item) => item.id).join(",")}` : "";
-      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${seen}${active}${run}${staleQueued}`);
+      const orphanedRunning = agent.orphaned_running_runs?.length ? ` orphaned_running=${agent.orphaned_running_runs.map((item) => item.id).join(",")}` : "";
+      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${seen}${active}${run}${heartbeatEvery}${staleRunning}${staleQueued}${orphanedRunning}`);
     }
   }
   if (result.rooms.length) {
     console.log("\nRecent rooms:");
     for (const room of result.rooms) {
       const activeRuns = room.active_runs?.length ? ` active_runs=${room.active_runs.join(",")}` : "";
+      const staleRunning = room.stale_running_runs?.length ? ` stale_running=${room.stale_running_runs.join(",")}` : "";
       const staleQueued = room.stale_queued_runs?.length ? ` stale_queued=${room.stale_queued_runs.join(",")}` : "";
-      console.log(`- ${room.id}: ${room.status}, agents=${room.agents.join(",") || "-"}, updated=${room.updated_at || "-"}${activeRuns}${staleQueued}`);
+      const orphanedRunning = room.orphaned_running_runs?.length ? ` orphaned_running=${room.orphaned_running_runs.join(",")}` : "";
+      console.log(`- ${room.id}: ${room.status}, agents=${room.agents.join(",") || "-"}, updated=${room.updated_at || "-"}${activeRuns}${staleRunning}${staleQueued}${orphanedRunning}`);
     }
   }
 }
@@ -4866,6 +5271,13 @@ function optionValue(args, name) {
   const index = args.indexOf(name);
   if (index === -1) return undefined;
   return args[index + 1];
+}
+
+function runHeartbeatStaleOption(args) {
+  return optionValue(args, "--run-heartbeat-stale-seconds")
+    || optionValue(args, "--running-run-stale-seconds")
+    || process.env.AGENT_BUS_STATUS_RUN_HEARTBEAT_STALE_SECONDS
+    || process.env.AGENT_BUS_RUNNING_RUN_STALE_SECONDS;
 }
 
 function requiredPositional(args, index, label) {

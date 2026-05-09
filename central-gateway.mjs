@@ -592,6 +592,8 @@ function normalizeAgent(nodeId, agent) {
     enabled: agent.enabled !== false,
     capabilities: agent.capabilities || []
   };
+  const heartbeatIntervalMs = Number(agent.run_heartbeat_interval_ms || agent.runHeartbeatIntervalMs || 0);
+  if (Number.isFinite(heartbeatIntervalMs) && heartbeatIntervalMs > 0) item.run_heartbeat_interval_ms = Math.round(heartbeatIntervalMs);
   if (agent.adapter) item.adapter = agent.adapter;
   if (agent.health && typeof agent.health === "object" && !Array.isArray(agent.health)) item.health = agent.health;
   return item;
@@ -603,14 +605,21 @@ function publicNode(node) {
     hostname: node.hostname,
     status: node.status,
     last_seen_at: node.last_seen_at,
-    agents: (node.agents || []).map((agent) => ({
-      id: agent.id,
-      kind: agent.kind,
-      role: agent.role,
-      enabled: agent.enabled !== false,
-      capabilities: agent.capabilities || []
-    }))
+    agents: (node.agents || []).map((agent) => publicNodeAgent(agent))
   };
+}
+
+function publicNodeAgent(agent) {
+  const item = {
+    id: agent.id,
+    kind: agent.kind,
+    role: agent.role,
+    enabled: agent.enabled !== false,
+    capabilities: agent.capabilities || []
+  };
+  const heartbeatIntervalMs = Number(agent.run_heartbeat_interval_ms || 0);
+  if (Number.isFinite(heartbeatIntervalMs) && heartbeatIntervalMs > 0) item.run_heartbeat_interval_ms = Math.round(heartbeatIntervalMs);
+  return item;
 }
 
 function publicNodes() {
@@ -1766,7 +1775,9 @@ function recordRunEvent(config, body) {
   if (event.type === "run.started") {
     run.status = "running";
     run.started_at ||= event.at;
+    run.last_heartbeat_at ||= event.at;
   }
+  if (event.type === "run.heartbeat") run.last_heartbeat_at = event.at;
   if (event.stream === "stdout" && event.text) run.stdout += event.text;
   if (event.stream === "stderr" && event.text) run.stderr += event.text;
   run.events ||= [];

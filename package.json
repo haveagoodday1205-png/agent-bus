@@ -51,6 +51,7 @@
     "edge-token:smoke": "node scripts/edge-token-api-smoke.mjs",
     "trace:smoke": "node scripts/trace-smoke.mjs",
     "smoke:central-restart": "node scripts/central-restart-smoke.mjs",
+    "smoke:duplicate-complete": "node scripts/duplicate-complete-smoke.mjs",
     "smoke:python-edge-heartbeat": "node scripts/python-edge-heartbeat-smoke.mjs",
     "smoke:room-stale": "node scripts/room-autonomy-stale-smoke.mjs",
     "smoke:room-prompt": "node scripts/room-prompt-compaction-smoke.mjs",

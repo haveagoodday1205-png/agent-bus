@@ -53,13 +53,29 @@ $message
 EOF
 )
 
+home_dir="${HOME:-${TMPDIR:-/tmp}}"
+state_dir="${OPENCLAW_STATE_DIR:-$home_dir/.openclaw}"
 raw_file="$(mktemp)"
 prompt_file=""
+session_lock_dir=""
+session_lock_touch_pid=""
+release_session_lock() {
+  if [ -n "$session_lock_touch_pid" ]; then
+    kill "$session_lock_touch_pid" 2>/dev/null || true
+    wait "$session_lock_touch_pid" 2>/dev/null || true
+    session_lock_touch_pid=""
+  fi
+  if [ -n "$session_lock_dir" ] && [ -d "$session_lock_dir" ]; then
+    rm -rf "$session_lock_dir"
+  fi
+  session_lock_dir=""
+}
 cleanup() {
   rm -f "$raw_file"
   if [ -n "$prompt_file" ]; then
     rm -f "$prompt_file"
   fi
+  release_session_lock
 }
 trap cleanup EXIT
 
@@ -71,8 +87,6 @@ prune_oversized_session() {
   esac
   [ "$max_bytes" -gt 0 ] || return 0
 
-  local home_dir="${HOME:-${TMPDIR:-/tmp}}"
-  local state_dir="${OPENCLAW_STATE_DIR:-$home_dir/.openclaw}"
   local session_dir="$state_dir/agents/$agent_state_id/sessions"
   [ -d "$session_dir" ] || return 0
 
@@ -118,8 +132,70 @@ if [ -n "$session_id" ]; then
   args+=(--session-id "$session_id")
 fi
 
+start_session_lock_touch() {
+  [ -n "$session_lock_dir" ] || return 0
+  local touch_seconds="${OPENCLAW_AGENT_BUS_SESSION_LOCK_TOUCH_SECONDS:-60}"
+  case "$touch_seconds" in
+    ''|*[!0-9]*) touch_seconds=60 ;;
+  esac
+  [ "$touch_seconds" -ge 1 ] || touch_seconds=60
+  (
+    while :; do
+      sleep "$touch_seconds"
+      [ -d "$session_lock_dir" ] || exit 0
+      touch "$session_lock_dir" "$session_lock_dir/pid" 2>/dev/null || exit 0
+    done
+  ) >/dev/null 2>&1 &
+  session_lock_touch_pid="$!"
+}
+
+acquire_session_lock() {
+  [ -n "$session_id" ] || return 0
+  local timeout_seconds="${OPENCLAW_AGENT_BUS_SESSION_LOCK_TIMEOUT_SECONDS:-300}"
+  local stale_seconds="${OPENCLAW_AGENT_BUS_SESSION_LOCK_STALE_SECONDS:-3600}"
+  case "$timeout_seconds" in
+    ''|*[!0-9]*) timeout_seconds=300 ;;
+  esac
+  case "$stale_seconds" in
+    ''|*[!0-9]*) stale_seconds=3600 ;;
+  esac
+  [ "$timeout_seconds" -ge 0 ] || timeout_seconds=300
+  [ "$stale_seconds" -ge 1 ] || stale_seconds=3600
+
+  local lock_root="$state_dir/agents/$agent_state_id/agent-bus-session-locks"
+  local lock_dir="$lock_root/$session_id.lock"
+  mkdir -p "$lock_root"
+  local started now lock_mtime age
+  started="$(date +%s)"
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    now="$(date +%s)"
+    lock_mtime="$(stat -c %Y "$lock_dir" 2>/dev/null || printf '0')"
+    age=$((now - lock_mtime))
+    if [ "$lock_mtime" -gt 0 ] && [ "$age" -ge "$stale_seconds" ]; then
+      printf 'openclaw-agent-bus: removing stale session lock after %ss: %s\n' "$age" "$lock_dir" >&2
+      rm -rf "$lock_dir"
+      continue
+    fi
+    if [ "$timeout_seconds" -eq 0 ] || [ $((now - started)) -ge "$timeout_seconds" ]; then
+      printf 'openclaw-agent-bus: timed out waiting for session lock: %s\n' "$lock_dir" >&2
+      printf 'openclaw-agent-bus: another run is using session id %s; retry later or use a different AGENT_SESSION_ID.\n' "$session_id" >&2
+      exit 75
+    fi
+    sleep 1
+  done
+  session_lock_dir="$lock_dir"
+  printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
+  start_session_lock_touch
+}
+
+acquire_session_lock
+
 openclaw_status=0
 openclaw_child_pid=""
+signal_grace_seconds="${OPENCLAW_AGENT_BUS_SIGNAL_GRACE_SECONDS:-10}"
+case "$signal_grace_seconds" in
+  ''|*[!0-9]*) signal_grace_seconds=10 ;;
+esac
 
 signal_exit_status() {
   case "$1" in
@@ -138,7 +214,17 @@ forward_signal() {
   if [ -n "$openclaw_child_pid" ] && kill -0 "$openclaw_child_pid" 2>/dev/null; then
     printf 'openclaw-agent-bus: received SIG%s; forwarding to OpenClaw child %s\n' "$signal" "$openclaw_child_pid" >&2
     kill -"$signal" "$openclaw_child_pid" 2>/dev/null || true
+    (
+      sleep "$signal_grace_seconds"
+      if kill -0 "$openclaw_child_pid" 2>/dev/null; then
+        printf 'openclaw-agent-bus: OpenClaw child %s did not exit within %ss after SIG%s; sending SIGKILL\n' "$openclaw_child_pid" "$signal_grace_seconds" "$signal" >&2
+        kill -KILL "$openclaw_child_pid" 2>/dev/null || true
+      fi
+    ) &
+    signal_watchdog_pid="$!"
     wait "$openclaw_child_pid" 2>/dev/null || true
+    kill "$signal_watchdog_pid" 2>/dev/null || true
+    wait "$signal_watchdog_pid" 2>/dev/null || true
   fi
   exit "$status"
 }

@@ -1,18 +1,20 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
+const node = process.execPath;
 const jsonOut = process.argv.includes("--json");
 const procs = [];
 const childLogs = new WeakMap();
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-central-restart-"));
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-duplicate-complete-"));
 const HERMETIC_AGENT_BUS_ENV = [
   "AGENT_BUS_GATEWAY_URL",
   "AGENT_BUS_TOKEN",
   "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_ROOM_ID",
   "AGENT_BUS_CONFIG",
   "AGENT_BUS_HOST",
   "AGENT_BUS_PORT",
@@ -26,21 +28,18 @@ main().catch((err) => {
     console.error(err.stack || err.message || String(err));
   }
   process.exitCode = 1;
-}).finally(() => {
+}).finally(async () => {
   for (const child of procs.reverse()) {
     if (!child.killed) child.kill("SIGTERM");
+    await waitForExit(child);
   }
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
 async function main() {
-  const python = findPython();
-  if (!python) throw new Error("central restart smoke requires Python 3.10+.");
-
   const port = await freePort();
   const gateway = `http://127.0.0.1:${port}`;
-  const token = "sk-central-restart-smoke-token-000000";
-  const traceId = `trace_restart_${Date.now().toString(36)}`;
+  const token = "sk-duplicate-complete-smoke-token-000000";
   const configPath = path.join(tempDir, "central.config.json");
   const dataDir = path.join(tempDir, "data");
 
@@ -53,115 +52,120 @@ async function main() {
     modelRouter: { enabled: false, backends: [] }
   }, null, 2)}\n`);
 
-  step("Starting central");
-  let central = startCentral(python, configPath, token, port, dataDir);
+  step("Starting Node central");
+  const central = start(node, [path.join(root, "central-gateway.mjs"), "serve", "--config", configPath]);
   await waitForJson(`${gateway}/health`, 15000, central);
 
-  step("Registering node and creating a queued room run");
+  step("Registering a fake edge node");
   await requestJson(`${gateway}/edge/register`, {
     method: "POST",
     headers: authJsonHeaders(token),
     body: JSON.stringify({
-      node_id: "restart-edge",
-      hostname: "restart-smoke",
+      node_id: "duplicate-edge",
+      hostname: "duplicate-complete-smoke",
       agents: [{
-        id: "restart-agent",
+        id: "duplicate-agent",
         kind: "smoke",
         role: "worker",
-        capabilities: ["restart", "room", "no-quota"]
+        capabilities: ["thread", "no-quota", "duplicate-complete"]
       }]
     })
   });
-  const room = await requestJson(`${gateway}/rooms`, {
+
+  step("Creating a queued thread run");
+  const thread = await requestJson(`${gateway}/threads`, {
     method: "POST",
     headers: authJsonHeaders(token),
     body: JSON.stringify({
-      title: "Central restart recovery smoke",
-      goal: "Verify central restart keeps room, trace, node inventory, and queued run recovery.",
-      trace_id: traceId,
-      agents: ["restart-agent"],
-      wakeAgents: ["restart-agent"],
-      auto_rotate: false,
-      max_steps: 1
+      message: "Verify duplicate /edge/complete idempotency without model quota.",
+      mode: "orchestrate",
+      agents: ["duplicate-agent"],
+      source: "duplicate-complete-smoke"
     })
   });
-  const runId = room.runs?.[0]?.id;
-  assert(runId, "room did not create an initial run");
+  const runId = thread.runs?.[0]?.id;
+  assert(runId, "thread did not create a run");
+  const traceId = thread.trace_id;
+  assert(traceId, "thread did not record a trace_id");
+  const runJsonlPath = path.join(dataDir, "runs.jsonl");
+  const runEntriesBeforeComplete = runJsonlCount(runJsonlPath, runId);
+  assert(runEntriesBeforeComplete === 1, `queued run should have exactly one runs.jsonl entry, found ${runEntriesBeforeComplete}`);
 
-  step("Restarting central");
-  await stopChild(central);
-  central = startCentral(python, configPath, token, port, dataDir);
-  await waitForJson(`${gateway}/health`, 15000, central);
-
-  step("Verifying recovered state");
-  const health = await requestJson(`${gateway}/health`);
-  assert(health.registered_nodes === 1, "restart did not restore registered node inventory");
-  assert(health.registered_agents === 1, "restart did not restore registered agent inventory");
-  assert(health.queued === 1, "restart did not recover queued run");
-  const rooms = await requestJson(`${gateway}/rooms`, { headers: authHeaders(token) });
-  assert(rooms.some((item) => item.id === room.id && item.status === "active"), "restart did not restore room listing");
-  const trace = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, { headers: authHeaders(token) });
-  assert(trace.summary.rooms === 1, "restart trace lookup did not include room");
-  assert(trace.summary.runs === 1, "restart trace lookup did not include queued run");
-
-  step("Polling recovered task and completing it");
+  step("Polling the queued run");
   const polled = await requestJson(`${gateway}/edge/poll`, {
     method: "POST",
     headers: authJsonHeaders(token),
-    body: JSON.stringify({ node_id: "restart-edge", timeout_ms: 1 })
+    body: JSON.stringify({ node_id: "duplicate-edge", timeout_ms: 10 })
   });
-  assert(polled?.task?.run_id === runId, "edge poll did not return the recovered queued run");
+  assert(polled.type === "task", `edge poll did not return a task: ${JSON.stringify(polled)}`);
+  assert(polled.task?.run_id === runId, "edge poll returned the wrong run");
+
+  step("Marking the run started");
   await requestJson(`${gateway}/edge/events`, {
     method: "POST",
     headers: authJsonHeaders(token),
     body: JSON.stringify({
-      node_id: "restart-edge",
+      node_id: "duplicate-edge",
       run_id: runId,
       trace_id: traceId,
       event: { type: "run.started" }
     })
   });
-  const traceBeforeComplete = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, { headers: authHeaders(token) });
+  const startedRun = await requestJson(`${gateway}/runs/${encodeURIComponent(runId)}`, {
+    headers: authHeaders(token)
+  });
+  assert(startedRun.status === "running", `run did not enter running state after run.started: ${startedRun.status}`);
+  assert(startedRun.started_at, "run.started did not persist started_at");
+  const traceBeforeComplete = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, {
+    headers: authHeaders(token)
+  });
   assert(traceBeforeComplete.summary?.events === 1, `expected exactly one trace event before completion, found ${traceBeforeComplete.summary?.events}`);
-  const runJsonlPath = path.join(dataDir, "runs.jsonl");
-  const runEntriesBeforeComplete = runJsonlCount(runJsonlPath, runId);
+
   const completionBody = {
-    node_id: "restart-edge",
+    node_id: "duplicate-edge",
     run_id: runId,
     trace_id: traceId,
     result: {
       status: "completed",
       exit_code: 0,
-      stdout: "REPORT: recovered queued run completed after central restart.\nBLACKBOARD: restart recovery ok.\nDONE\n"
+      stdout: "REPORT: duplicate complete smoke accepted the first terminal result.\nBLACKBOARD: duplicate /edge/complete is idempotent for exact replays.\nDONE\n",
+      summary: "duplicate completion smoke"
     }
   };
+
+  step("Submitting the first terminal result");
   const completedRun = await requestJson(`${gateway}/edge/complete`, {
     method: "POST",
     headers: authJsonHeaders(token),
     body: JSON.stringify(completionBody)
   });
-  assert(completedRun.status === "completed", "completed run did not persist after recovery");
-  assert(completedRun.completed_at, "completed run did not record completed_at");
-  const finalRoom = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}`, { headers: authHeaders(token) });
-  assert(finalRoom.status === "completed", "room did not complete after recovered run completion");
-  assert(finalRoom.reports?.some((report) => /recovered queued run/.test(report.content || "")), "room did not process recovered run report");
+  assert(completedRun.status === "completed", "first completion did not persist completed status");
+  assert(completedRun.completed_at, "first completion did not persist completed_at");
+  assert(completedRun.stdout === completionBody.result.stdout, "first completion did not persist stdout");
   const runEntriesAfterComplete = runJsonlCount(runJsonlPath, runId);
   assert(runEntriesAfterComplete === runEntriesBeforeComplete + 1, "first completion did not append exactly one runs.jsonl entry");
-  const traceAfterComplete = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, { headers: authHeaders(token) });
+  const traceAfterComplete = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, {
+    headers: authHeaders(token)
+  });
   assert(traceAfterComplete.summary?.events === traceBeforeComplete.summary?.events, "first completion unexpectedly changed trace event count");
+
   await delay(1100);
+
+  step("Replaying the exact same terminal result");
   const duplicateRun = await requestJson(`${gateway}/edge/complete`, {
     method: "POST",
     headers: authJsonHeaders(token),
     body: JSON.stringify(completionBody)
   });
   assert(duplicateRun.completed_at === completedRun.completed_at, "duplicate completion changed completed_at");
-  assert(runJsonlCount(runJsonlPath, runId) === runEntriesAfterComplete, "duplicate completion appended a second runs.jsonl entry");
-  const traceAfterDuplicate = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, { headers: authHeaders(token) });
-  assert(traceAfterDuplicate.summary?.events === traceAfterComplete.summary?.events, "duplicate completion appended a trace event");
-  const duplicateRoom = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}`, { headers: authHeaders(token) });
-  const restartReports = (duplicateRoom.reports || []).filter((report) => /recovered queued run/.test(report.content || ""));
-  assert(restartReports.length === 1, "duplicate completion replayed the room report");
+  assert(duplicateRun.stdout === completedRun.stdout, "duplicate completion changed stdout");
+  assert(runJsonlCount(runJsonlPath, runId) === runEntriesAfterComplete, "duplicate completion appended an extra runs.jsonl entry");
+  const traceAfterDuplicate = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, {
+    headers: authHeaders(token)
+  });
+  assert(traceAfterDuplicate.summary?.events === traceAfterComplete.summary?.events, "duplicate completion appended an extra trace event");
+
+  step("Rejecting a conflicting duplicate terminal result");
   const conflict = await fetch(`${gateway}/edge/complete`, {
     method: "POST",
     headers: authJsonHeaders(token),
@@ -169,46 +173,52 @@ async function main() {
       ...completionBody,
       result: {
         ...completionBody.result,
-        stdout: "REPORT: conflicting duplicate completion should be rejected.\n"
+        stdout: "REPORT: conflicting duplicate completion should be rejected.\n",
+        summary: "conflicting duplicate completion"
       }
     })
   });
   const conflictText = await conflict.text();
   assert(conflict.status === 409, `conflicting duplicate completion returned ${conflict.status}: ${conflictText}`);
-  const traceAfterConflict = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, { headers: authHeaders(token) });
-  assert(traceAfterConflict.summary?.events === traceAfterComplete.summary?.events, "conflicting duplicate completion appended a trace event");
-  const finalHealth = await requestJson(`${gateway}/health`);
-  assert(finalHealth.queued === 0, "gateway queue was not drained after recovered task");
+
+  const finalRun = await requestJson(`${gateway}/runs/${encodeURIComponent(runId)}`, {
+    headers: authHeaders(token)
+  });
+  assert(finalRun.status === "completed", "conflicting duplicate completion changed the stored terminal status");
+  assert(finalRun.completed_at === completedRun.completed_at, "conflicting duplicate completion changed completed_at");
+  assert(finalRun.stdout === completionBody.result.stdout, "conflicting duplicate completion overwrote stdout");
+  assert(runJsonlCount(runJsonlPath, runId) === runEntriesAfterComplete, "conflicting duplicate completion appended another runs.jsonl entry");
+  const traceAfterConflict = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, {
+    headers: authHeaders(token)
+  });
+  assert(traceAfterConflict.summary?.events === traceAfterComplete.summary?.events, "conflicting duplicate completion appended an extra trace event");
+
+  const finalThread = await requestJson(`${gateway}/threads/${encodeURIComponent(thread.id)}`, {
+    headers: authHeaders(token)
+  });
+  const threadRun = finalThread.runs?.find((run) => run.id === runId);
+  assert(threadRun?.status === "completed", "thread snapshot lost the terminal run status");
+  assert(threadRun?.stdout === completionBody.result.stdout, "thread snapshot stored the wrong terminal stdout");
 
   await stopChild(central);
 
   const result = {
     ok: true,
     quota: "no_model_calls",
-    mode: "restart_recovery",
-    room_id: room.id,
+    gateway_runtime: "node",
+    thread_id: thread.id,
     run_id: runId,
     trace_id: traceId,
-    recovered_queue: true
+    duplicate_complete_preserved_terminal_result: true
   };
   if (jsonOut) {
     console.log(JSON.stringify(result, null, 2));
   } else {
-    console.log("central restart smoke ok");
-    console.log(`Room: ${room.id}`);
+    console.log("duplicate complete smoke ok");
+    console.log(`Thread: ${thread.id}`);
     console.log(`Run: ${runId}`);
     console.log("Quota: no model calls");
   }
-}
-
-function startCentral(python, configPath, token, port, dataDir) {
-  return start(python, [path.join(root, "central_gateway.py")], {
-    AGENT_BUS_CONFIG: configPath,
-    AGENT_BUS_TOKEN: token,
-    AGENT_BUS_HOST: "127.0.0.1",
-    AGENT_BUS_PORT: String(port),
-    AGENT_BUS_DATA_DIR: dataDir
-  });
 }
 
 function start(command, args, env = {}) {
@@ -294,38 +304,6 @@ function authJsonHeaders(token) {
   return { ...authHeaders(token), "content-type": "application/json" };
 }
 
-function findPython() {
-  const candidates = [
-    process.env.AGENT_BUS_PYTHON,
-    process.env.PYTHON,
-    ...commonBundledPythonPaths(),
-    process.platform === "win32" ? "python.exe" : "python3",
-    "python3",
-    "python"
-  ].filter(Boolean);
-  for (const candidate of unique(candidates)) {
-    const result = spawnSync(candidate, ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"], {
-      cwd: root,
-      windowsHide: true,
-      stdio: "ignore"
-    });
-    if (!result.error && result.status === 0) return candidate;
-  }
-  return "";
-}
-
-function commonBundledPythonPaths() {
-  const home = os.homedir();
-  const roots = [
-    path.join(home, ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "python"),
-    path.join(home, ".codex", "runtimes", "codex-primary-runtime", "dependencies", "python")
-  ];
-  const names = process.platform === "win32"
-    ? ["python.exe"]
-    : ["bin/python3", "bin/python", "python3", "python"];
-  return roots.flatMap((rootDir) => names.map((name) => path.join(rootDir, name)));
-}
-
 function freePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -385,10 +363,6 @@ function assert(condition, message) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function unique(values) {
-  return [...new Set(values)];
 }
 
 function redactDiagnostics(text) {

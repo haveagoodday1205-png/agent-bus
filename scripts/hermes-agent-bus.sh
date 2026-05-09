@@ -31,6 +31,76 @@ if [ -z "$python_bin" ] && [ -x "$hermes_root/venv/bin/python3" ]; then
 fi
 python_bin="${python_bin:-python3}"
 
+home_dir="${HOME:-${TMPDIR:-/tmp}}"
+hermes_lock_root="${HERMES_AGENT_BUS_LOCK_DIR:-$home_dir/.hermes/agent-bus-session-locks}"
+session_lock_dir=""
+session_lock_touch_pid=""
+release_session_lock() {
+  if [ -n "$session_lock_touch_pid" ]; then
+    kill "$session_lock_touch_pid" 2>/dev/null || true
+    wait "$session_lock_touch_pid" 2>/dev/null || true
+    session_lock_touch_pid=""
+  fi
+  if [ -n "$session_lock_dir" ] && [ -d "$session_lock_dir" ]; then
+    rm -rf "$session_lock_dir"
+  fi
+  session_lock_dir=""
+}
+cleanup() {
+  release_session_lock
+}
+start_session_lock_touch() {
+  [ -n "$session_lock_dir" ] || return 0
+  local touch_seconds="${HERMES_AGENT_BUS_SESSION_LOCK_TOUCH_SECONDS:-60}"
+  case "$touch_seconds" in
+    ''|*[!0-9]*) touch_seconds=60 ;;
+  esac
+  [ "$touch_seconds" -ge 1 ] || touch_seconds=60
+  (
+    while :; do
+      sleep "$touch_seconds"
+      [ -d "$session_lock_dir" ] || exit 0
+      touch "$session_lock_dir" "$session_lock_dir/pid" 2>/dev/null || exit 0
+    done
+  ) >/dev/null 2>&1 &
+  session_lock_touch_pid=$!
+}
+acquire_session_lock() {
+  [ -n "$session_id" ] || return 0
+  local timeout_seconds="${HERMES_AGENT_BUS_SESSION_LOCK_TIMEOUT_SECONDS:-300}"
+  local stale_seconds="${HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS:-3600}"
+  case "$timeout_seconds" in
+    ''|*[!0-9]*) timeout_seconds=300 ;;
+  esac
+  case "$stale_seconds" in
+    ''|*[!0-9]*) stale_seconds=3600 ;;
+  esac
+  [ "$stale_seconds" -ge 1 ] || stale_seconds=3600
+  local lock_dir="$hermes_lock_root/$session_id.lock"
+  mkdir -p "$hermes_lock_root"
+  local started now lock_mtime age
+  started="$(date +%s)"
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    now="$(date +%s)"
+    lock_mtime="$(stat -c %Y "$lock_dir" 2>/dev/null || printf '0')"
+    age=$((now - lock_mtime))
+    if [ "$lock_mtime" -gt 0 ] && [ "$age" -ge "$stale_seconds" ]; then
+      agent_bus_diag "removing stale Hermes session lock after ${age}s: $lock_dir"
+      rm -rf "$lock_dir"
+      continue
+    fi
+    if [ "$timeout_seconds" -eq 0 ] || [ $((now - started)) -ge "$timeout_seconds" ]; then
+      agent_bus_diag "timed out waiting for Hermes session lock: $lock_dir"
+      agent_bus_diag "another run is using session id $session_id; retry later or use a different AGENT_SESSION_ID."
+      exit 75
+    fi
+    sleep 1
+  done
+  session_lock_dir="$lock_dir"
+  printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
+  start_session_lock_touch
+}
+
 if [ -z "$session_id" ]; then
   agent_bus_diag "AGENT_SESSION_ID/AGENT_CACHE_KEY is not set; using stateless hermes CLI fallback."
 elif [ ! -d "$hermes_root" ]; then
@@ -46,6 +116,8 @@ elif [ -n "$session_id" ]; then
   export HERMES_AGENT_BUS_SESSION_ID="$session_id"
   export HERMES_SESSION_SOURCE="${HERMES_SESSION_SOURCE:-agent-bus}"
   export PYTHONPATH="$hermes_root${PYTHONPATH:+:$PYTHONPATH}"
+  trap cleanup EXIT
+  acquire_session_lock
   set +e
   child_pid=""
   signal_grace_seconds="${HERMES_AGENT_BUS_SIGNAL_GRACE_SECONDS:-10}"
@@ -84,6 +156,7 @@ except OSError:
   }
   trap 'forward_signal TERM 143' TERM
   trap 'forward_signal INT 130' INT
+  trap 'forward_signal HUP 129' HUP
   "$python_bin" - <<'PY' &
 import os
 import sys
@@ -166,11 +239,13 @@ PY
   wait "$child_pid"
   status=$?
   child_pid=""
-  trap - TERM INT
+  trap - TERM INT HUP
   set -e
   if [ "$status" -ne 86 ]; then
     exit "$status"
   fi
+  release_session_lock
+  trap - EXIT
 fi
 
 fallback_message="$message"

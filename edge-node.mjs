@@ -76,6 +76,10 @@ function loadConfig(file) {
 }
 
 function publicAgents(config) {
+  const heartbeatIntervalMs = Number(config.runHeartbeatIntervalMs || 0);
+  const runHeartbeatIntervalMs = Number.isFinite(heartbeatIntervalMs) && heartbeatIntervalMs > 0
+    ? Math.round(heartbeatIntervalMs)
+    : null;
   return config.agents
     .filter((agent) => agent.enabled !== false)
     .map((agent) => ({
@@ -85,6 +89,7 @@ function publicAgents(config) {
       enabled: agent.enabled !== false,
       adapter: agent.adapter || "command",
       capabilities: agent.capabilities || [],
+      ...(runHeartbeatIntervalMs ? { run_heartbeat_interval_ms: runHeartbeatIntervalMs } : {}),
       health: agentHealth(config, agent)
     }));
 }

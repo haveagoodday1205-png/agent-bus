@@ -57,6 +57,7 @@ def load_config(config_path):
 
 
 def public_agents(config):
+    heartbeat_interval_ms = int(config.get("runHeartbeatIntervalMs", 0) or 0)
     return [{
         "id": agent["id"],
         "kind": agent.get("kind", "agent"),
@@ -64,6 +65,7 @@ def public_agents(config):
         "enabled": agent.get("enabled", True) is not False,
         "adapter": agent.get("adapter", "command"),
         "capabilities": agent.get("capabilities") or [],
+        **({"run_heartbeat_interval_ms": heartbeat_interval_ms} if heartbeat_interval_ms > 0 else {}),
         "health": agent_health(config, agent),
     } for agent in config["agents"] if agent.get("enabled", True) is not False]
 
@@ -169,6 +171,7 @@ def start_run_heartbeat(config, task, agent):
             try:
                 event(config, task, {"type": "run.heartbeat", "agent_id": agent["id"]})
             except Exception:
+                # Heartbeats are best-effort; the terminal completion path remains authoritative.
                 pass
 
     thread = threading.Thread(target=pump, daemon=True)

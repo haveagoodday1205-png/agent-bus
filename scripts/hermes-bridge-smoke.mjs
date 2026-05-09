@@ -169,6 +169,90 @@ class FakeAgent:
     throw new Error("bootstrap path used stale AGENT_MESSAGE despite readable AGENT_MESSAGE_FILE");
   }
 
+  const lockRoot = path.join(tempDir, "hermes-session-locks");
+  const staleLockDir = path.join(lockRoot, "hermes-lock-stale.lock");
+  fs.mkdirSync(staleLockDir, { recursive: true });
+  const oldLockTime = new Date(Date.now() - 5000);
+  fs.utimesSync(staleLockDir, oldLockTime, oldLockTime);
+  const staleLockResult = spawnSync(bash, [path.join(root, "scripts", "hermes-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...env,
+      HERMES_AGENT_ROOT: bootstrapRoot,
+      HERMES_AGENT_BUS_LOCK_DIR: lockRoot,
+      HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "1",
+      AGENT_SESSION_ID: "hermes-lock-stale",
+      AGENT_MESSAGE: "stale lock cleanup"
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (staleLockResult.error) throw staleLockResult.error;
+  if (staleLockResult.status !== 0) throw new Error(`stale-lock bridge exited ${staleLockResult.status}: ${staleLockResult.stderr || staleLockResult.stdout}`);
+  if (!staleLockResult.stderr.includes("removing stale Hermes session lock")) {
+    throw new Error(`missing stale Hermes session lock diagnostic: ${staleLockResult.stderr}`);
+  }
+
+  const lockingRoot = path.join(tempDir, "hermes-locking-root");
+  fs.mkdirSync(lockingRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(lockingRoot, "cli.py"),
+    `import time
+
+class HermesCLI:
+    def __init__(self, *args, **kwargs):
+        self._active_agent_route_signature = None
+        self.session_id = ""
+        self.agent = None
+    def _ensure_runtime_credentials(self):
+        return True
+    def _resolve_turn_agent_config(self, message):
+        return {"signature": "test", "model": None, "runtime": None, "request_overrides": None}
+    def _init_agent(self, *args, **kwargs):
+        self.agent = FakeAgent()
+        return True
+class FakeAgent:
+    def __setattr__(self, name, value):
+        object.__setattr__(self, name, value)
+    def run_conversation(self, user_message, conversation_history):
+        print("lock child ready", flush=True)
+        while True:
+            time.sleep(0.1)
+`
+  );
+  const firstLockedBridge = await spawnBridgeUntilStdout(bash, path.join(root, "scripts", "hermes-agent-bus.sh"), root, {
+    ...env,
+    HERMES_AGENT_ROOT: lockingRoot,
+    HERMES_AGENT_BUS_LOCK_DIR: lockRoot,
+    HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "1",
+    HERMES_AGENT_BUS_SESSION_LOCK_TOUCH_SECONDS: "1",
+    AGENT_SESSION_ID: "hermes-lock-shared",
+    AGENT_MESSAGE: "hold lock"
+  }, "lock child ready");
+  await delay(1500);
+  const secondLockedResult = spawnSync(bash, [path.join(root, "scripts", "hermes-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...env,
+      HERMES_AGENT_ROOT: lockingRoot,
+      HERMES_AGENT_BUS_LOCK_DIR: lockRoot,
+      HERMES_AGENT_BUS_SESSION_LOCK_TIMEOUT_SECONDS: "0",
+      HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "1",
+      AGENT_SESSION_ID: "hermes-lock-shared",
+      AGENT_MESSAGE: "contend lock"
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  firstLockedBridge.child.kill("SIGTERM");
+  await firstLockedBridge.closed;
+  if (secondLockedResult.error) throw secondLockedResult.error;
+  if (secondLockedResult.status !== 75) {
+    throw new Error(`contended lock bridge exited ${secondLockedResult.status} instead of 75: ${secondLockedResult.stderr || secondLockedResult.stdout}`);
+  }
+  if (!secondLockedResult.stderr.includes("another run is using session id hermes-lock-shared")) {
+    throw new Error(`missing contended Hermes session lock diagnostic: ${secondLockedResult.stderr}`);
+  }
   const signalRoot = path.join(tempDir, "hermes-signal-root");
   fs.mkdirSync(signalRoot, { recursive: true });
   fs.writeFileSync(
@@ -216,6 +300,55 @@ class FakeAgent:
   }
   if (!signalResult.stderr.includes("fake hermes child saw SIGTERM")) {
     throw new Error(`signal bridge did not forward SIGTERM to child: ${signalResult.stderr}`);
+  }
+
+  const hupRoot = path.join(tempDir, "hermes-hup-signal-root");
+  fs.mkdirSync(hupRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(hupRoot, "cli.py"),
+    `import signal
+import sys
+import time
+
+class HermesCLI:
+    def __init__(self, *args, **kwargs):
+        self._active_agent_route_signature = None
+        self.session_id = ""
+        self.agent = None
+    def _ensure_runtime_credentials(self):
+        return True
+    def _resolve_turn_agent_config(self, message):
+        return {"signature": "test", "model": None, "runtime": None, "request_overrides": None}
+    def _init_agent(self, *args, **kwargs):
+        self.agent = FakeAgent()
+        return True
+class FakeAgent:
+    def __setattr__(self, name, value):
+        object.__setattr__(self, name, value)
+    def run_conversation(self, user_message, conversation_history):
+        def handle_hup(signum, frame):
+            print("fake hermes child saw SIGHUP", file=sys.stderr, flush=True)
+            raise SystemExit(129)
+        signal.signal(signal.SIGHUP, handle_hup)
+        print("signal child ready", flush=True)
+        while True:
+            time.sleep(0.1)
+`
+  );
+  const hupResult = await runBridgeUntilReadyThenSignal(bash, path.join(root, "scripts", "hermes-agent-bus.sh"), root, {
+    ...env,
+    HERMES_AGENT_ROOT: hupRoot,
+    AGENT_SESSION_ID: "room/hup-signal-test",
+    AGENT_MESSAGE: "wait for hup signal"
+  }, "SIGHUP");
+  if (hupResult.code !== 129) {
+    throw new Error(`SIGHUP bridge exited ${hupResult.code} instead of 129: ${hupResult.stderr || hupResult.stdout}`);
+  }
+  if (!hupResult.stderr.includes("received SIGHUP; forwarding to Hermes child process")) {
+    throw new Error(`signal bridge did not log SIGHUP forwarding diagnostic: ${hupResult.stderr}`);
+  }
+  if (!hupResult.stderr.includes("fake hermes child saw SIGHUP")) {
+    throw new Error(`signal bridge did not forward SIGHUP to child: ${hupResult.stderr}`);
   }
 
   const stubbornRoot = path.join(tempDir, "hermes-stubborn-signal-root");
@@ -269,6 +402,10 @@ class FakeAgent:
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function resolveCommand(command) {
   const pathDirs = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
   for (const dir of pathDirs) {
@@ -278,7 +415,53 @@ function resolveCommand(command) {
   return "";
 }
 
-function runBridgeUntilReadyThenSignal(command, script, cwd, env) {
+function spawnBridgeUntilStdout(command, script, cwd, env, readyText) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [script], {
+      cwd,
+      env,
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    let ready = false;
+    const timeout = setTimeout(() => {
+      if (!ready) {
+        child.kill("SIGKILL");
+        reject(new Error(`bridge did not emit ${readyText} before timeout; stdout=${stdout}; stderr=${stderr}`));
+      }
+    }, 5000);
+    const closedPromise = new Promise((closedResolve) => {
+      child.on("close", (code, signal) => {
+        clearTimeout(timeout);
+        const result = { code, signal, stdout, stderr };
+        if (!ready) {
+          reject(new Error(`bridge closed before ready: code=${code} signal=${signal} stdout=${stdout} stderr=${stderr}`));
+        }
+        closedResolve(result);
+      });
+    });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (!ready && stdout.includes(readyText)) {
+        ready = true;
+        clearTimeout(timeout);
+        resolve({ child, closed: closedPromise, get stdout() { return stdout; }, get stderr() { return stderr; } });
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
+function runBridgeUntilReadyThenSignal(command, script, cwd, env, signalName = "SIGTERM") {
   return new Promise((resolve, reject) => {
     const child = spawn(command, [script], {
       cwd,
@@ -302,7 +485,7 @@ function runBridgeUntilReadyThenSignal(command, script, cwd, env) {
       stdout += chunk;
       if (!ready && stdout.includes("signal child ready")) {
         ready = true;
-        child.kill("SIGTERM");
+        child.kill(signalName);
       }
     });
     child.stderr.on("data", (chunk) => {

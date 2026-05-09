@@ -18,10 +18,11 @@ derive_uuid() {
   local input="$1"
   local hash=""
   if command -v sha256sum >/dev/null 2>&1; then
-    hash="$(printf '%s' "$input" | sha256sum | awk '{print $1}')"
+    hash="$(printf %s "$input" | sha256sum)"
   elif command -v shasum >/dev/null 2>&1; then
-    hash="$(printf '%s' "$input" | shasum -a 256 | awk '{print $1}')"
+    hash="$(printf %s "$input" | shasum -a 256)"
   fi
+  hash="${hash%% *}"
   [ -n "$hash" ] || return 0
   printf '%s-%s-%s-%s-%s\n' "${hash:0:8}" "${hash:8:4}" "${hash:12:4}" "${hash:16:4}" "${hash:20:12}"
 }

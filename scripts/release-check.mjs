@@ -66,6 +66,11 @@ try {
     step(`node --check ${file}`, process.execPath, ["--check", file]);
   }
 
+  const bash = process.env.BASH || resolveCommand("bash");
+  if (bash) {
+    step("bash wrapper syntax", bash, ["-n", "scripts/hermes-agent-bus.sh", "scripts/openclaw-agent-bus.sh", "scripts/claudecode-agent-bus.sh"]);
+  }
+
   const python = process.env.AGENT_BUS_PYTHON || process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py", "sdk/python/agent_bus_sdk.py", "sdk/python/__init__.py", "examples/room-agent-python/room_agent.py", "examples/python-agent-model/agent_model_example.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);

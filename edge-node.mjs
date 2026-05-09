@@ -67,6 +67,8 @@ function loadConfig(file) {
   config.healthProbeIntervalMs ||= 60000;
   config.healthProbeTimeoutMs ||= 5000;
   config.runHeartbeatIntervalMs ||= 30000;
+  config.completeRetryAttempts ||= 5;
+  config.completeRetryBaseDelayMs ||= 2000;
   config.agents ||= [];
   config._agentHealth = {};
   config._nextHealthProbeAt = 0;
@@ -516,12 +518,28 @@ async function event(config, task, payload) {
 }
 
 async function complete(config, task, result) {
-  return postJson(config, "/edge/complete", {
+  const body = {
     node_id: config.nodeId,
     run_id: task.run_id,
     trace_id: task.trace_id || "",
     result
-  });
+  };
+  const maxAttempts = Math.max(1, Number(config.completeRetryAttempts || 5));
+  const baseDelayMs = Math.max(100, Number(config.completeRetryBaseDelayMs || 2000));
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await postJson(config, "/edge/complete", body);
+    } catch (err) {
+      if (isPermanentClientError(err)) throw err;
+      if (attempt === maxAttempts) {
+        console.error(`edge-node: failed to submit result for run ${task.run_id} after ${maxAttempts} attempts: ${err.message}`);
+        throw err;
+      }
+      const delayMs = Math.min(30000, baseDelayMs * (2 ** Math.min(attempt - 1, 5)));
+      console.error(`edge-node: /edge/complete attempt ${attempt} failed (${err.message}); retrying in ${delayMs}ms`);
+      await delay(delayMs);
+    }
+  }
 }
 
 async function postJson(config, pathname, body) {

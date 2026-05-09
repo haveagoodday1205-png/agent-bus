@@ -82,6 +82,11 @@ if [ "${CLAUDECODE_NO_SESSION_PERSISTENCE:-0}" = "1" ]; then
 fi
 args+=("$message")
 
+if [ -z "$message" ] && [ "${CLAUDECODE_ALLOW_EMPTY_MESSAGE:-0}" != "1" ]; then
+  echo "[claudecode-bridge] No message provided. Set AGENT_MESSAGE or AGENT_MESSAGE_FILE." >&2
+  exit 4
+fi
+
 if ! command -v "$claude_command" >/dev/null 2>&1; then
   echo "[claudecode-bridge] claude command not found: $claude_command" >&2
   echo "[claudecode-bridge] Set CLAUDECODE_COMMAND or CLAUDE_CODE_COMMAND to the path of your Claude CLI binary, or ensure 'claude' is on PATH." >&2

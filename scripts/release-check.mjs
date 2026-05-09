@@ -41,6 +41,7 @@ const jsFiles = [
   "scripts/edge-token-api-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
+  "scripts/python-edge-heartbeat-smoke.mjs",
   "scripts/python-sdk-smoke.mjs",
   "scripts/python-room-agent-smoke.mjs",
   "scripts/room-replay-fixture-check.mjs",
@@ -87,6 +88,7 @@ try {
   step("edge token API smoke", process.execPath, ["scripts/edge-token-api-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
+  step("python edge heartbeat smoke", process.execPath, ["scripts/python-edge-heartbeat-smoke.mjs", "--json"]);
   step("python SDK smoke", process.execPath, ["scripts/python-sdk-smoke.mjs", "--json"]);
   step("python room-agent smoke", process.execPath, ["scripts/python-room-agent-smoke.mjs", "--json"]);
   step("python agent-model example", python, ["examples/python-agent-model/agent_model_example.py"]);

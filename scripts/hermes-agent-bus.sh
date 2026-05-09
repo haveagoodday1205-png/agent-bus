@@ -48,12 +48,37 @@ elif [ -n "$session_id" ]; then
   export PYTHONPATH="$hermes_root${PYTHONPATH:+:$PYTHONPATH}"
   set +e
   child_pid=""
+  signal_grace_seconds="${HERMES_AGENT_BUS_SIGNAL_GRACE_SECONDS:-10}"
+  case "$signal_grace_seconds" in
+    ''|*[!0-9]*) signal_grace_seconds=10 ;;
+  esac
   forward_signal() {
     sig="$1"
     code="$2"
     if [ -n "$child_pid" ]; then
+      agent_bus_diag "received SIG$sig; forwarding to Hermes child process $child_pid."
       kill -"$sig" "$child_pid" 2>/dev/null || true
+      "$python_bin" -c 'import os, signal, sys, time
+pid = int(sys.argv[1])
+grace = int(sys.argv[2])
+sig = sys.argv[3]
+time.sleep(grace)
+try:
+    os.kill(pid, 0)
+except OSError:
+    raise SystemExit(0)
+print(f"Hermes Agent Bus: Hermes child process {pid} did not exit within {grace}s after SIG{sig}; sending SIGKILL.", file=sys.stderr, flush=True)
+try:
+    os.kill(pid, signal.SIGKILL)
+except OSError:
+    pass
+' "$child_pid" "$signal_grace_seconds" "$sig" &
+      signal_watchdog_pid=$!
       wait "$child_pid" 2>/dev/null || true
+      kill "$signal_watchdog_pid" 2>/dev/null || true
+      wait "$signal_watchdog_pid" 2>/dev/null || true
+    else
+      agent_bus_diag "received SIG$sig; no active Hermes child process to forward."
     fi
     exit "$code"
   }

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -71,6 +71,66 @@ console.log('{"result":{"payloads":[{"text":"OPENCLAW_BRIDGE_OK"}]}}');
     throw new Error(`missing message file diagnostic was not actionable: ${missingMessageResult.stderr}`);
   }
 
+  const failingOpenClaw = path.join(binDir, "failing-openclaw");
+  fs.writeFileSync(
+    failingOpenClaw,
+    `#!/usr/bin/env node
+console.log('{"result":{"payloads":[{"text":"OPENCLAW_PARTIAL_BEFORE_FAILURE"}]}}');
+process.exit(42);
+`
+  );
+  fs.chmodSync(failingOpenClaw, 0o755);
+  const failingResult = spawnSync(bash, [path.join(root, "scripts", "openclaw-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...process.env,
+      OPENCLAW_BIN: failingOpenClaw,
+      AGENT_MESSAGE: "partial output smoke"
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (failingResult.status !== 42) {
+    throw new Error(`failing OpenClaw status should be preserved as 42, got ${failingResult.status}: ${failingResult.stderr || failingResult.stdout}`);
+  }
+  if (!failingResult.stdout.includes("OPENCLAW_PARTIAL_BEFORE_FAILURE")) {
+    throw new Error(`failing OpenClaw partial stdout was not preserved: ${failingResult.stdout}`);
+  }
+
+  const signalFile = path.join(tempDir, "openclaw-signal.txt");
+  const readyFile = path.join(tempDir, "openclaw-ready.txt");
+  const signalOpenClaw = path.join(binDir, "signal-openclaw");
+  fs.writeFileSync(
+    signalOpenClaw,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+fs.writeFileSync(${JSON.stringify(readyFile)}, "ready");
+process.on("SIGTERM", () => {
+  fs.writeFileSync(${JSON.stringify(signalFile)}, "SIGTERM");
+  process.exit(0);
+});
+setInterval(() => {}, 1000);
+`
+  );
+  fs.chmodSync(signalOpenClaw, 0o755);
+  const signalResult = await runAndTerminateWrapper({
+    bash,
+    wrapper: path.join(root, "scripts", "openclaw-agent-bus.sh"),
+    cwd: root,
+    env: {
+      ...process.env,
+      OPENCLAW_BIN: signalOpenClaw,
+      AGENT_MESSAGE: "signal forwarding smoke"
+    },
+    readyFile
+  });
+  if (signalResult.status !== 143) {
+    throw new Error(`terminated wrapper should exit 143, got ${signalResult.status}: ${signalResult.stderr || signalResult.stdout}`);
+  }
+  if (!fs.existsSync(signalFile) || fs.readFileSync(signalFile, "utf8") !== "SIGTERM") {
+    throw new Error("OpenClaw child did not receive forwarded SIGTERM");
+  }
+
   const agentId = "agent bus/weird \"id";
   const safeAgentId = sanitize(agentId);
   const sessionId = "room weird \"session";
@@ -123,6 +183,33 @@ console.log('{"result":{"payloads":[{"text":"OPENCLAW_BRIDGE_OK"}]}}');
 function sanitize(value) {
   const safe = String(value || "").replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 180);
   return safe || "main";
+}
+
+function runAndTerminateWrapper({ bash, wrapper, cwd, env, readyFile }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bash, [wrapper], { cwd, env, windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    const finish = (fn, value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      clearInterval(poll);
+      fn(value);
+    };
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (error) => finish(reject, error));
+    child.on("close", (status, signal) => finish(resolve, { status, signal, stdout, stderr }));
+    const timeout = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+      finish(reject, new Error(`timed out waiting for signal forwarding smoke; stdout=${stdout} stderr=${stderr}`));
+    }, 5000);
+    const poll = setInterval(() => {
+      if (fs.existsSync(readyFile)) child.kill("SIGTERM");
+    }, 25);
+  });
 }
 
 function resolveCommand(command) {

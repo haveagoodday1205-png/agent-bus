@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -168,6 +168,99 @@ class FakeAgent:
   if (bootstrapResult.stdout.includes("stale bootstrap env message")) {
     throw new Error("bootstrap path used stale AGENT_MESSAGE despite readable AGENT_MESSAGE_FILE");
   }
+
+  const signalRoot = path.join(tempDir, "hermes-signal-root");
+  fs.mkdirSync(signalRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(signalRoot, "cli.py"),
+    `import signal
+import sys
+import time
+
+class HermesCLI:
+    def __init__(self, *args, **kwargs):
+        self._active_agent_route_signature = None
+        self.session_id = ""
+        self.agent = None
+    def _ensure_runtime_credentials(self):
+        return True
+    def _resolve_turn_agent_config(self, message):
+        return {"signature": "test", "model": None, "runtime": None, "request_overrides": None}
+    def _init_agent(self, *args, **kwargs):
+        self.agent = FakeAgent()
+        return True
+class FakeAgent:
+    def __setattr__(self, name, value):
+        object.__setattr__(self, name, value)
+    def run_conversation(self, user_message, conversation_history):
+        def handle_term(signum, frame):
+            print("fake hermes child saw SIGTERM", file=sys.stderr, flush=True)
+            raise SystemExit(143)
+        signal.signal(signal.SIGTERM, handle_term)
+        print("signal child ready", flush=True)
+        while True:
+            time.sleep(0.1)
+`
+  );
+  const signalResult = await runBridgeUntilReadyThenSignal(bash, path.join(root, "scripts", "hermes-agent-bus.sh"), root, {
+    ...env,
+    HERMES_AGENT_ROOT: signalRoot,
+    AGENT_SESSION_ID: "room/signal-test",
+    AGENT_MESSAGE: "wait for signal"
+  });
+  if (signalResult.code !== 143) {
+    throw new Error(`signal bridge exited ${signalResult.code} instead of 143: ${signalResult.stderr || signalResult.stdout}`);
+  }
+  if (!signalResult.stderr.includes("received SIGTERM; forwarding to Hermes child process")) {
+    throw new Error(`signal bridge did not log SIGTERM forwarding diagnostic: ${signalResult.stderr}`);
+  }
+  if (!signalResult.stderr.includes("fake hermes child saw SIGTERM")) {
+    throw new Error(`signal bridge did not forward SIGTERM to child: ${signalResult.stderr}`);
+  }
+
+  const stubbornRoot = path.join(tempDir, "hermes-stubborn-signal-root");
+  fs.mkdirSync(stubbornRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(stubbornRoot, "cli.py"),
+    `import signal
+import time
+
+class HermesCLI:
+    def __init__(self, *args, **kwargs):
+        self._active_agent_route_signature = None
+        self.session_id = ""
+        self.agent = None
+    def _ensure_runtime_credentials(self):
+        return True
+    def _resolve_turn_agent_config(self, message):
+        return {"signature": "test", "model": None, "runtime": None, "request_overrides": None}
+    def _init_agent(self, *args, **kwargs):
+        self.agent = FakeAgent()
+        return True
+class FakeAgent:
+    def __setattr__(self, name, value):
+        object.__setattr__(self, name, value)
+    def run_conversation(self, user_message, conversation_history):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        print("signal child ready", flush=True)
+        while True:
+            time.sleep(0.1)
+`
+  );
+  const stubbornSignalResult = await runBridgeUntilReadyThenSignal(bash, path.join(root, "scripts", "hermes-agent-bus.sh"), root, {
+    ...env,
+    HERMES_AGENT_ROOT: stubbornRoot,
+    HERMES_AGENT_BUS_SIGNAL_GRACE_SECONDS: "1",
+    AGENT_SESSION_ID: "room/stubborn-signal-test",
+    AGENT_MESSAGE: "ignore signal"
+  });
+  if (stubbornSignalResult.code !== 143) {
+    throw new Error(`stubborn signal bridge exited ${stubbornSignalResult.code} instead of 143: ${stubbornSignalResult.stderr || stubbornSignalResult.stdout}`);
+  }
+  if (!stubbornSignalResult.stderr.includes("did not exit within 1s after SIGTERM; sending SIGKILL")) {
+    throw new Error(`signal bridge did not escalate stubborn child to SIGKILL: ${stubbornSignalResult.stderr}`);
+  }
+
   console.log("hermes bridge smoke ok");
 } catch (error) {
   console.error(error.stack || error.message || String(error));
@@ -183,4 +276,49 @@ function resolveCommand(command) {
     if (fs.existsSync(candidate)) return candidate;
   }
   return "";
+}
+
+function runBridgeUntilReadyThenSignal(command, script, cwd, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [script], {
+      cwd,
+      env,
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    let ready = false;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        child.kill("SIGKILL");
+        reject(new Error(`signal bridge did not become ready before timeout; stdout=${stdout}; stderr=${stderr}`));
+      }
+    }, 5000);
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (!ready && stdout.includes("signal child ready")) {
+        ready = true;
+        child.kill("SIGTERM");
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve({ code, signal, stdout, stderr });
+    });
+  });
 }

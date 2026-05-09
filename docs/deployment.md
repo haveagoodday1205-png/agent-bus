@@ -128,7 +128,7 @@ agent-bus serve --runtime python --config central.config.json
 For live deployments, roll changes out from central to edges in small reversible steps that avoid secrets and model quota:
 
 1. Pull the public repo on the target host and review `git log --oneline -1` plus `git diff` before restart.
-2. Run a zero-quota check first: `agent-bus --help`, `agent-bus health --gateway http://127.0.0.1:8788`, or targeted smokes such as `npm run smoke:room-stale` and `node scripts/central-restart-smoke.mjs --json` on a non-production checkout.
+2. Run a zero-quota check first: `agent-bus --help`, `agent-bus health --gateway http://127.0.0.1:8788`, or targeted smokes such as `npm run smoke:room-stale`, `npm run smoke:python-edge-heartbeat`, and `node scripts/central-restart-smoke.mjs --json` on a non-production checkout.
 3. Check live room and node state before touching services: `agent-bus status --gateway ... --token ...`, then `agent-bus room inspect ROOM_ID --gateway ... --token ...` for any room flagged with stale queued work or unexpectedly old running work.
 4. Restart the central Python service before edge bridge scripts when the change affects room prompts, queue recovery, trace lookup, or model routing. With systemd, use `systemctl restart agent-bus-central` and then check `journalctl -u agent-bus-central -n 100 --no-pager` plus `/health`.
 5. Restart edge services one node at a time when bridge scripts or edge config changed. Confirm each node reappears in `agent-bus status` before moving to the next node.

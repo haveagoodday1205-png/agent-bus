@@ -221,7 +221,7 @@ Usage:
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room memory room_xxx --query "cache decision" --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room expand room_xxx 'messages[7]' --around 1 --gateway https://YOUR-DOMAIN/agent-bus --token ...
-  agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
+  agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--running-run-stale-seconds 180]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
@@ -2512,9 +2512,10 @@ async function room(args) {
     const roomId = requiredPositional(args, 1, "room id");
     const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
     const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
+    const runningRunStaleSeconds = positiveIntegerOption(optionValue(args, "--running-run-stale-seconds") || process.env.AGENT_BUS_RUNNING_RUN_STALE_SECONDS, staleSeconds, 604800);
     const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
     const nodes = await optionalGatewayJson("/nodes", { auth: true, args }, []);
-    const inspection = inspectRoomState(roomData, { nodes, staleSeconds, queuedRunStaleSeconds });
+    const inspection = inspectRoomState(roomData, { nodes, staleSeconds, queuedRunStaleSeconds, runningRunStaleSeconds });
     if (args.includes("--json")) return printJson(inspection);
     process.stdout.write(formatRoomStateInspection(inspection));
     return;
@@ -2761,7 +2762,7 @@ function formatRoomInspection(inspection) {
   return `${lines.join("\n")}\n`;
 }
 
-function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStaleSeconds = 21600 } = {}) {
+function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStaleSeconds = 21600, runningRunStaleSeconds = 180 } = {}) {
   const nodeLookupAvailable = Array.isArray(nodes) && nodes.length > 0;
   const nodeById = new Map(
     (Array.isArray(nodes) ? nodes : [])
@@ -2787,7 +2788,11 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
       continue;
     }
     if (status === "running") {
-      if (run.node_freshness.startsWith("stale") || (nodeLookupAvailable && run.node_freshness === "unknown")) {
+      if (
+        run.node_freshness.startsWith("stale")
+        || (nodeLookupAvailable && run.node_freshness === "unknown")
+        || isStaleRunningRun(run, runningRunStaleSeconds)
+      ) {
         orphanedRunningRuns.push(run);
       } else {
         liveRunningRuns.push(run);
@@ -2846,7 +2851,8 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
       summary,
       thresholds: {
         node_stale_seconds: staleSeconds,
-        queued_run_stale_seconds: queuedRunStaleSeconds
+        queued_run_stale_seconds: queuedRunStaleSeconds,
+        running_run_stale_seconds: runningRunStaleSeconds
       },
       counts,
       node_inventory_available: nodeLookupAvailable,
@@ -2858,7 +2864,7 @@ function inspectRoomState(room, { nodes = [], staleSeconds = 180, queuedRunStale
       recommendations,
       operator_hints: operatorHints
     },
-    thresholds: { queued_run_stale_seconds: queuedRunStaleSeconds, node_stale_seconds: staleSeconds },
+    thresholds: { queued_run_stale_seconds: queuedRunStaleSeconds, node_stale_seconds: staleSeconds, running_run_stale_seconds: runningRunStaleSeconds },
     counts: {
       runs: counts.total_runs,
       active_runs: nonTerminalRuns.length,
@@ -2876,6 +2882,8 @@ function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailabl
   const nodeId = String(rawRun?.node_id || "").trim();
   const node = nodeById.get(nodeId);
   const seenAt = node?.last_seen_at || null;
+  const runLastActivityAt = lastRunActivityAt(rawRun);
+  const runActivityAgeSeconds = elapsedSeconds(runLastActivityAt);
   return {
     id: rawRun?.id || "",
     room_id: rawRun?.room_id || rawRun?.thread_id || "",
@@ -2890,8 +2898,31 @@ function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailabl
     node_freshness: node
       ? statusFreshness(node.status, seenAt, staleSeconds)
       : (nodeLookupAvailable ? "unknown" : "unchecked"),
+    run_last_activity_at: runLastActivityAt,
+    run_activity_age_seconds: runActivityAgeSeconds,
+    run_freshness: runActivityAgeSeconds == null ? "unknown" : `last activity ${runActivityAgeSeconds}s ago`,
     age_seconds: elapsedSeconds(rawRun?.started_at || rawRun?.created_at || rawRun?.completed_at || null)
   };
+}
+
+function lastRunActivityAt(rawRun) {
+  const events = Array.isArray(rawRun?.events) ? rawRun.events : [];
+  const activityTimes = events
+    .filter((event) => ["run.heartbeat", "run.output", "run.started"].includes(String(event?.type || "")))
+    .map((event) => event?.at)
+    .filter(Boolean);
+  activityTimes.push(rawRun?.started_at || rawRun?.created_at || "");
+  const newest = activityTimes
+    .map((value) => ({ value, time: Date.parse(value) }))
+    .filter((item) => Number.isFinite(item.time))
+    .sort((left, right) => right.time - left.time)[0];
+  return newest?.value || null;
+}
+
+function isStaleRunningRun(run, runningRunStaleSeconds = 180) {
+  if (String(run.status || "").toLowerCase() !== "running") return false;
+  if (!Number.isFinite(run.run_activity_age_seconds)) return false;
+  return run.run_activity_age_seconds > runningRunStaleSeconds;
 }
 
 function summarizeRoomInspection({ room, liveRunningRuns, liveQueuedRuns, staleQueuedRuns, orphanedRunningRuns, otherNonTerminalRuns }) {
@@ -2973,7 +3004,7 @@ function roomInspectionRecommendations({
   if (summary === "orphaned_running_candidate" || summary === "mixed_orphaned_running_and_stale_queued") {
     out.push({
       level: "warn",
-      message: "At least one running task is attached to a stale or missing node. Inspect the edge service or local agent process before queueing more room work."
+      message: "At least one running task is attached to a stale/missing node or has stopped emitting run activity. Inspect the edge service or local agent process before queueing more room work."
     });
     out.push({
       level: "warn",
@@ -3062,7 +3093,7 @@ function formatRoomStateInspection(result) {
   lines.push(`Created: ${room.created_at || "-"}`);
   lines.push(`Updated: ${room.updated_at || "-"}`);
   lines.push(`Runs: live_running=${counts.live_running_runs || 0} live_queued=${counts.live_queued_runs || 0} stale_queued=${counts.stale_queued_runs || 0} orphaned_running=${counts.orphaned_running_runs || 0} terminal=${counts.terminal_runs || 0}`);
-  lines.push(`Thresholds: node_stale=${analysis.thresholds?.node_stale_seconds || 0}s queued_stale=${analysis.thresholds?.queued_run_stale_seconds || 0}s`);
+  lines.push(`Thresholds: node_stale=${analysis.thresholds?.node_stale_seconds || 0}s queued_stale=${analysis.thresholds?.queued_run_stale_seconds || 0}s running_stale=${analysis.thresholds?.running_run_stale_seconds || 0}s`);
   appendRoomInspectionRuns(lines, "Live running runs", analysis.live_running_runs);
   appendRoomInspectionRuns(lines, "Live queued runs", analysis.live_queued_runs);
   appendRoomInspectionRuns(lines, "Stale queued runs", analysis.stale_queued_runs);
@@ -3086,7 +3117,8 @@ function appendRoomInspectionRuns(lines, label, runs) {
     const nodeNote = run.node_freshness && run.node_freshness !== "unchecked"
       ? ` node=${run.node_id || "-"} (${run.node_freshness})`
       : ` node=${run.node_id || "-"}`;
-    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age} created=${run.created_at || "-"}`);
+    const runNote = run.run_freshness && run.run_freshness !== "unknown" ? ` run=${run.run_freshness}` : "";
+    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote}${runNote} age=${age} created=${run.created_at || "-"}`);
   }
 }
 

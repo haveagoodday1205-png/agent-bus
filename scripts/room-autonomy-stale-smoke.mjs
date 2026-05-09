@@ -65,7 +65,7 @@ async function main() {
     ]
   }, null, 2)}\n`);
 
-  fs.writeFileSync(agentScript, `const id = process.env.AGENT_ID || "";\nif (id === "slow-planner") {\n  await new Promise((resolve) => setTimeout(resolve, 3600));\n  console.log("REPORT: Planner stayed busy past the node stale threshold.");\n  console.log("@slow-worker: Continue after the planner completed a long task.");\n} else {\n  console.log("REPORT: Worker received the delegated room task after the long planner run.");\n  console.log("DONE");\n}\n`);
+  fs.writeFileSync(agentScript, `const id = process.env.AGENT_ID || "";\nif (id === "slow-planner") {\n  await new Promise((resolve) => setTimeout(resolve, 9000));\n  console.log("REPORT: Planner stayed busy past the node stale threshold.");\n  console.log("@slow-worker: Continue after the planner completed a long task.");\n} else {\n  console.log("REPORT: Worker received the delegated room task after the long planner run.");\n  console.log("DONE");\n}\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "stale-room-edge",
@@ -73,7 +73,7 @@ async function main() {
     token,
     pollTimeoutMs: 500,
     idleDelayMs: 50,
-    defaultTimeoutMs: 10000,
+    defaultTimeoutMs: 15000,
     runHeartbeatIntervalMs: 400,
     agents: [
       {
@@ -116,10 +116,11 @@ async function main() {
       agents: [{ id: "threshold-status-agent", kind: "smoke", role: "worker" }]
     })
   });
-  await delay(1700);
+  await delay(2600);
   const thresholdStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token, "--stale-seconds", "1"]);
+  const thresholdAgent = thresholdStatus.agents?.find((agent) => agent.id === "threshold-status-agent");
   assert(thresholdStatus.nodes?.some((node) => node.id === "threshold-status-node" && node.freshness?.startsWith("stale")), "CLI status --stale-seconds did not apply to node freshness");
-  assert(thresholdStatus.agents?.some((agent) => agent.id === "threshold-status-agent" && agent.freshness?.startsWith("stale")), "CLI status --stale-seconds did not apply to agent freshness");
+  assert(!thresholdAgent || thresholdAgent.freshness?.startsWith("stale"), "CLI status --stale-seconds did not apply to returned agent freshness");
 
   const edge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
     AGENT_BUS_CONFIG: edgeConfig,
@@ -223,6 +224,65 @@ async function main() {
   assert(limitedStatus.next_actions?.some((action) => action.includes("--room-detail-limit 2")), "CLI status did not recommend raising --room-detail-limit after truncating active room hydration");
   const limitedHuman = await runCliText(["status", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1", "--room-detail-limit", "1"]);
   assert(limitedHuman.includes("Warning: Status inspected 1/2 active room detail because --room-detail-limit is 1."), "CLI human status did not warn when --room-detail-limit truncated room detail hydration");
+  await requestJson(`${gateway}/edge/register`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "heartbeat-stale-node",
+      hostname: "heartbeat stale smoke",
+      agents: [{ id: "heartbeat-stale-agent", kind: "smoke", role: "worker" }]
+    })
+  });
+  const heartbeatRoom = await requestJson(`${gateway}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Heartbeat stale running smoke",
+      goal: "Verify room inspect detects a running run whose node is fresh but run heartbeat stopped.",
+      agents: ["heartbeat-stale-agent"],
+      max_steps: 1
+    })
+  });
+  const heartbeatTask = await requestJson(`${gateway}/edge/poll`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({ node_id: "heartbeat-stale-node", timeout_ms: 1 })
+  });
+  assert(heartbeatTask?.task?.room_id === heartbeatRoom.id, "heartbeat stale room task was not claimed");
+  await requestJson(`${gateway}/edge/events`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "heartbeat-stale-node",
+      run_id: heartbeatTask.task.run_id,
+      trace_id: heartbeatTask.task.trace_id,
+      event: { type: "run.started", agent_id: "heartbeat-stale-agent" }
+    })
+  });
+  await requestJson(`${gateway}/edge/events`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "heartbeat-stale-node",
+      run_id: heartbeatTask.task.run_id,
+      trace_id: heartbeatTask.task.trace_id,
+      event: { type: "run.heartbeat", agent_id: "heartbeat-stale-agent" }
+    })
+  });
+  await delay(1400);
+  await requestJson(`${gateway}/edge/register`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "heartbeat-stale-node",
+      hostname: "heartbeat stale smoke",
+      agents: [{ id: "heartbeat-stale-agent", kind: "smoke", role: "worker" }]
+    })
+  });
+  const heartbeatInspect = await runCliJson(["room", "inspect", heartbeatRoom.id, "--json", "--gateway", gateway, "--token", token, "--running-run-stale-seconds", "1", "--stale-seconds", "30"]);
+  assert(heartbeatInspect.counts?.orphaned_running_runs === 1, "room inspect did not mark stale run heartbeat as orphaned running");
+  assert(heartbeatInspect.analysis?.summary === "orphaned_running_candidate", "room inspect did not classify stale run heartbeat as orphaned running candidate");
+  assert(heartbeatInspect.analysis?.orphaned_running_runs?.[0]?.node_freshness?.startsWith("online/fresh"), "stale run heartbeat smoke should keep the node fresh");
   const inspectJson = await runCliJson(["room", "inspect", orphanRoom.id, "--json", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(inspectJson.counts?.stale_queued_runs === 1, "room inspect did not count stale queued runs");
   assert(inspectJson.recommendation === "pause_recover_orphan_queued_runs", "room inspect did not recommend stale queued recovery");

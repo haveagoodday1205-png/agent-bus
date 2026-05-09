@@ -28,7 +28,7 @@ npm run release:check
 
 `release:preflight` checks the package version, changelog section, release-note rendering, git branch, clean working tree, and local tag state, then prints the exact publication steps. It is offline by default; pass `-- --network` when you also want to check the remote tag and npm publish state.
 
-`release:check` runs syntax checks, Python compile checks, diagnostics redaction smoke, Docker Compose preflight smoke, offline room smoke, stale-room autonomy smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
+`release:check` runs syntax checks, Python compile checks, diagnostics redaction smoke, Docker Compose preflight smoke, offline room smoke, central restart smoke, Python-edge heartbeat smoke, stale-room autonomy smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
 
 `compat:check` starts a temporary gateway and `examples/hello-agent` edge, then verifies registration, scoped edge discovery, `agent:<id>` Chat Completions, `agent:<id>` Responses, and room directive parsing without calling paid model providers. The CI workflow runs this smoke on Ubuntu, Windows, and macOS so adapter regressions are caught before release.
 

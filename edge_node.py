@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -46,6 +47,9 @@ def load_config(config_path):
     config["defaultTimeoutMs"] = int(config.get("defaultTimeoutMs", 600000))
     config["healthProbeIntervalMs"] = int(config.get("healthProbeIntervalMs", 60000))
     config["healthProbeTimeoutMs"] = int(config.get("healthProbeTimeoutMs", 5000))
+    config["runHeartbeatIntervalMs"] = int(config.get("runHeartbeatIntervalMs", 30000))
+    config["completeRetryAttempts"] = int(config.get("completeRetryAttempts", 5))
+    config["completeRetryBaseDelayMs"] = int(config.get("completeRetryBaseDelayMs", 2000))
     config.setdefault("agents", [])
     config["_agentHealth"] = {}
     config["_nextHealthProbeAt"] = 0
@@ -141,13 +145,40 @@ def handle_task(config, task):
         return
     event(config, task, {"type": "run.started", "agent_id": agent["id"]})
     started = time.time()
+    stop_heartbeat = start_run_heartbeat(config, task, agent)
     try:
         result = run_agent(config, agent, task)
     except Exception as exc:
         result = {"status": "error", "exit_code": 1, "stdout": "", "stderr": repr(exc)}
+    finally:
+        stop_heartbeat()
     result["duration_ms"] = int((time.time() - started) * 1000)
     record_run_health(config, agent, result)
     complete(config, task, result)
+
+
+def start_run_heartbeat(config, task, agent):
+    interval_ms = int(config.get("runHeartbeatIntervalMs", 0) or 0)
+    if interval_ms <= 0:
+        return lambda: None
+    stopped = threading.Event()
+    interval_seconds = max(interval_ms, 1000) / 1000
+
+    def pump():
+        while not stopped.wait(interval_seconds):
+            try:
+                event(config, task, {"type": "run.heartbeat", "agent_id": agent["id"]})
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=pump, daemon=True)
+    thread.start()
+
+    def stop():
+        stopped.set()
+        thread.join(timeout=1)
+
+    return stop
 
 
 def run_agent(config, agent, task):
@@ -366,7 +397,7 @@ def run_command(config, agent, task, command, emit=True):
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
         )
         try:
             stdout, stderr = proc.communicate(timeout=(int(agent.get("timeoutMs", config["defaultTimeoutMs"])) / 1000))
@@ -395,7 +426,24 @@ def event(config, task, payload):
 
 
 def complete(config, task, result):
-    return post(config, "/edge/complete", {"node_id": config["nodeId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "result": result})
+    body = {"node_id": config["nodeId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "result": result}
+    attempts = max(1, int(config.get("completeRetryAttempts", 5) or 5))
+    base_delay = max(100, int(config.get("completeRetryBaseDelayMs", 2000) or 2000))
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return post(config, "/edge/complete", body)
+        except AgentBusHttpError as exc:
+            if exc.status_code < 500 and not is_registration_lost(exc):
+                raise
+            last_exc = exc
+        except Exception as exc:
+            last_exc = exc
+        if attempt == attempts:
+            raise last_exc
+        delay = min(30.0, (base_delay / 1000) * (2 ** min(attempt - 1, 5)))
+        print(f"edge-node: /edge/complete attempt {attempt} failed ({last_exc}); retrying in {delay:.1f}s", file=sys.stderr, flush=True)
+        time.sleep(delay + random.random() * min(1.0, delay / 2))
 
 
 def post(config, pathname, body):

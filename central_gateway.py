@@ -11,12 +11,20 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+
+try:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+except ImportError:
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from socketserver import ThreadingMixIn
+
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
 
 TELEGRAM_DEFAULT_EVENTS = {
     "central.started",
@@ -39,6 +47,7 @@ STATE = {
     "pair_codes": {},
     "edge_tokens": {},
 }
+RUN_COMPLETION_LOCK = threading.RLock()
 
 
 def int_env(name, default):
@@ -2864,41 +2873,70 @@ def record_event(config, body):
     append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
 
 
-def complete_run(config, body):
-    run = STATE["runs"].get(body.get("run_id")) or read_snapshot(config, "runs", body.get("run_id"))
-    if not run:
-        err = Exception("unknown run_id")
-        err.status_code = 404
-        raise err
-    touch_node_seen(body.get("node_id") or run.get("node_id"))
-    if body.get("trace_id") and not run.get("trace_id"):
-        run["trace_id"] = sanitize_trace_id(body.get("trace_id"))
+def requested_completion_state(run, body):
     result = body.get("result") or {}
     exit_code = result.get("exit_code")
-    run["status"] = result.get("status") or ("completed" if exit_code == 0 else "failed")
-    run["completed_at"] = now()
-    run["exit_code"] = exit_code
-    run["stdout"] = trim(redact_text(result.get("stdout", run.get("stdout", ""))))
-    run["stderr"] = trim(redact_text(result.get("stderr", run.get("stderr", ""))))
-    run["summary"] = trim(redact_text(result.get("summary", "")))
-    update_agent_run_health(run)
-    STATE["runs"][run["id"]] = run
-    write_snapshot(config, "runs", run["id"], run)
-    update_thread_run(config, run)
-    continue_group_thread(config, run)
-    continue_room_run(config, run)
-    append_jsonl(config, "runs.jsonl", run)
-    if not notify_telegram_conversation_result(config, run):
-        notify_plugin(config, "run.completed" if run.get("status") == "completed" else "run.failed", {
-            "run_id": run.get("id"),
-            "thread_id": run.get("thread_id"),
-            "room_id": run.get("room_id"),
-            "agent_id": run.get("agent_id"),
-            "node_id": run.get("node_id"),
-            "status": run.get("status"),
-            "exit_code": run.get("exit_code"),
-        })
-    return run
+    return {
+        "status": result.get("status") or ("completed" if exit_code == 0 else "failed"),
+        "exit_code": exit_code,
+        "stdout": trim(redact_text(result.get("stdout", run.get("stdout", "")))),
+        "stderr": trim(redact_text(result.get("stderr", run.get("stderr", "")))),
+        "summary": trim(redact_text(result.get("summary", ""))),
+    }
+
+
+def stored_completion_state(run):
+    return {
+        "status": run.get("status"),
+        "exit_code": run.get("exit_code"),
+        "stdout": trim(redact_text(run.get("stdout", ""))),
+        "stderr": trim(redact_text(run.get("stderr", ""))),
+        "summary": trim(redact_text(run.get("summary", ""))),
+    }
+
+
+def complete_run(config, body):
+    with RUN_COMPLETION_LOCK:
+        run = STATE["runs"].get(body.get("run_id")) or read_snapshot(config, "runs", body.get("run_id"))
+        if not run:
+            err = Exception("unknown run_id")
+            err.status_code = 404
+            raise err
+        touch_node_seen(body.get("node_id") or run.get("node_id"))
+        STATE["runs"][run["id"]] = run
+        if str(run.get("status") or "").lower() in TERMINAL_RUN_STATUSES:
+            if stored_completion_state(run) == requested_completion_state(run, body):
+                return run
+            err = Exception("run already completed with different result")
+            err.status_code = 409
+            raise err
+        if body.get("trace_id") and not run.get("trace_id"):
+            run["trace_id"] = sanitize_trace_id(body.get("trace_id"))
+        completion = requested_completion_state(run, body)
+        run["status"] = completion["status"]
+        run["completed_at"] = now()
+        run["exit_code"] = completion["exit_code"]
+        run["stdout"] = completion["stdout"]
+        run["stderr"] = completion["stderr"]
+        run["summary"] = completion["summary"]
+        update_agent_run_health(run)
+        STATE["runs"][run["id"]] = run
+        write_snapshot(config, "runs", run["id"], run)
+        update_thread_run(config, run)
+        continue_group_thread(config, run)
+        continue_room_run(config, run)
+        append_jsonl(config, "runs.jsonl", run)
+        if not notify_telegram_conversation_result(config, run):
+            notify_plugin(config, "run.completed" if run.get("status") == "completed" else "run.failed", {
+                "run_id": run.get("id"),
+                "thread_id": run.get("thread_id"),
+                "room_id": run.get("room_id"),
+                "agent_id": run.get("agent_id"),
+                "node_id": run.get("node_id"),
+                "status": run.get("status"),
+                "exit_code": run.get("exit_code"),
+            })
+        return run
 
 
 def update_agent_run_health(run):

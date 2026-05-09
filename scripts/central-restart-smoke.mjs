@@ -121,24 +121,54 @@ async function main() {
       event: { type: "run.started" }
     })
   });
+  const runJsonlPath = path.join(dataDir, "runs.jsonl");
+  const runEntriesBeforeComplete = runJsonlCount(runJsonlPath, runId);
+  const completionBody = {
+    node_id: "restart-edge",
+    run_id: runId,
+    trace_id: traceId,
+    result: {
+      status: "completed",
+      exit_code: 0,
+      stdout: "REPORT: recovered queued run completed after central restart.\nBLACKBOARD: restart recovery ok.\nDONE\n"
+    }
+  };
   const completedRun = await requestJson(`${gateway}/edge/complete`, {
     method: "POST",
     headers: authJsonHeaders(token),
-    body: JSON.stringify({
-      node_id: "restart-edge",
-      run_id: runId,
-      trace_id: traceId,
-      result: {
-        status: "completed",
-        exit_code: 0,
-        stdout: "REPORT: recovered queued run completed after central restart.\nBLACKBOARD: restart recovery ok.\nDONE\n"
-      }
-    })
+    body: JSON.stringify(completionBody)
   });
   assert(completedRun.status === "completed", "completed run did not persist after recovery");
+  assert(completedRun.completed_at, "completed run did not record completed_at");
   const finalRoom = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}`, { headers: authHeaders(token) });
   assert(finalRoom.status === "completed", "room did not complete after recovered run completion");
   assert(finalRoom.reports?.some((report) => /recovered queued run/.test(report.content || "")), "room did not process recovered run report");
+  const runEntriesAfterComplete = runJsonlCount(runJsonlPath, runId);
+  assert(runEntriesAfterComplete === runEntriesBeforeComplete + 1, "first completion did not append exactly one runs.jsonl entry");
+  await delay(1100);
+  const duplicateRun = await requestJson(`${gateway}/edge/complete`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify(completionBody)
+  });
+  assert(duplicateRun.completed_at === completedRun.completed_at, "duplicate completion changed completed_at");
+  assert(runJsonlCount(runJsonlPath, runId) === runEntriesAfterComplete, "duplicate completion appended a second runs.jsonl entry");
+  const duplicateRoom = await requestJson(`${gateway}/rooms/${encodeURIComponent(room.id)}`, { headers: authHeaders(token) });
+  const restartReports = (duplicateRoom.reports || []).filter((report) => /recovered queued run/.test(report.content || ""));
+  assert(restartReports.length === 1, "duplicate completion replayed the room report");
+  const conflict = await fetch(`${gateway}/edge/complete`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      ...completionBody,
+      result: {
+        ...completionBody.result,
+        stdout: "REPORT: conflicting duplicate completion should be rejected.\n"
+      }
+    })
+  });
+  const conflictText = await conflict.text();
+  assert(conflict.status === 409, `conflicting duplicate completion returned ${conflict.status}: ${conflictText}`);
   const finalHealth = await requestJson(`${gateway}/health`);
   assert(finalHealth.queued === 0, "gateway queue was not drained after recovered task");
 
@@ -222,6 +252,23 @@ async function waitForJson(url, timeoutMs = 10000, child = null) {
   }
   const diagnostics = child ? `\n${formatChildDiagnostics(child)}` : "";
   throw new Error(`Timed out waiting for ${url}: ${lastError?.message || "no response"}${diagnostics}`);
+}
+
+function runJsonlCount(file, runId) {
+  if (!fs.existsSync(file)) return 0;
+  return fs.readFileSync(file, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry) => entry?.id === runId)
+    .length;
 }
 
 async function requestJson(url, options = {}) {

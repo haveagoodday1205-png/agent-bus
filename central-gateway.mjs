@@ -1777,6 +1777,28 @@ function recordRunEvent(config, body) {
   appendJsonl(config, "events.jsonl", { run_id: run.id, ...event });
 }
 
+function requestedCompletionState(run, body) {
+  const result = body.result || {};
+  const exitCode = result.exit_code ?? null;
+  return {
+    status: result.status || (Number(result.exit_code || 0) === 0 ? "completed" : "failed"),
+    exit_code: exitCode,
+    stdout: trimOutput(redactSensitive(result.stdout ?? run.stdout ?? "")),
+    stderr: trimOutput(redactSensitive(result.stderr ?? run.stderr ?? "")),
+    summary: trimOutput(redactSensitive(result.summary || ""))
+  };
+}
+
+function storedCompletionState(run) {
+  return {
+    status: run.status,
+    exit_code: run.exit_code ?? null,
+    stdout: trimOutput(redactSensitive(run.stdout ?? "")),
+    stderr: trimOutput(redactSensitive(run.stderr ?? "")),
+    summary: trimOutput(redactSensitive(run.summary ?? ""))
+  };
+}
+
 function completeRun(config, body) {
   const run = state.runs.get(body.run_id) || readSnapshot(config, "runs", body.run_id);
   if (!run) {
@@ -1784,14 +1806,20 @@ function completeRun(config, body) {
     err.statusCode = 404;
     throw err;
   }
-  const result = body.result || {};
+  if (TERMINAL_RUN_STATUSES.has(String(run.status || "").toLowerCase())) {
+    if (JSON.stringify(storedCompletionState(run)) === JSON.stringify(requestedCompletionState(run, body))) return run;
+    const err = new Error("run already completed with different result");
+    err.statusCode = 409;
+    throw err;
+  }
+  const completion = requestedCompletionState(run, body);
   if (body.trace_id && !run.trace_id) run.trace_id = sanitizeTraceId(body.trace_id);
-  run.status = result.status || (Number(result.exit_code || 0) === 0 ? "completed" : "failed");
+  run.status = completion.status;
   run.completed_at = new Date().toISOString();
-  run.exit_code = result.exit_code ?? null;
-  run.stdout = trimOutput(redactSensitive(result.stdout ?? run.stdout ?? ""));
-  run.stderr = trimOutput(redactSensitive(result.stderr ?? run.stderr ?? ""));
-  run.summary = trimOutput(redactSensitive(result.summary || ""));
+  run.exit_code = completion.exit_code;
+  run.stdout = completion.stdout;
+  run.stderr = completion.stderr;
+  run.summary = completion.summary;
   state.runs.set(run.id, run);
   writeSnapshot(config, "runs", run.id, run);
   updateThreadRun(config, run);

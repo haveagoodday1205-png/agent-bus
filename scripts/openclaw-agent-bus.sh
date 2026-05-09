@@ -118,14 +118,50 @@ if [ -n "$session_id" ]; then
   args+=(--session-id "$session_id")
 fi
 
-"$openclaw_bin" "${args[@]}" < /dev/null > "$raw_file"
+openclaw_status=0
+openclaw_child_pid=""
+
+signal_exit_status() {
+  case "$1" in
+    INT) printf '130' ;;
+    TERM) printf '143' ;;
+    HUP) printf '129' ;;
+    *) printf '128' ;;
+  esac
+}
+
+forward_signal() {
+  local signal="$1"
+  local status
+  status="$(signal_exit_status "$signal")"
+  trap - INT TERM HUP
+  if [ -n "$openclaw_child_pid" ] && kill -0 "$openclaw_child_pid" 2>/dev/null; then
+    printf 'openclaw-agent-bus: received SIG%s; forwarding to OpenClaw child %s\n' "$signal" "$openclaw_child_pid" >&2
+    kill -"$signal" "$openclaw_child_pid" 2>/dev/null || true
+    wait "$openclaw_child_pid" 2>/dev/null || true
+  fi
+  exit "$status"
+}
+trap 'forward_signal INT' INT
+trap 'forward_signal TERM' TERM
+trap 'forward_signal HUP' HUP
+
+"$openclaw_bin" "${args[@]}" < /dev/null > "$raw_file" &
+openclaw_child_pid="$!"
+set +e
+wait "$openclaw_child_pid"
+openclaw_status="$?"
+set -e
+openclaw_child_pid=""
+trap - INT TERM HUP
 
 if command -v jq >/dev/null 2>&1; then
-  text="$(jq -r 'reduce .result.payloads[]?.text as $item ([]; if ($item == null or $item == "" or index($item)) then . else . + [$item] end) | join("\n")' "$raw_file")"
+  text="$(jq -r 'reduce .result.payloads[]?.text as $item ([]; if ($item == null or $item == "" or index($item)) then . else . + [$item] end) | join("\n")' "$raw_file" 2>/dev/null || true)"
   if [ -n "$text" ] && [ "$text" != "null" ]; then
     printf '%s\n' "$text"
-    exit 0
+    exit "$openclaw_status"
   fi
 fi
 
 cat "$raw_file"
+exit "$openclaw_status"

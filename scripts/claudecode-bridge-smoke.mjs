@@ -83,6 +83,30 @@ console.log("CLAUDECODE_BRIDGE_OK");
   assert(missingCmd.status === 3, "missing claude command should exit 3");
   assert(/claude command not found/.test(missingCmd.stderr || ""), "missing command error should be actionable");
 
+  const emptyMsg = spawnSync(bash, [path.join(root, "scripts", "claudecode-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...cleanEnv(),
+      CLAUDECODE_COMMAND: fakeClaude
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert(emptyMsg.status === 4, "empty message should exit 4");
+  assert(/No message provided/.test(emptyMsg.stderr || ""), "empty message error should be actionable");
+
+  const allowEmpty = spawnSync(bash, [path.join(root, "scripts", "claudecode-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...cleanEnv(),
+      CLAUDECODE_COMMAND: fakeClaude,
+      CLAUDECODE_ALLOW_EMPTY_MESSAGE: "1"
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert(allowEmpty.status === 0, "CLAUDECODE_ALLOW_EMPTY_MESSAGE=1 should bypass empty message guard");
+
   console.log("claudecode bridge smoke ok");
 } catch (error) {
   console.error(error.stack || error.message || String(error));

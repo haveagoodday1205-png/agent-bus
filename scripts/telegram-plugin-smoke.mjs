@@ -136,6 +136,7 @@ async function main() {
   assert(commandMenu.ok === true && commandMenu.commands.includes("room"), "telegram command menu smoke did not register /room");
   const doctorSmoke = await runTelegramDoctorSmoke(gateway, adminToken, telegramChatId, webhookSecret);
   assert(doctorSmoke.ok === true && doctorSmoke.transport === "poller", "telegram doctor smoke did not pass in poller mode");
+  assert(doctorSmoke.webhook_probe === "pass", "telegram doctor did not pass the diagnostic webhook probe");
   const setupSmoke = await runTelegramSetupSmoke(gateway, telegramChatId, webhookSecret, dataDir);
   assert(setupSmoke.ok === true && setupSmoke.commands.includes("room"), "telegram setup smoke did not write env/service and register commands");
   const setupRestrictionSmoke = await runTelegramSetupRequiresChatSmoke(gateway, dataDir);
@@ -572,6 +573,7 @@ async function runTelegramDoctorSmoke(gateway, adminToken, chatId, secret) {
     return {
       ok: result.ok === true,
       transport: result.checks.find((item) => item.name === "telegram doctor")?.detail,
+      webhook_probe: result.checks.find((item) => item.name === "telegram webhook probe")?.status,
       checks: result.counts
     };
   } finally {

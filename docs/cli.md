@@ -315,7 +315,7 @@ agent-bus plugin telegram doctor \
   --transport poller
 ```
 
-The doctor checks Central plugin wiring, local env presence, Telegram `getMe`, installed slash commands, webhook status, and pending updates. It does not call any model provider. Use `--local-only` to skip Telegram Bot API calls, `--transport poller` when a local poller should own updates, or `--transport webhook` when Telegram should deliver directly to the Central webhook URL.
+The doctor checks Central plugin wiring, local env presence, a diagnostic dry-run POST to Central's Telegram webhook, Telegram `getMe`, installed slash commands, webhook status, and pending updates. It does not call any model provider. The local webhook probe uses `X-Agent-Bus-Telegram-Dry-Run: true` so current Centrals validate the secret, chat allowlist, command handler, and reply buttons without sending a live Telegram message. Use `--local-only` to skip Telegram Bot API calls, `--no-webhook-probe` to skip the Central webhook probe, `--transport poller` when a local poller should own updates, or `--transport webhook` when Telegram should deliver directly to the Central webhook URL.
 
 The registered command menu includes:
 

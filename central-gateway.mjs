@@ -1920,6 +1920,7 @@ function publicTelegramPluginStatus(config) {
     control: {
       enabled: control.enabled === true,
       webhook: "/v1/agent-bus/plugins/telegram/webhook",
+      diagnostic_dry_run_header: true,
       allow_run: control.allowRun !== false && control.allow_run !== false,
       allowed_chat_count: telegramAllowedChatIds(plugin).length,
       secret_configured: Boolean(telegramControlSecret(control)),
@@ -2579,6 +2580,7 @@ function telegramWebhook(config, body = {}, req) {
     err.statusCode = 403;
     throw err;
   }
+  const dryRunProbe = /^(1|true|yes|on)$/i.test(String(req.headers["x-agent-bus-telegram-dry-run"] || ""));
   const callbackAnswer = answerTelegramCallback(config, plugin, message._callback_query_id);
   const command = telegramHandleCommand(config, plugin, control, text, chatId);
   const replyMarkup = telegramReplyMarkup(config, command, chatId);
@@ -2588,12 +2590,14 @@ function telegramWebhook(config, body = {}, req) {
     chat_id: chatId,
     thread_id: command.thread?.id
   }, {
+    dryRunOverride: dryRunProbe,
     eventFilter: false,
     chatIdOverride: chatId,
     replyMarkup
   });
   return {
     ok: true,
+    diagnostic_dry_run: dryRunProbe,
     command: command.command,
     reply: command.reply,
     reply_status: replyStatus,

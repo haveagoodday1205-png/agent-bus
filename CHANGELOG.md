@@ -70,6 +70,7 @@
 - Adds `agent-bus setup telegram` to write a Central Telegram env file, optionally register slash commands, clear webhooks for poller mode, and generate a poller service template.
 - Fixes setup-generated service templates so omitted `--agent-bus-path` uses the currently running CLI script instead of guessing a non-existent `./agent-bus` executable.
 - Makes `setup telegram` require a Telegram chat id by default so control-bot environments are restricted at generation time; isolated tests can opt out with `--allow-unrestricted-control`.
+- Adds a diagnostic dry-run Telegram webhook probe to `agent-bus plugin telegram doctor`, validating Central secret handling, chat allowlisting, command routing, and reply markup without sending live Telegram messages.
 
 ## 0.5.5 - Compact room session keys
 

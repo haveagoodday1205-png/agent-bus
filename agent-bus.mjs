@@ -3642,7 +3642,8 @@ async function telegramDoctor(args) {
   addCheck(checks, chatId ? "pass" : "warn", "telegram chat id", chatId ? "configured" : "missing", "Set AGENT_BUS_TELEGRAM_CHAT_ID or pass --chat-id so Central can send operator notifications.");
   addCheck(checks, webhookSecret ? "pass" : "warn", "telegram webhook secret", webhookSecret ? "configured" : "missing", "Set AGENT_BUS_TELEGRAM_WEBHOOK_SECRET so poller/webhook callbacks can be authenticated.");
 
-  await checkTelegramGatewayStatus(checks, args);
+  const centralStatus = await checkTelegramGatewayStatus(checks, args);
+  await checkTelegramWebhookProbe(checks, args, { chatId, webhookSecret, centralStatus, timeoutMs });
   if (!localOnly && botToken) {
     await checkTelegramBotApi(checks, { botToken, apiBaseUrl, transport, timeoutMs });
   } else if (localOnly) {
@@ -3672,8 +3673,77 @@ async function checkTelegramGatewayStatus(checks, args) {
     addCheck(checks, Number(control.allowed_chat_count || 0) > 0 ? "pass" : "warn", "telegram central allowed chats", `${Number(control.allowed_chat_count || 0)} configured`, "Restrict production control bots to your Telegram chat id.");
     const conversation = control.conversation || {};
     addCheck(checks, conversation.enabled ? "pass" : "warn", "telegram central conversation", conversation.enabled ? `enabled (${(conversation.agents || []).join(", ") || "default routing"})` : "disabled", "Set AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true for persistent Telegram processes.");
+    return status;
   } catch (err) {
     addCheck(checks, "warn", "telegram central plugin status", trimOneLine(err.message || String(err)), "Check --gateway, --token, and whether Central is running.");
+    return null;
+  }
+}
+
+async function checkTelegramWebhookProbe(checks, args, options = {}) {
+  if (args.includes("--no-webhook-probe")) {
+    addCheck(checks, "pass", "telegram webhook probe", "skipped by --no-webhook-probe");
+    return;
+  }
+  const control = options.centralStatus?.control || {};
+  if (!control.enabled) {
+    addCheck(checks, "warn", "telegram webhook probe", "skipped; Central control is disabled", "Enable Telegram control before probing the webhook handler.");
+    return;
+  }
+  if (control.diagnostic_dry_run_header !== true) {
+    addCheck(checks, "warn", "telegram webhook probe", "skipped; Central does not advertise diagnostic dry-run support", "Upgrade Central before running a no-notification webhook probe.");
+    return;
+  }
+  if (!options.chatId) {
+    addCheck(checks, "warn", "telegram webhook probe", "skipped; chat id missing", "Pass --chat-id or set AGENT_BUS_TELEGRAM_CHAT_ID.");
+    return;
+  }
+  if (!options.webhookSecret && control.secret_configured) {
+    addCheck(checks, "warn", "telegram webhook probe", "skipped; webhook secret missing", "Pass --secret-token or set AGENT_BUS_TELEGRAM_WEBHOOK_SECRET.");
+    return;
+  }
+
+  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
+  const timeoutMs = options.timeoutMs || 10000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = {
+      "content-type": "application/json",
+      "x-agent-bus-telegram-dry-run": "true"
+    };
+    if (options.webhookSecret) headers["x-telegram-bot-api-secret-token"] = options.webhookSecret;
+    const res = await fetch(gatewayEndpoint(gateway, "/v1/agent-bus/plugins/telegram/webhook"), {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({
+        update_id: Math.floor(Date.now() / 1000),
+        message: {
+          message_id: 1,
+          chat: { id: options.chatId, type: "private" },
+          text: "/status"
+        }
+      })
+    });
+    const text = await res.text();
+    const body = parseJsonText(text);
+    if (!res.ok) {
+      addCheck(checks, "fail", "telegram webhook probe", `${res.status} ${res.statusText}: ${trimOneLine(text)}`, "Check webhook secret, allowed chat id, and Central Telegram control settings.");
+      return;
+    }
+    const command = body?.command || "";
+    if (body?.ok === true && command === "status" && body?.diagnostic_dry_run === true) {
+      addCheck(checks, "pass", "telegram webhook probe", "dry-run /status accepted");
+    } else if (body?.ok === true && command === "status") {
+      addCheck(checks, "warn", "telegram webhook probe", "accepted but dry-run flag was not echoed", "Upgrade Central so doctor probes cannot emit live Telegram replies.");
+    } else {
+      addCheck(checks, "warn", "telegram webhook probe", `unexpected response: ${trimOneLine(JSON.stringify(body))}`, "Expected the webhook handler to accept a diagnostic /status command.");
+    }
+  } catch (err) {
+    addCheck(checks, "warn", "telegram webhook probe", trimOneLine(err.message || String(err)), "Check --gateway and whether Central is reachable from this host.");
+  } finally {
+    clearTimeout(timer);
   }
 }
 

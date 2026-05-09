@@ -3208,6 +3208,7 @@ def public_telegram_plugin_status(config):
         "control": {
             "enabled": control.get("enabled") is True,
             "webhook": "/v1/agent-bus/plugins/telegram/webhook",
+            "diagnostic_dry_run_header": True,
             "allow_run": control.get("allowRun") is not False and control.get("allow_run") is not False,
             "allowed_chat_count": len(telegram_allowed_chat_ids(plugin)),
             "secret_configured": bool(telegram_control_secret(control)),
@@ -3871,6 +3872,7 @@ def telegram_webhook(config, body, handler):
         err = Exception("telegram chat is not allowed")
         err.status_code = 403
         raise err
+    dry_run_probe = str(handler.headers.get("x-agent-bus-telegram-dry-run") or "").strip().lower() in ("1", "true", "yes", "on")
     callback_answer = answer_telegram_callback(config, plugin, message.get("_callback_query_id"))
     command_result = telegram_handle_command(config, plugin, control, text, chat_id)
     reply_markup = telegram_reply_markup(config, command_result, chat_id)
@@ -3879,9 +3881,10 @@ def telegram_webhook(config, body, handler):
         "reply": command_result["reply"],
         "chat_id": chat_id,
         "thread_id": command_result.get("thread", {}).get("id"),
-    }, event_filter=False, chat_id_override=chat_id, reply_markup=reply_markup)
+    }, dry_run_override=True if dry_run_probe else None, event_filter=False, chat_id_override=chat_id, reply_markup=reply_markup)
     return {
         "ok": True,
+        "diagnostic_dry_run": dry_run_probe,
         "command": command_result["command"],
         "reply": command_result["reply"],
         "reply_status": reply_result,

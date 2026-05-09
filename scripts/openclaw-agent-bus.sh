@@ -14,6 +14,7 @@ session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
 if [ -n "$session_id" ]; then
   session_id="$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-180)"
 fi
+openclaw_bin="${OPENCLAW_BIN:-${OPENCLAW_COMMAND:-openclaw}}"
 timestamp_prefix="${AGENT_BUS_OPENCLAW_TIMESTAMP_PREFIX:-[Agent Bus 2000-01-01 00:00 UTC; cache-stable envelope, not current time]}"
 
 prompt=$(cat <<EOF
@@ -69,6 +70,9 @@ prune_oversized_session() {
 prune_oversized_session
 
 max_arg_bytes="${OPENCLAW_AGENT_BUS_MAX_ARG_BYTES:-20000}"
+case "$max_arg_bytes" in
+  ''|*[!0-9]*) max_arg_bytes=20000 ;;
+esac
 prompt_bytes="$(printf '%s' "$prompt" | wc -c | tr -d ' ')"
 if [ "${prompt_bytes:-0}" -gt "$max_arg_bytes" ]; then
   prompt_file="$(mktemp)"
@@ -89,7 +93,7 @@ if [ -n "$session_id" ]; then
   args+=(--session-id "$session_id")
 fi
 
-openclaw "${args[@]}" < /dev/null > "$raw_file"
+"$openclaw_bin" "${args[@]}" < /dev/null > "$raw_file"
 
 if command -v jq >/dev/null 2>&1; then
   text="$(jq -r 'reduce .result.payloads[]?.text as $item ([]; if ($item == null or $item == "" or index($item)) then . else . + [$item] end) | join("\n")' "$raw_file")"

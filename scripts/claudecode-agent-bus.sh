@@ -13,6 +13,7 @@ if [ -z "$claude_command" ]; then
 fi
 permission_mode="${CLAUDECODE_PERMISSION_MODE:-acceptEdits}"
 output_format="${CLAUDECODE_OUTPUT_FORMAT:-text}"
+working_dir="${CLAUDECODE_CWD:-}"
 append_system_prompt="${CLAUDECODE_APPEND_SYSTEM_PROMPT:-}"
 if [ -z "$append_system_prompt" ]; then
   append_system_prompt="Agent Bus request. Reply plainly and directly. Do not roleplay, do not introduce yourself, and do not mention Claude Code unless the user asks. Return only the answer to the user's request."
@@ -81,9 +82,17 @@ if [ "${CLAUDECODE_NO_SESSION_PERSISTENCE:-0}" = "1" ]; then
 fi
 args+=("$message")
 
+if [ -n "$working_dir" ]; then
+  if [ ! -d "$working_dir" ]; then
+    echo "[claudecode-bridge] CLAUDECODE_CWD does not exist or is not a directory: $working_dir" >&2
+    exit 2
+  fi
+  cd "$working_dir"
+fi
+
 if [ "${CLAUDECODE_VERBOSE:-0}" = "1" ]; then
   echo "[claudecode-bridge] command=$claude_command output_format=$output_format permission_mode=${permission_mode:-none}" >&2
-  echo "[claudecode-bridge] session_id=${session_id:-none} message_bytes=${message_bytes:-0} message_file=${message_file:+present}" >&2
+  echo "[claudecode-bridge] session_id=${session_id:-none} message_bytes=${message_bytes:-0} message_file=${message_file:+present} cwd=$(pwd)" >&2
 fi
 
 exec "$claude_command" "${args[@]}" < /dev/null

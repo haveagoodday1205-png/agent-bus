@@ -74,6 +74,8 @@
 - Makes `setup telegram` require a Telegram chat id by default so control-bot environments are restricted at generation time; isolated tests can opt out with `--allow-unrestricted-control`.
 - Adds a diagnostic dry-run Telegram webhook probe to `agent-bus plugin telegram doctor`, validating Central secret handling, chat allowlisting, command routing, and reply markup without sending live Telegram messages.
 - Adds a README timed-path quickstart for 2-minute no-secret proof, 10-minute remote assistant node, and 15-minute Telegram operator bot setup.
+- Adds edge doctor checks for command bridge script paths and status warnings when active-room detail hydration is skipped, truncated, or partially failed.
+- Hardens Claude Code, Hermes, and OpenClaw bridge scripts with broader tool discovery, long prompt file handling, configurable OpenClaw binaries, and OpenClaw executable package mode.
 
 ## 0.5.5 - Compact room session keys
 

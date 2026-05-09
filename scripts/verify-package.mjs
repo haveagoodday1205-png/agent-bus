@@ -37,6 +37,7 @@ try {
     "scripts/demo-agent-model.mjs",
     "scripts/demo-issue-pr.mjs",
     "scripts/claudecode-agent-bus.sh",
+    "scripts/claudecode-bridge-smoke.mjs",
     "scripts/compatibility-smoke.mjs",
     "scripts/python-sdk-smoke.mjs",
     "scripts/python-room-agent-smoke.mjs",

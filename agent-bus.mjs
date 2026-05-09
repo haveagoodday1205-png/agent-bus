@@ -2060,7 +2060,103 @@ function checkConfiguredTools(checks, config, baseDir) {
     } else {
       addCheck(checks, "warn", `agent ${agent.id} tool`, `${command} not found; run agent-bus detect`);
     }
+    checkConfiguredCommandFile(checks, config, agent, baseDir);
   }
+}
+
+function checkConfiguredCommandFile(checks, config, agent, baseDir) {
+  const reference = configuredCommandFileReference(agent.runCommand || "");
+  if (!reference) return;
+  const name = `agent ${agent.id} command file`;
+  const missingHint = "Pull/sync the repo or portable bundle that contains this script, or update runCommand/config.cwd before restarting the edge service.";
+  if (reference.absolute) {
+    const resolved = resolveConfigPath(reference.path, baseDir);
+    if (pathExists(resolved)) {
+      addCheck(checks, "pass", name, resolved);
+    } else {
+      addCheck(checks, "fail", name, `${resolved} not found`, missingHint);
+    }
+    return;
+  }
+
+  const cwdInfo = configuredAgentWorkingDir(config, agent, baseDir);
+  const resolved = path.resolve(cwdInfo.path, reference.path);
+  if (!cwdInfo.pinned) {
+    const detail = pathExists(resolved)
+      ? `${reference.path} resolves from current cwd ${cwdInfo.path}`
+      : `${reference.path} not found from current cwd ${cwdInfo.path}`;
+    addCheck(checks, "warn", name, detail, "Set config.cwd or agent.cwd, or start the edge service with --cwd pointing at the repo or portable bundle root that contains this relative script.");
+    return;
+  }
+  if (pathExists(resolved)) {
+    addCheck(checks, "pass", name, resolved);
+  } else {
+    addCheck(checks, "fail", name, `${resolved} not found`, missingHint);
+  }
+}
+
+function configuredCommandFileReference(commandText) {
+  const tokens = shellCommandTokens(commandText).map(stripShellQuotes);
+  let index = 0;
+  while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index])) index += 1;
+  if (index >= tokens.length) return null;
+  const first = tokens[index];
+  if (looksLikeDirectScriptPath(first)) return commandFileReference(first);
+  if (!isCommandInterpreter(first)) return null;
+  for (let i = index + 1; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token || token === "--") continue;
+    if (["-m", "-c", "-e", "-lc", "/c", "/k"].includes(token)) return null;
+    if (token.startsWith("-")) continue;
+    return looksLikeCommandPathToken(token) ? commandFileReference(token) : null;
+  }
+  return null;
+}
+
+function commandFileReference(value) {
+  return {
+    path: value,
+    absolute: value.startsWith("~") || path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)
+  };
+}
+
+function looksLikeDirectScriptPath(value) {
+  const token = String(value || "");
+  if (!token || token.startsWith("$") || token.startsWith("%") || /:\/\//.test(token)) return false;
+  const normalized = token.replace(/\\/g, "/");
+  if (normalized.startsWith("./") || normalized.startsWith("../") || normalized.startsWith("~/")) return true;
+  if (/(^|\/)scripts\//i.test(normalized)) return true;
+  const extension = path.posix.extname(normalized).toLowerCase();
+  return new Set([".sh", ".js", ".mjs", ".cjs", ".py", ".ps1", ".cmd", ".bat"]).has(extension);
+}
+
+function looksLikeCommandPathToken(value) {
+  const token = String(value || "");
+  if (!token || token.startsWith("$") || token.startsWith("%") || /:\/\//.test(token)) return false;
+  if (token.startsWith("./") || token.startsWith("../") || token.startsWith("~/") || /^[A-Za-z]:[\\/]/.test(token) || token.startsWith("/")) return true;
+  if (/[\\/]/.test(token)) return true;
+  const extension = path.posix.extname(token.replace(/\\/g, "/")).toLowerCase();
+  return new Set([".sh", ".js", ".mjs", ".cjs", ".py", ".ps1", ".cmd", ".bat"]).has(extension);
+}
+
+function isCommandInterpreter(value) {
+  const base = String(value || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    .toLowerCase()
+    .replace(/\.(?:exe|cmd|bat)$/i, "");
+  return new Set(["bash", "sh", "zsh", "fish", "node", "bun", "deno", "python", "python3", "pwsh", "powershell", "cmd"]).has(base);
+}
+
+function configuredAgentWorkingDir(config, agent, baseDir) {
+  if (agent.cwd) {
+    return { path: resolveConfigPath(agent.cwd, baseDir), pinned: true, source: "agent.cwd" };
+  }
+  if (config.cwd) {
+    return { path: resolveConfigPath(config.cwd, baseDir), pinned: true, source: "config.cwd" };
+  }
+  return { path: process.cwd(), pinned: false, source: "process.cwd()" };
 }
 
 function validateCentralConfig(checks, config, gatewayUrl, token, baseDir, options = {}) {
@@ -3614,6 +3710,7 @@ async function status(args) {
   const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
   const result = summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds, queuedRunStaleSeconds });
   if (hydrationMeta) result.status_meta = { ...(result.status_meta || {}), room_details: hydrationMeta };
+  applyStatusRoomDetailCoverage(result);
   if (jsonOut) {
     printJson(result);
     return;
@@ -4005,14 +4102,35 @@ function statusNextActions(result, authWarning = "") {
 }
 
 async function hydrateStatusRooms(rooms, args) {
-  const baseMeta = { requested: 0, hydrated: 0, failed: 0, skipped: false, concurrency: 0 };
-  if (!Array.isArray(rooms)) return { rooms, meta: { ...baseMeta, skipped: true } };
-  if (args.includes("--no-room-details")) return { rooms, meta: { ...baseMeta, skipped: true } };
+  const activeRooms = Array.isArray(rooms) ? rooms.filter(isActiveRoom).filter((room) => room.id) : [];
+  const baseMeta = {
+    active_total: activeRooms.length,
+    requested: 0,
+    hydrated: 0,
+    failed: 0,
+    omitted: 0,
+    skipped: false,
+    concurrency: 0,
+    limit: 0
+  };
+  if (!Array.isArray(rooms)) return { rooms, meta: finalizeStatusRoomDetailMeta({ ...baseMeta, skipped: true }) };
+  if (args.includes("--no-room-details")) {
+    return {
+      rooms,
+      meta: finalizeStatusRoomDetailMeta({ ...baseMeta, skipped: true, omitted: activeRooms.length })
+    };
+  }
   const limit = positiveIntegerOption(optionValue(args, "--room-detail-limit"), 25, 100);
   const concurrency = positiveIntegerOption(optionValue(args, "--room-detail-concurrency"), 6, 25);
-  const active = rooms.filter(isActiveRoom).filter((room) => room.id).slice(0, limit);
-  const meta = { ...baseMeta, requested: active.length, concurrency };
-  if (!active.length) return { rooms, meta };
+  const active = activeRooms.slice(0, limit);
+  const meta = {
+    ...baseMeta,
+    requested: active.length,
+    omitted: Math.max(0, activeRooms.length - active.length),
+    concurrency,
+    limit
+  };
+  if (!active.length) return { rooms, meta: finalizeStatusRoomDetailMeta(meta) };
   const details = new Map();
   let index = 0;
   async function worker() {
@@ -4029,11 +4147,22 @@ async function hydrateStatusRooms(rooms, args) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, active.length) }, () => worker()));
-  if (!details.size) return { rooms, meta };
+  const finalizedMeta = finalizeStatusRoomDetailMeta(meta);
+  if (!details.size) return { rooms, meta: finalizedMeta };
   return {
     rooms: rooms.map((room) => details.has(room.id) ? { ...room, ...details.get(room.id) } : room),
-    meta
+    meta: finalizedMeta
   };
+}
+
+function finalizeStatusRoomDetailMeta(meta = {}) {
+  const activeTotal = Number(meta.active_total || 0);
+  if (!activeTotal) return { ...meta, coverage: "not_needed" };
+  if (meta.skipped) return { ...meta, coverage: "skipped" };
+  if (Number(meta.failed || 0) > 0 || Number(meta.omitted || 0) > 0 || Number(meta.hydrated || 0) < Number(meta.requested || 0)) {
+    return { ...meta, coverage: "partial" };
+  }
+  return { ...meta, coverage: "full" };
 }
 
 function isActiveRoom(room) {
@@ -4150,6 +4279,36 @@ function statusWarnings({ authWarning, staleQueuedRuns, queuedRunStaleSeconds, h
     warnings.push(`Ignored ${count} stale queued room run${count === 1 ? "" : "s"} older than ${queuedRunStaleSeconds}s${queueNote}. Inspect the old room before recovering or pausing it.${roomNote}`);
   }
   return warnings;
+}
+
+function applyStatusRoomDetailCoverage(result) {
+  const meta = result?.status_meta?.room_details;
+  if (!meta || Number(meta.active_total || 0) <= 0) return result;
+  const warnings = Array.isArray(result.warnings) ? [...result.warnings] : [];
+  const actions = Array.isArray(result.next_actions) ? [...result.next_actions] : [];
+  const activeTotal = Number(meta.active_total || 0);
+  const requested = Number(meta.requested || 0);
+  const failed = Number(meta.failed || 0);
+  const omitted = Number(meta.omitted || 0);
+  const limit = Number(meta.limit || 0);
+  if (meta.coverage === "skipped") {
+    warnings.push(`Active room detail hydration was skipped for ${activeTotal} active room${activeTotal === 1 ? "" : "s"}. Busy/stale queued analysis falls back to summary-only room data until you rerun status without --no-room-details.`);
+    actions.unshift("Rerun agent-bus status without --no-room-details before pausing or recovering an active room.");
+  }
+  if (meta.coverage !== "skipped" && omitted > 0) {
+    const recommendedLimit = Math.min(activeTotal, 100);
+    warnings.push(`Status inspected ${requested}/${activeTotal} active room detail${requested === 1 ? "" : "s"} because --room-detail-limit is ${limit}. Busy/stale queued analysis may be incomplete for ${omitted} active room${omitted === 1 ? "" : "s"}.`);
+    actions.unshift(recommendedLimit > limit
+      ? `Rerun agent-bus status with --room-detail-limit ${recommendedLimit} or inspect the omitted active rooms individually.`
+      : "Inspect the omitted active rooms individually with agent-bus room inspect ROOM_ID.");
+  }
+  if (failed > 0) {
+    warnings.push(`Status could not hydrate ${failed}/${requested} active room detail${requested === 1 ? "" : "s"} from the gateway. Busy/stale queued analysis may be incomplete for those rooms.`);
+    actions.unshift("Inspect active rooms individually with agent-bus room inspect ROOM_ID if per-room status fetches keep failing.");
+  }
+  result.warnings = unique(warnings);
+  result.next_actions = unique(actions).slice(0, 6);
+  return result;
 }
 
 function agentActivity(activeRuns, activeRoomIds) {
@@ -4275,10 +4434,20 @@ function commonHermesPaths() {
 
 function commonClaudeCodePaths() {
   const binary = process.platform === "win32" ? "claude.cmd" : "claude";
+  const home = os.homedir();
   const paths = [
-    path.join(os.homedir(), ".local", "bin", binary)
+    path.join(home, ".local", "bin", binary),
+    path.join(home, ".claude", "bin", binary)
   ];
-  if (process.platform !== "win32") paths.push("/usr/local/bin/claude");
+  if (process.platform !== "win32") {
+    paths.push("/usr/local/bin/claude");
+    const npmGlobal = process.env.NPM_CONFIG_PREFIX || path.join(home, ".npm-global");
+    paths.push(path.join(npmGlobal, "bin", "claude"));
+  }
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    paths.push(path.join(appData, "npm", "claude.cmd"));
+  }
   return paths;
 }
 
@@ -4331,8 +4500,12 @@ function quoteCommand(value) {
   return `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
+function shellCommandTokens(commandText) {
+  return String(commandText || "").match(/"[^"]+"|'[^']+'|\S+/g) || [];
+}
+
 function configuredExecutable(commandText) {
-  const tokens = String(commandText || "").match(/"[^"]+"|'[^']+'|\S+/g) || [];
+  const tokens = shellCommandTokens(commandText);
   while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens.shift();
   if (!tokens.length) return "";
   return stripShellQuotes(tokens[0]);

@@ -135,6 +135,8 @@ For live deployments, roll changes out from central to edges in small reversible
 6. For config-only changes, prefer adding new keys while keeping old keys valid until all edges have restarted. Do not rotate tokens and bridge commands in the same step; verify the new token or command with `agent-bus doctor --config edge.config.json` first.
 7. Keep secrets out of reports and commits: share service names, commit ids, room ids, and redacted command shapes rather than raw tokens, full private URLs, or model-provider quota details.
 
+If a command adapter uses a relative bridge script such as `./scripts/codex-agent-bus.sh`, pin `config.cwd` or `agent.cwd`, or start the service with `--cwd` set to the repo or portable bundle root that contains that script. `agent-bus doctor --config edge.config.json` warns when a relative script only works because of the current launch directory and fails when a pinned cwd still points at a missing file.
+
 Use this impact matrix when deciding what to restart:
 
 | Changed files/settings | Restart | Verify |
@@ -145,7 +147,7 @@ Use this impact matrix when deciding what to restart:
 | `agent-bus.mjs` operator CLI only | Operator shells/installations using the CLI | `agent-bus --help` plus the specific read-only command, for example `agent-bus room inspect ...` |
 | Docs/examples only | No service restart | Link/render review or the relevant no-quota smoke when examples changed |
 
-Central service changes usually require only a central restart. Edge bridge script changes require each edge node to pull the repo and restart its edge service because `runCommand` invokes local scripts from that checkout. If `runCommand` uses an absolute script path, update that deployed file or repoint the config before restarting; pulling the repo alone is not enough.
+Central service changes usually require only a central restart. Edge bridge script changes require each edge node to pull the repo and restart its edge service because `runCommand` invokes local scripts from that checkout. If `runCommand` uses an absolute script path, update that deployed file or repoint the config before restarting; pulling the repo alone is not enough. If it uses a relative script path, keep the configured cwd aligned with the checkout or bundle root that actually contains the script.
 
 ## Edge Node
 

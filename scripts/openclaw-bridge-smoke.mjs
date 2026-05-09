@@ -22,10 +22,15 @@ try {
   fs.mkdirSync(binDir, { recursive: true });
   fs.mkdirSync(stateDir, { recursive: true });
 
-  const fakeOpenClaw = path.join(binDir, "openclaw");
+  const argvFile = path.join(tempDir, "openclaw-argv.json");
+  const fakeOpenClaw = path.join(binDir, "custom-openclaw");
   fs.writeFileSync(
     fakeOpenClaw,
-    "#!/usr/bin/env sh\nprintf '%s\\n' '{\"result\":{\"payloads\":[{\"text\":\"OPENCLAW_BRIDGE_OK\"}]}}'\n"
+    `#!/usr/bin/env node
+import fs from "node:fs";
+fs.writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));
+console.log('{"result":{"payloads":[{"text":"OPENCLAW_BRIDGE_OK"}]}}');
+`
   );
   fs.chmodSync(fakeOpenClaw, 0o755);
 
@@ -46,8 +51,10 @@ try {
       ...process.env,
       PATH: `${binDir}${path.delimiter}${process.env.PATH || ""}`,
       OPENCLAW_AGENT_ID: agentId,
+      OPENCLAW_BIN: fakeOpenClaw,
       OPENCLAW_STATE_DIR: stateDir,
       OPENCLAW_AGENT_BUS_MAX_SESSION_BYTES: "1",
+      OPENCLAW_AGENT_BUS_MAX_ARG_BYTES: "not-a-number",
       AGENT_SESSION_ID: sessionId,
       AGENT_MESSAGE: "",
       AGENT_MESSAGE_FILE: messageFile
@@ -59,6 +66,13 @@ try {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`bridge exited ${result.status}: ${result.stderr || result.stdout}`);
   if (!result.stdout.includes("OPENCLAW_BRIDGE_OK")) throw new Error(`unexpected bridge stdout: ${result.stdout}`);
+  const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+  if (!argv.includes("--session-id") || argv[argv.indexOf("--session-id") + 1] !== safeSessionId) {
+    throw new Error(`sanitized session id was not passed to OpenClaw: ${JSON.stringify(argv)}`);
+  }
+  if (!argv.includes("--agent") || argv[argv.indexOf("--agent") + 1] !== agentId) {
+    throw new Error(`agent id was not passed to OpenClaw: ${JSON.stringify(argv)}`);
+  }
   const backups = fs.readdirSync(sessionDir).filter((name) => name.includes(".bak-agent-bus-pruned-"));
   if (!backups.length) throw new Error("oversized OpenClaw session file was not pruned");
   console.log("openclaw bridge smoke ok");

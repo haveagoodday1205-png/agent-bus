@@ -48,6 +48,7 @@ const jsFiles = [
   "scripts/room-prompt-compaction-smoke.mjs",
   "scripts/room-memory-cache-smoke.mjs",
   "scripts/cache-session-smoke.mjs",
+  "scripts/claudecode-bridge-smoke.mjs",
   "scripts/hermes-bridge-smoke.mjs",
   "scripts/openclaw-bridge-smoke.mjs",
   "scripts/make-portable-release.mjs",
@@ -99,6 +100,7 @@ try {
   step("room prompt compaction smoke", process.execPath, ["scripts/room-prompt-compaction-smoke.mjs", "--json"]);
   step("room memory cache smoke", process.execPath, ["scripts/room-memory-cache-smoke.mjs", "--json"]);
   step("cache session smoke", process.execPath, ["scripts/cache-session-smoke.mjs", "--json"]);
+  step("claudecode bridge smoke", process.execPath, ["scripts/claudecode-bridge-smoke.mjs"]);
   step("hermes bridge smoke", process.execPath, ["scripts/hermes-bridge-smoke.mjs"]);
   step("openclaw bridge smoke", process.execPath, ["scripts/openclaw-bridge-smoke.mjs"]);
   step("npm package verification", process.execPath, ["scripts/verify-package.mjs"]);

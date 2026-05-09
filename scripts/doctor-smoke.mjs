@@ -112,6 +112,48 @@ async function main() {
   assert(localDoctor.stdout.includes("gateway checks skipped"), "local-only doctor did not skip gateway checks");
   assert(/Doctor: (OK|WARN|FAIL) pass=\d+ warn=\d+ fail=\d+/.test(localDoctor.stdout), "doctor human output omitted summary counts");
 
+  step("Verifying command script path safety checks");
+  const relativeScriptDir = path.join(tempDir, "doctor-script-runtime");
+  fs.mkdirSync(relativeScriptDir, { recursive: true });
+  fs.writeFileSync(path.join(relativeScriptDir, "doctor-agent.mjs"), "console.log('doctor smoke command path ok');\n");
+  const relativeScript = "./doctor-script-runtime/doctor-agent.mjs";
+  const quotedNode = JSON.stringify(process.execPath);
+  const pinnedScriptConfig = path.join(tempDir, "edge-script-pinned.config.json");
+  const unpinnedScriptConfig = path.join(tempDir, "edge-script-unpinned.config.json");
+  const brokenScriptConfig = path.join(tempDir, "edge-script-broken.config.json");
+  for (const [file, id, cwd, scriptPath] of [
+    [pinnedScriptConfig, "script-pinned", tempDir, relativeScript],
+    [unpinnedScriptConfig, "script-unpinned", "", relativeScript],
+    [brokenScriptConfig, "script-broken", tempDir, "./doctor-script-runtime/missing-agent.mjs"]
+  ]) {
+    fs.writeFileSync(file, `${JSON.stringify({
+      nodeId: `doctor-${id}`,
+      gatewayUrl: gateway,
+      token: edgeToken,
+      tokenScope: "edge",
+      ...(cwd ? { cwd } : {}),
+      agents: [{
+        id,
+        kind: "command",
+        role: "diagnostic",
+        enabled: true,
+        adapter: "command",
+        runCommand: `${quotedNode} ${scriptPath}`
+      }]
+    }, null, 2)}\n`);
+  }
+  const pinnedScriptDoctor = await runDoctor(["--config", pinnedScriptConfig, "--local-only", "--json"]);
+  const pinnedScriptCheck = findDoctorCheck(pinnedScriptDoctor, "agent script-pinned command file");
+  assert(pinnedScriptCheck?.status === "pass", `pinned relative script should pass doctor: ${JSON.stringify(pinnedScriptCheck)}`);
+  const unpinnedScriptDoctor = await runDoctor(["--config", unpinnedScriptConfig, "--local-only", "--json"]);
+  const unpinnedScriptCheck = findDoctorCheck(unpinnedScriptDoctor, "agent script-unpinned command file");
+  assert(unpinnedScriptCheck?.status === "warn", `unpinned relative script should warn about cwd drift: ${JSON.stringify(unpinnedScriptCheck)}`);
+  const brokenScriptDoctor = await runCliAllowFailure(["doctor", "--config", brokenScriptConfig, "--local-only", "--json"]);
+  assert(brokenScriptDoctor.code !== 0, "doctor should fail when a pinned relative script path is missing");
+  const brokenScriptJson = JSON.parse(brokenScriptDoctor.stdout);
+  const brokenScriptCheck = findDoctorCheck(brokenScriptJson, "agent script-broken command file");
+  assert(brokenScriptCheck?.status === "fail", `missing pinned script should fail doctor: ${JSON.stringify(brokenScriptCheck)}`);
+
   step("Verifying operator status readiness");
   const statusJson = await runCli(["status", "--gateway", gateway, "--token", token, "--json"]);
   const status = JSON.parse(statusJson.stdout);
@@ -216,6 +258,10 @@ function assertDoctor(result, { requiredPasses = [], requiredWarnings = [] } = {
       throw new Error(`expected warning doctor check ${name}, got ${check ? JSON.stringify(check) : "missing"}`);
     }
   }
+}
+
+function findDoctorCheck(result, name) {
+  return result?.checks?.find((item) => item.name === name) || null;
 }
 
 function runDoctor(args, timeoutMs = 20000) {

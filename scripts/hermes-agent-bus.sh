@@ -2,10 +2,10 @@
 set -euo pipefail
 
 message="${AGENT_MESSAGE:-}"
+message_file=""
 if [ -n "${AGENT_MESSAGE_FILE:-}" ] && [ -r "$AGENT_MESSAGE_FILE" ]; then
-  message="$(cat "$AGENT_MESSAGE_FILE")"
+  message_file="$AGENT_MESSAGE_FILE"
 fi
-message_file="${AGENT_MESSAGE_FILE:-}"
 
 session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
 if [ -n "$session_id" ]; then
@@ -138,9 +138,15 @@ max_arg_bytes="${HERMES_AGENT_BUS_MAX_ARG_BYTES:-20000}"
 case "$max_arg_bytes" in
   ''|*[!0-9]*) max_arg_bytes=20000 ;;
 esac
-message_bytes="$(printf '%s' "$fallback_message" | wc -c | tr -d ' ')"
-if [ -n "$message_file" ] && [ "${message_bytes:-0}" -gt "$max_arg_bytes" ]; then
-  fallback_message="Agent Bus request is too large to pass as a CLI argument. Read the full UTF-8 task from: $message_file"
+if [ -n "$message_file" ] && [ -r "$message_file" ]; then
+  message_bytes="$(wc -c < "$message_file" | tr -d ' ')"
+  if [ "${message_bytes:-0}" -gt "$max_arg_bytes" ]; then
+    fallback_message="Agent Bus request is too large to pass as a CLI argument. Read the full UTF-8 task from: $message_file"
+  else
+    fallback_message="$(cat "$message_file")"
+  fi
+else
+  message_bytes="$(printf '%s' "$fallback_message" | wc -c | tr -d ' ')"
 fi
 
 exec "$hermes_command" chat -q "$fallback_message" -Q

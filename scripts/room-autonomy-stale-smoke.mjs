@@ -150,6 +150,10 @@ async function main() {
   assert(plannerStatus?.active_runs?.some((run) => run.status === "running"), "CLI status did not include the active planner run");
   assert(workerStatus?.activity === "idle", "CLI status marked the idle peer as busy");
   assert(runningStatus.rooms?.some((item) => item.id === room.id && item.active_runs?.length), "CLI status did not expose active room runs");
+  const summaryOnlyStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token, "--no-room-details"]);
+  assert(summaryOnlyStatus.status_meta?.room_details?.coverage === "skipped", "CLI status should mark room detail coverage as skipped when --no-room-details is used");
+  assert(summaryOnlyStatus.warnings?.some((warning) => /Active room detail hydration was skipped/.test(warning)), "CLI status did not warn when room detail hydration was skipped");
+  assert(summaryOnlyStatus.next_actions?.some((action) => action.includes("without --no-room-details")), "CLI status did not recommend rerunning without --no-room-details");
   let activeRecoverRejected = false;
   try {
     await runCliText(["room", "recover", room.id, "--yes", "--gateway", gateway, "--token", token]);
@@ -211,6 +215,14 @@ async function main() {
   assert(staleQueuedHuman.includes("stale_queued="), "CLI human status did not label stale queued room runs");
   assert(staleQueuedHuman.includes("Recovery hints:"), "CLI human status did not print recovery hints");
   assert(staleQueuedHuman.includes(`agent-bus room recover ${orphanRoom.id} --yes`), "CLI human status did not print recover command hint");
+  const limitedStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1", "--room-detail-limit", "1"]);
+  assert(limitedStatus.status_meta?.room_details?.coverage === "partial", "CLI status should mark room detail coverage as partial when the active-room limit truncates hydration");
+  assert(limitedStatus.status_meta?.room_details?.active_total === 2, "CLI status room detail metadata should count both active rooms before truncation");
+  assert(limitedStatus.status_meta?.room_details?.requested === 1 && limitedStatus.status_meta?.room_details?.omitted === 1, "CLI status room detail metadata should report the requested and omitted active rooms");
+  assert(limitedStatus.warnings?.some((warning) => /Status inspected 1\/2 active room detail because --room-detail-limit is 1/.test(warning)), "CLI status did not warn when room detail hydration was truncated by --room-detail-limit");
+  assert(limitedStatus.next_actions?.some((action) => action.includes("--room-detail-limit 2")), "CLI status did not recommend raising --room-detail-limit after truncating active room hydration");
+  const limitedHuman = await runCliText(["status", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1", "--room-detail-limit", "1"]);
+  assert(limitedHuman.includes("Warning: Status inspected 1/2 active room detail because --room-detail-limit is 1."), "CLI human status did not warn when --room-detail-limit truncated room detail hydration");
   const inspectJson = await runCliJson(["room", "inspect", orphanRoom.id, "--json", "--gateway", gateway, "--token", token, "--queued-run-stale-seconds", "1"]);
   assert(inspectJson.counts?.stale_queued_runs === 1, "room inspect did not count stale queued runs");
   assert(inspectJson.recommendation === "pause_recover_orphan_queued_runs", "room inspect did not recommend stale queued recovery");

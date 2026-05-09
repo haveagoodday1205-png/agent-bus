@@ -55,6 +55,7 @@
     "smoke:room-prompt": "node scripts/room-prompt-compaction-smoke.mjs",
     "smoke:room-memory": "node scripts/room-memory-cache-smoke.mjs",
     "smoke:cache-session": "node scripts/cache-session-smoke.mjs",
+    "smoke:claudecode-bridge": "node scripts/claudecode-bridge-smoke.mjs",
     "smoke:hermes-bridge": "node scripts/hermes-bridge-smoke.mjs",
     "smoke:openclaw-bridge": "node scripts/openclaw-bridge-smoke.mjs",
     "sdk:python:smoke": "node scripts/python-sdk-smoke.mjs",

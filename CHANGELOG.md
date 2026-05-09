@@ -71,6 +71,7 @@
 - Fixes setup-generated service templates so omitted `--agent-bus-path` uses the currently running CLI script instead of guessing a non-existent `./agent-bus` executable.
 - Makes `setup telegram` require a Telegram chat id by default so control-bot environments are restricted at generation time; isolated tests can opt out with `--allow-unrestricted-control`.
 - Adds a diagnostic dry-run Telegram webhook probe to `agent-bus plugin telegram doctor`, validating Central secret handling, chat allowlisting, command routing, and reply markup without sending live Telegram messages.
+- Adds a README timed-path quickstart for 2-minute no-secret proof, 10-minute remote assistant node, and 15-minute Telegram operator bot setup.
 
 ## 0.5.5 - Compact room session keys
 

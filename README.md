@@ -51,6 +51,25 @@ High-impact contribution lanes right now are adapter presets, SDK examples, web 
 
 ## Quick Start
 
+### Choose A Timed Path
+
+Pick the smallest path that proves what you need before adding real models or private machines.
+
+| Time | Goal | Commands | Proves |
+| --- | --- | --- | --- |
+| 2 minutes | Local no-secret proof | `agent-bus smoke --offline` or `npm run demo:no-quota-room-replay -- --json` | Central/edge registration, rooms, reports, blackboard, event export, replay |
+| 10 minutes | First remote assistant node | `agent-bus setup central --service auto`, `agent-bus pair create`, `agent-bus setup edge --code ... --auto --service auto`, `agent-bus status` | A private machine can connect outbound and become an addressable agent |
+| 15 minutes | Telegram operator bot | `agent-bus setup telegram --chat-id ... --service auto --set-commands`, `agent-bus plugin telegram doctor --transport poller` | Mobile control, contextual buttons, process threads, room creation, poller/webhook health |
+
+If a path fails, run the matching doctor before opening an issue:
+
+```bash
+agent-bus doctor --config edge.config.json
+agent-bus doctor --mode central --production --config central.config.json --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
+agent-bus plugin telegram doctor --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN --transport poller
+agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
+```
+
 ### First no-quota proof
 
 If you are evaluating Agent Bus for the first time, start with the offline checks before configuring real machines, GitHub, Telegram, or model providers:

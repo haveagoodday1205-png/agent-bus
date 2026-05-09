@@ -188,15 +188,19 @@ async function waitForAgents(gateway, token, agentIds, timeoutMs = 10000) {
   throw new Error(`Timed out waiting for agents: ${agentIds.join(", ")}`);
 }
 
-async function waitForRoomComplete(gateway, token, roomId, timeoutMs = 15000) {
+async function waitForRoomComplete(gateway, token, roomId, timeoutMs = 45000) {
   const started = Date.now();
+  let lastRoom = null;
   while (Date.now() - started < timeoutMs) {
     const room = await requestJson(`${gateway}/rooms/${encodeURIComponent(roomId)}`, { headers: authHeaders(token) });
+    lastRoom = room;
     if (room.status === "completed") return room;
     if (room.status === "paused") throw new Error(`Room paused before completion: ${roomId}`);
+    const failed = failedRoomRunDetails(room);
+    if (failed) throw new Error(`Room run failed before completion: ${failed}`);
     await delay(250);
   }
-  throw new Error(`Timed out waiting for room ${roomId}`);
+  throw new Error(`Timed out waiting for room ${roomId}; status=${lastRoom?.status || "unknown"} runs=${roomRunStates(lastRoom)}`);
 }
 
 async function waitForJson(url, timeoutMs = 10000) {
@@ -244,20 +248,35 @@ function freePort() {
 }
 
 function findPython() {
-  const candidates = [process.env.PYTHON, "python3", "python"].filter(Boolean);
+  const candidates = [
+    process.env.AGENT_BUS_PYTHON,
+    process.env.PYTHON,
+    ...commonBundledPythonPaths(),
+    process.platform === "win32" ? "python.exe" : "python3",
+    "python3",
+    "python"
+  ].filter(Boolean);
   for (const command of candidates) {
-    try {
-      const result = spawnSync(command, ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"], {
-        cwd: root,
-        windowsHide: true,
-        stdio: "ignore"
-      });
-      if (result.status === 0) return command;
-    } catch {
-      // Try the next candidate.
-    }
+    const result = spawnSync(command, ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"], {
+      cwd: root,
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    if (!result.error && result.status === 0) return command;
   }
   return "";
+}
+
+function commonBundledPythonPaths() {
+  const home = os.homedir();
+  const roots = [
+    path.join(home, ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "python"),
+    path.join(home, ".codex", "runtimes", "codex-primary-runtime", "dependencies", "python")
+  ];
+  const names = process.platform === "win32"
+    ? ["python.exe"]
+    : ["bin/python3", "bin/python", "python3", "python"];
+  return roots.flatMap((rootDir) => names.map((name) => path.join(rootDir, name)));
 }
 
 function uniqueOutputPath(basePath) {
@@ -272,8 +291,21 @@ function uniqueOutputPath(basePath) {
 
 function quoteCommandArg(value) {
   const text = String(value);
-  if (/^[A-Za-z0-9_/:=.,+@%-]+$/.test(text)) return text;
-  return `'${text.replace(/'/g, `'"'"'`)}'`;
+  if (process.platform === "win32") return `"${text.replace(/"/g, '""')}"`;
+  return `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function roomRunStates(room) {
+  return (room?.runs || [])
+    .map((run) => `${run.agent_id || "agent"}:${run.status || "unknown"}`)
+    .join(", ") || "none";
+}
+
+function failedRoomRunDetails(room) {
+  const failed = (room?.runs || []).find((run) => ["failed", "error"].includes(String(run.status || "").toLowerCase()));
+  if (!failed) return "";
+  const stderr = String(failed.stderr || failed.summary || "").trim().replace(/\s+/g, " ").slice(0, 280);
+  return `${failed.agent_id || "agent"}:${failed.status || "failed"} exit=${failed.exit_code ?? "unknown"}${stderr ? ` stderr=${stderr}` : ""}`;
 }
 
 function demoChildEnv(overrides = {}) {

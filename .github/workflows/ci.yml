@@ -24,10 +24,13 @@ jobs:
           node --check agent-bus.mjs
           node --check central-gateway.mjs
           node --check edge-node.mjs
+          node --check console/app.js
           node --check mock-openai-backend.mjs
           node --check windows-openai-proxy.mjs
           node --check sdk/js/agent-bus-sdk.mjs
           node --check examples/hello-agent/hello-agent.mjs
+          node --check examples/js-room-replay/room_replay_example.mjs
+          node --check examples/no-quota-room-replay/run.mjs
           node --check scripts/demo-local.mjs
           node --check scripts/demo-starter.mjs
           node --check scripts/demo-agent-model.mjs
@@ -35,12 +38,23 @@ jobs:
           node --check scripts/demo-issue-pr.mjs
           node --check scripts/compatibility-smoke.mjs
           node --check scripts/doctor-smoke.mjs
+          node --check scripts/diagnostics-redaction-smoke.mjs
+          node --check scripts/telegram-plugin-smoke.mjs
+          node --check scripts/telegram-commands.mjs
+          node --check scripts/telegram-poller.mjs
+          node --check scripts/compose-smoke.mjs
           node --check scripts/adapter-preset-smoke.mjs
+          node --check scripts/setup-join-smoke.mjs
+          node --check scripts/edge-token-api-smoke.mjs
           node --check scripts/trace-smoke.mjs
           node --check scripts/central-restart-smoke.mjs
           node --check scripts/python-sdk-smoke.mjs
           node --check scripts/python-room-agent-smoke.mjs
+          node --check scripts/room-replay-fixture-check.mjs
           node --check scripts/room-autonomy-stale-smoke.mjs
+          node --check scripts/room-prompt-compaction-smoke.mjs
+          node --check scripts/room-memory-cache-smoke.mjs
+          node --check scripts/cache-session-smoke.mjs
           node --check scripts/make-portable-release.mjs
           node --check scripts/npm-install-smoke.mjs
           node --check scripts/offline-smoke.mjs
@@ -51,7 +65,7 @@ jobs:
           node --check scripts/release-notes.mjs
           node --check scripts/release-preflight.mjs
       - name: Syntax check Python
-        run: python -m py_compile central_gateway.py edge_node.py sdk/python/agent_bus_sdk.py sdk/python/__init__.py examples/room-agent-python/room_agent.py
+        run: python -m py_compile central_gateway.py edge_node.py sdk/python/agent_bus_sdk.py sdk/python/__init__.py examples/room-agent-python/room_agent.py examples/python-agent-model/agent_model_example.py
       - name: Validate JSON examples
         run: |
           node -e "for (const f of ['package.json','central.config.example.json','edge.config.example.json','edge.120.example.json','edge.178.example.json','edge.hk.example.json']) JSON.parse(require('fs').readFileSync(f, 'utf8'));"
@@ -94,8 +108,18 @@ jobs:
         run: npm run demo:starter -- --json
       - name: Doctor smoke
         run: npm run doctor:smoke -- --json
+      - name: Diagnostics redaction smoke
+        run: npm run diagnostics:redaction:smoke -- --json
+      - name: Telegram plugin smoke
+        run: npm run plugin:telegram:smoke -- --json
+      - name: Compose preflight smoke
+        run: npm run compose:smoke -- --json
       - name: Adapter preset smoke
         run: npm run adapter:preset:smoke -- --json
+      - name: Setup join smoke
+        run: npm run setup:join:smoke -- --json
+      - name: Edge token API smoke
+        run: npm run edge-token:smoke -- --json
       - name: Trace smoke
         run: npm run trace:smoke -- --json
       - name: Central restart smoke
@@ -114,8 +138,18 @@ jobs:
         run: npm run demo:agent-model -- --json
       - name: Offline room smoke
         run: npm run smoke:offline -- --json
+      - name: Room replay fixture compatibility
+        run: npm run fixture:room-replay -- --json
+      - name: No-quota room replay golden path
+        run: npm run demo:no-quota-room-replay -- --json
       - name: Stale room autonomy smoke
         run: npm run smoke:room-stale -- --json
+      - name: Room prompt compaction smoke
+        run: npm run smoke:room-prompt -- --json
+      - name: Room memory cache smoke
+        run: npm run smoke:room-memory -- --json
+      - name: Cache session smoke
+        run: npm run smoke:cache-session -- --json
       - name: Full smoke
         run: npm run smoke
 

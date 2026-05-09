@@ -3112,10 +3112,12 @@ function redactExportText(value) {
 
 function roomExportSummary(room) {
   return {
+    object: "agent_bus.room_reports_summary",
+    reports_only: true,
+    sharing_note: "Reports-only export omits the room goal, full messages, and run output by default. Review generated reports before sharing.",
     id: room.id,
     trace_id: room.trace_id,
     title: room.title,
-    goal: room.goal,
     status: room.status,
     created_at: room.created_at,
     updated_at: room.updated_at,
@@ -3155,7 +3157,7 @@ function roomEventBundle(room, options = {}) {
 
   add("room.created", room.created_at, "system", {
     title: room.title || "",
-    goal: room.goal || "",
+    ...(reportsOnly ? { goal_omitted: true } : { goal: room.goal || "" }),
     status: room.status || "unknown",
     agents: room.agents || []
   });
@@ -3480,7 +3482,8 @@ function formatRoomReplayMarkdown(summary) {
 function formatRoomMarkdown(room, options = {}) {
   const reports = room.reports || room.blackboard?.reports || [];
   const notes = room.blackboard?.notes || [];
-  const messages = options.reportsOnly ? [] : (room.messages || []);
+  const reportsOnly = options.reportsOnly === true;
+  const messages = reportsOnly ? [] : (room.messages || []);
   const runs = room.runs || [];
   const lines = [];
   lines.push(`# Agent Bus Room: ${room.title || room.id || "untitled"}`);
@@ -3490,8 +3493,11 @@ function formatRoomMarkdown(room, options = {}) {
   lines.push(`- agents: ${formatInlineList(room.agents)}`);
   lines.push(`- created: ${room.created_at || "-"}`);
   lines.push(`- updated: ${room.updated_at || "-"}`);
+  if (reportsOnly) {
+    lines.push("- reports-only: goal, full messages, and run output omitted; review reports before sharing");
+  }
   lines.push("");
-  if (room.goal) {
+  if (!reportsOnly && room.goal) {
     lines.push("## Goal");
     lines.push("");
     lines.push(markdownFence(room.goal));

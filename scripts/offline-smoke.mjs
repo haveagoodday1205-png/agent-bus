@@ -174,6 +174,8 @@ async function main() {
   assert(cliExport.includes("token=[REDACTED]"), "CLI room export did not include a redaction marker");
   const summaryExport = await runCliText(["room", "export", finalRoom.id, "--reports-only", "--gateway", base, "--token", token]);
   assert(summaryExport.includes("## Reports"), "CLI room export --reports-only did not include reports");
+  assert(summaryExport.includes("reports-only:"), "CLI room export --reports-only did not mark the sharing boundary");
+  assert(!summaryExport.includes("## Goal"), "CLI room export --reports-only included the room goal");
   assert(!summaryExport.includes("## Messages"), "CLI room export --reports-only included full messages");
   const exportJson = path.join(tempDir, "room-export.json");
   await runCliText(["room", "export", finalRoom.id, "--format", "json", "--out", exportJson, "--gateway", base, "--token", token]);
@@ -183,6 +185,8 @@ async function main() {
   assert(exportedRoom.id === finalRoom.id, "CLI room export --format json wrote the wrong room");
   const summaryJson = await runCliJson(["room", "export", finalRoom.id, "--format", "json", "--reports-only", "--gateway", base, "--token", token]);
   assert(summaryJson.id === finalRoom.id, "CLI room export --reports-only json wrote the wrong room");
+  assert(summaryJson.object === "agent_bus.room_reports_summary", "CLI room export --reports-only json omitted the summary object type");
+  assert(!Object.hasOwn(summaryJson, "goal"), "CLI room export --reports-only json included the room goal");
   assert(!Object.hasOwn(summaryJson, "messages"), "CLI room export --reports-only json included full messages");
   const eventBundle = await runCliJson(["room", "export", finalRoom.id, "--format", "events", "--gateway", base, "--token", token]);
   assert(eventBundle.object === "agent_bus.room_event_bundle", "CLI room export --format events did not return an event bundle");
@@ -194,6 +198,10 @@ async function main() {
   assert(eventBundle.events?.some((event) => event.type === "run.completed"), "event bundle did not include run.completed");
   assert(eventBundle.events?.some((event) => event.type === "room.report.added"), "event bundle did not include room.report.added");
   assert(!JSON.stringify(eventBundle).includes("sk-test-secret-000000000000000000"), "event bundle did not redact token-like content");
+  const reportsOnlyBundle = await runCliJson(["room", "export", finalRoom.id, "--format", "events", "--reports-only", "--gateway", base, "--token", token]);
+  assert(reportsOnlyBundle.reports_only === true, "reports-only event bundle did not mark reports_only=true");
+  assert(reportsOnlyBundle.events?.some((event) => event.type === "room.created" && event.payload?.goal_omitted === true), "reports-only event bundle did not omit the room goal");
+  assert(!JSON.stringify(reportsOnlyBundle).includes("Verify Agent Bus room dispatch"), "reports-only event bundle leaked the room goal text");
   const eventBundlePath = path.join(tempDir, "room-events.json");
   await runCliText(["room", "export", finalRoom.id, "--format", "events", "--out", eventBundlePath, "--gateway", base, "--token", token]);
   const replayJson = await runCliJson(["room", "replay", "--in", eventBundlePath]);

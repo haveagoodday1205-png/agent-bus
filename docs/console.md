@@ -18,7 +18,7 @@ The console can:
 - Preview routing decisions.
 - Poll thread, room, run, report, blackboard, and stdout/stderr results.
 - Open a room trace from the room detail view, look up trace ids, and export trace JSON.
-- Export a share-safe room summary with reports, blackboard notes, run metadata, and trace id.
+- Export a reports-only room summary with reports, blackboard notes, run metadata, and trace id while omitting the room goal, full messages, and run output by default.
 - List OpenAI-compatible models and reuse them from the Model field suggestions.
 - Send test Chat Completions or Responses requests through the model router.
 - Set an optional cache scope for `agent:<id>` tests so repeated direct agent-model calls can share the same derived Agent Bus session/cache key.

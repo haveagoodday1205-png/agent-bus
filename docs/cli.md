@@ -445,7 +445,7 @@ agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token .
 agent-bus trace export trace_xxx --format markdown --out trace.md --gateway https://YOUR-DOMAIN/agent-bus --token ...
 ```
 
-Room exports include the room goal, reports, blackboard notes, runs, and messages. Add `--reports-only` to omit full messages for public demos or issue summaries. Gateway responses are already redacted, and the CLI adds another pass over common token-like strings by default. Use `--no-redact` only to disable that extra client-side pass for private archives, and review any export before sharing it for private prompts, logs, domains, and internal machine names.
+Room exports include the room goal, reports, blackboard notes, runs, and messages. Add `--reports-only` to omit the room goal, full messages, and run output for public demos or issue summaries. Gateway responses are already redacted, and the CLI adds another pass over common token-like strings by default. Use `--no-redact` only to disable that extra client-side pass for private archives, and review any export before sharing it for private prompts, logs, domains, and internal machine names.
 
 `--format events` writes a room event bundle (`agent_bus.room_event_bundle`) derived from the room snapshot. Events include contiguous `sequence` numbers and the bundle includes `export_metadata` with source, generated time, reports-only mode, event count, and sequence range. It is designed for durable demos, bug reports, and SDK compatibility fixtures: `agent-bus room replay --in room-events.json` can rebuild a deterministic summary without contacting a gateway or model provider.
 

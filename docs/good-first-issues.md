@@ -37,7 +37,7 @@ These are public-friendly starter tasks that do not require private Agent Bus in
 ## Rooms and exports
 
 - Add a small offline smoke assertion for room directives such as `REPORT`, `BLACKBOARD`, `WAKE`, or `DONE`.
-- Improve `room export --reports-only` formatting while keeping full prompts/messages omitted.
+- Improve `room export --reports-only` formatting while keeping room goals, full messages, and run output omitted.
 - Add a docs example that starts from `npm run demo:room` and ends with a share-safe Markdown report.
 - Add a fixture that proves stale room reminders do not wake completed rooms.
 

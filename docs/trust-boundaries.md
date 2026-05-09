@@ -69,7 +69,7 @@ REPORT / BLACKBOARD summaries only      -> use room export --reports-only
 | Telegram webhook secret and allowed chat IDs | Central service environment or private central config | Limits Telegram control webhook calls for `/status`, `/agents`, and `/run` commands | Treat `/run` like remote task execution; restrict chat IDs and rotate the webhook secret if it leaks |
 | Command adapter permissions | The OS user and workspace that run `runCommand` on the edge machine | Access local tools/files/network/API keys available to that account | Do not run broad shell adapters as privileged users; do not install configs from untrusted sources |
 | Model-router backend keys | Gateway environment or backend-specific secret store | Let the central gateway call configured OpenAI-compatible backends | Do not put provider keys in room prompts, edge pair instructions, reports, or public demo artifacts |
-| Reports-only export | Public-friendly artifact after review | Shares `REPORT` and useful summary text while omitting full room message history by default | Do not assume generated reports are automatically scrubbed; review before publishing |
+| Reports-only export | Public-friendly artifact after review | Shares `REPORT` and useful summary text while omitting the room goal, full room message history, and run output by default | Do not assume generated reports are automatically scrubbed; review before publishing |
 
 ## `/agents` Vs `/nodes`
 

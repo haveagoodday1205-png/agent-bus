@@ -136,7 +136,7 @@ agent-bus room export room_xxx \
   --token ADMIN_TOKEN
 ```
 
-Reports-only exports omit full prompts and messages by default.
+Reports-only exports omit the room goal, full messages, and run output by default.
 
 For the full operator trust map before enabling powerful adapters, read `docs/trust-boundaries.md`. It separates the admin token, short-lived pair code, scoped edge token, command adapter execution scope, model-router access, `/agents` versus `/nodes`, and reports-only export boundary.
 

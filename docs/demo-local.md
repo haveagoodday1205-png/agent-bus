@@ -38,7 +38,7 @@ It shows the room protocol without model calls:
 - complete the room with `DONE`
 - export `agent-bus-room-demo-report.md` via `room export --reports-only`
 
-The reports-only export is the recommended public demo artifact because it omits full prompts/messages while preserving the user-facing result.
+The reports-only export is the recommended public demo artifact because it omits the room goal, full messages, and run output while preserving the user-facing result.
 
 ## Issue-to-PR flagship demo
 

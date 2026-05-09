@@ -51,7 +51,7 @@ const messages = {
     copyStatus: "Copy Status",
     events: "Events",
     exportJson: "Export JSON",
-    exportSummary: "Export Summary",
+    exportSummary: "Export Reports",
     exported: "exported",
     format: "Format",
     gateway: "Gateway",
@@ -238,7 +238,7 @@ const messages = {
     copyStatus: "复制状态命令",
     events: "事件",
     exportJson: "导出 JSON",
-    exportSummary: "导出摘要",
+    exportSummary: "导出报告",
     exported: "已导出",
     format: "格式",
     gateway: "网关",
@@ -1348,7 +1348,7 @@ async function openCurrentRoomTrace() {
 
 function exportCurrentRoomSummary() {
   if (!state.currentRoom?.id) return;
-  downloadJson(`${state.currentRoom.id}-summary.json`, roomExportSummary(state.currentRoom));
+  downloadJson(`${state.currentRoom.id}-reports-summary.json`, roomExportSummary(state.currentRoom));
   logEvent(t("exported"));
 }
 
@@ -1678,10 +1678,12 @@ function roomActiveRunCount(room) {
 
 function roomExportSummary(room) {
   return {
+    object: "agent_bus.room_reports_summary",
+    reports_only: true,
+    sharing_note: "Reports-only export omits the room goal, full messages, and run output by default. Review generated reports before sharing.",
     id: room.id,
     trace_id: room.trace_id,
     title: room.title,
-    goal: room.goal,
     status: room.status,
     created_at: room.created_at,
     updated_at: room.updated_at,

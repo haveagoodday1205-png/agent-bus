@@ -126,7 +126,7 @@ async function main() {
   console.log("5. Exporting reports-only Markdown");
   await runCli(["room", "export", completed.id, "--reports-only", "--out", reportPath, "--gateway", gateway, "--token", token]);
   console.log(`   wrote ${reportPath}`);
-  console.log("Demo complete. Share the Markdown report; it omits full prompts/messages by default.");
+  console.log("Demo complete. Share the Markdown report; it omits the room goal, full messages, and run output by default.");
 }
 
 function start(command, args, env = {}) {

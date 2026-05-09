@@ -61,6 +61,7 @@
 - Adds JS/Python SDK event bundle validators and CLI `agent-bus room replay --strict` so shared room archives can fail fast on bad sequence metadata before replay.
 - Brings JS and Python SDK replay output accounting into parity with the CLI for `run.output` events, started timestamps, exit codes, and stable run ordering.
 - Clarifies the issue-to-PR demo maturity boundary so operators can distinguish the proven no-quota room/artifact workflow from future live GitHub PR automation.
+- Tightens `room export --reports-only` and the Web Console room export so public summaries omit the room goal, full messages, and run output by default.
 - Documents a live-update impact matrix for central Python service changes, edge bridge scripts, edge config changes, and operator-only CLI/docs updates.
 - Adds Web Console quickstart recovery commands so stale queued room hints can be copied with the current gateway and redacted token placeholders.
 - Adds `agent-bus doctor --mode central` for quota-safe Central preflight checks covering admin token strength, data directory persistence, edge token shape, model router backends, Telegram plugin wiring, and readiness endpoints.

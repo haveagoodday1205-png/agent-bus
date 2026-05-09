@@ -7,7 +7,11 @@ if [ -z "$agent_state_id" ]; then
   agent_state_id="main"
 fi
 message="${AGENT_MESSAGE:-}"
-if [ -n "${AGENT_MESSAGE_FILE:-}" ] && [ -r "$AGENT_MESSAGE_FILE" ]; then
+if [ -n "${AGENT_MESSAGE_FILE:-}" ]; then
+  if [ ! -r "$AGENT_MESSAGE_FILE" ]; then
+    printf 'openclaw-agent-bus: AGENT_MESSAGE_FILE is set but is not readable: %s\n' "$AGENT_MESSAGE_FILE" >&2
+    exit 64
+  fi
   message="$(cat "$AGENT_MESSAGE_FILE")"
 fi
 session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
@@ -15,6 +19,27 @@ if [ -n "$session_id" ]; then
   session_id="$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-180)"
 fi
 openclaw_bin="${OPENCLAW_BIN:-${OPENCLAW_COMMAND:-openclaw}}"
+case "$openclaw_bin" in
+  */*)
+    if [ ! -e "$openclaw_bin" ]; then
+      printf 'openclaw-agent-bus: OpenClaw executable does not exist: %s\n' "$openclaw_bin" >&2
+      printf 'openclaw-agent-bus: set OPENCLAW_BIN to the installed openclaw executable, or add openclaw to PATH.\n' >&2
+      exit 127
+    fi
+    if [ ! -x "$openclaw_bin" ]; then
+      printf 'openclaw-agent-bus: OpenClaw executable is not executable: %s\n' "$openclaw_bin" >&2
+      printf 'openclaw-agent-bus: fix file permissions or set OPENCLAW_BIN to an executable path.\n' >&2
+      exit 126
+    fi
+    ;;
+  *)
+    if ! command -v "$openclaw_bin" >/dev/null 2>&1; then
+      printf 'openclaw-agent-bus: OpenClaw executable not found on PATH: %s\n' "$openclaw_bin" >&2
+      printf 'openclaw-agent-bus: install OpenClaw, set OPENCLAW_BIN, or add its directory to PATH.\n' >&2
+      exit 127
+    fi
+    ;;
+esac
 timestamp_prefix="${AGENT_BUS_OPENCLAW_TIMESTAMP_PREFIX:-[Agent Bus 2000-01-01 00:00 UTC; cache-stable envelope, not current time]}"
 
 prompt=$(cat <<EOF

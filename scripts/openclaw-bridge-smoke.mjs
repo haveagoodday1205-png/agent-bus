@@ -34,6 +34,43 @@ console.log('{"result":{"payloads":[{"text":"OPENCLAW_BRIDGE_OK"}]}}');
   );
   fs.chmodSync(fakeOpenClaw, 0o755);
 
+
+  const missingBin = path.join(tempDir, "missing-openclaw");
+  const missingBinResult = spawnSync(bash, [path.join(root, "scripts", "openclaw-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...process.env,
+      OPENCLAW_BIN: missingBin,
+      AGENT_MESSAGE: "diagnostic smoke"
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (missingBinResult.status !== 127) {
+    throw new Error(`missing OpenClaw executable should exit 127, got ${missingBinResult.status}: ${missingBinResult.stderr || missingBinResult.stdout}`);
+  }
+  if (!missingBinResult.stderr.includes("OpenClaw executable does not exist") || !missingBinResult.stderr.includes("OPENCLAW_BIN")) {
+    throw new Error(`missing OpenClaw executable diagnostic was not actionable: ${missingBinResult.stderr}`);
+  }
+
+  const missingMessageFile = path.join(tempDir, "missing-message.txt");
+  const missingMessageResult = spawnSync(bash, [path.join(root, "scripts", "openclaw-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...process.env,
+      OPENCLAW_BIN: fakeOpenClaw,
+      AGENT_MESSAGE_FILE: missingMessageFile
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (missingMessageResult.status !== 64) {
+    throw new Error(`missing message file should exit 64, got ${missingMessageResult.status}: ${missingMessageResult.stderr || missingMessageResult.stdout}`);
+  }
+  if (!missingMessageResult.stderr.includes("AGENT_MESSAGE_FILE") || !missingMessageResult.stderr.includes("not readable")) {
+    throw new Error(`missing message file diagnostic was not actionable: ${missingMessageResult.stderr}`);
+  }
+
   const agentId = "agent bus/weird \"id";
   const safeAgentId = sanitize(agentId);
   const sessionId = "room weird \"session";

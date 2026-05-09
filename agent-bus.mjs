@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const command = argv[0] || "help";
+const gatewayQueryConfigCache = new Map();
 
 const ROOM_EVENT_TYPES = [
   "room.created",
@@ -234,6 +235,7 @@ Usage:
   agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus trace export trace_xxx --format markdown --out trace.md
   agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600]
+  agent-bus status --config edge.config.json [--json]
   agent-bus plugin status --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus plugin telegram test --message "hello" --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus plugin telegram doctor --gateway https://YOUR-DOMAIN/agent-bus --token ... --transport poller
@@ -246,6 +248,8 @@ Gateway queries:
   agent-bus nodes --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus agents --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus health --gateway https://YOUR-DOMAIN/agent-bus
+  agent-bus agents --config edge.config.json
+  agent-bus nodes --config edge.config.json
 
 Environment:
   AGENT_BUS_GATEWAY_URL  default gateway URL for query/connect commands
@@ -462,7 +466,8 @@ async function setup(args) {
   console.log("\nOperator checklist:");
   console.log(`1. Validate this edge: agent-bus doctor --config ${out}`);
   console.log(`2. Start this edge: agent-bus connect --config ${out}`);
-  console.log(`3. Watch it from Central: agent-bus status --gateway ${gateway || "GATEWAY"} --token ADMIN_TOKEN`);
+  console.log(`3. Check this edge locally: agent-bus status --config ${out}`);
+  console.log(`4. Watch rooms from Central: agent-bus status --gateway ${gateway || "GATEWAY"} --token ADMIN_TOKEN`);
 }
 
 async function setupCentral(args) {
@@ -3687,29 +3692,44 @@ function markdownFence(value) {
 
 async function status(args) {
   const jsonOut = args.includes("--json");
-  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || "";
+  const request = resolveGatewayRequestContext(args);
+  const token = request.token;
   const health = await gatewayJson("/health", { auth: false, args });
   let agents = [];
   let rooms = [];
   let nodes = [];
   let authWarning = "";
+  let roomAccess = "full";
+  let roomAccessWarning = "";
   let hydrationMeta = null;
 
   if (token) {
     agents = await gatewayJson("/agents", { auth: true, args });
     nodes = await optionalGatewayJson("/nodes", { auth: true, args }, []);
-    rooms = await gatewayJson("/rooms", { auth: true, args });
-    const hydrated = await hydrateStatusRooms(rooms, args);
-    rooms = hydrated.rooms;
-    hydrationMeta = hydrated.meta;
+    try {
+      rooms = await gatewayJson("/rooms", { auth: true, args });
+      const hydrated = await hydrateStatusRooms(rooms, args);
+      rooms = hydrated.rooms;
+      hydrationMeta = hydrated.meta;
+    } catch (err) {
+      if (!isUnauthorizedGatewayError(err)) throw err;
+      roomAccess = "limited";
+      roomAccessWarning = "This token can read agents and nodes, but room inventory is admin-only; pass an admin token for room and recovery details.";
+    }
   } else {
-    authWarning = "Pass --token or AGENT_BUS_TOKEN to include agents, nodes, and rooms.";
+    authWarning = "Pass --token, set AGENT_BUS_TOKEN, or use --config with a token-bearing config to include agents, nodes, and rooms.";
   }
 
   const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
   const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
-  const result = summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds, queuedRunStaleSeconds });
-  if (hydrationMeta) result.status_meta = { ...(result.status_meta || {}), room_details: hydrationMeta };
+  const result = summarizeStatus({ health, agents, rooms, nodes, authWarning, roomAccess, roomAccessWarning, staleSeconds, queuedRunStaleSeconds });
+  if (hydrationMeta || roomAccess !== "full") {
+    result.status_meta = {
+      ...(result.status_meta || {}),
+      ...(hydrationMeta ? { room_details: hydrationMeta } : {}),
+      room_access: roomAccess
+    };
+  }
   applyStatusRoomDetailCoverage(result);
   if (jsonOut) {
     printJson(result);
@@ -3928,7 +3948,17 @@ async function checkTelegramBotApi(checks, options) {
   }
 }
 
-function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSeconds = 180, queuedRunStaleSeconds = 21600 }) {
+function summarizeStatus({
+  health,
+  agents,
+  rooms,
+  nodes,
+  authWarning,
+  roomAccess = "full",
+  roomAccessWarning = "",
+  staleSeconds = 180,
+  queuedRunStaleSeconds = 21600
+}) {
   const agentList = Array.isArray(agents) ? agents : [];
   const roomList = Array.isArray(rooms) ? rooms : [];
   const nodeList = Array.isArray(nodes) ? nodes : [];
@@ -4009,14 +4039,14 @@ function summarizeStatus({ health, agents, rooms, nodes, authWarning, staleSecon
       stale_queued_runs: staleQueuedRunsForRoom(room, { queuedRunStaleSeconds })
         .map((run) => run.id)
     })),
-    warnings: statusWarnings({ authWarning, staleQueuedRuns: runSummary.staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints })
+    warnings: statusWarnings({ authWarning, roomAccessWarning, staleQueuedRuns: runSummary.staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints })
   };
-  result.readiness = statusReadiness(result, authWarning);
-  result.next_actions = statusNextActions(result, authWarning);
+  result.readiness = statusReadiness(result, { authWarning });
+  result.next_actions = statusNextActions(result, { authWarning, roomAccess });
   return result;
 }
 
-function statusReadiness(result, authWarning = "") {
+function statusReadiness(result, { authWarning = "" } = {}) {
   const s = result.summary || {};
   if (!result.health?.ok) {
     return {
@@ -4067,7 +4097,7 @@ function statusReadiness(result, authWarning = "") {
   };
 }
 
-function statusNextActions(result, authWarning = "") {
+function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {}) {
   const s = result.summary || {};
   const actions = [];
   if (!result.health?.ok) {
@@ -4087,6 +4117,9 @@ function statusNextActions(result, authWarning = "") {
   }
   if (!authWarning && Number(s.registered_agents || 0) > Number(s.agents || 0)) {
     actions.push("Some registered agents are offline or stale; inspect the Nodes section before routing work to them.");
+  }
+  if (!authWarning && roomAccess !== "full") {
+    actions.push("Pass an admin token to inspect rooms, export room history, or recover stale queued work.");
   }
   if (Number(s.queued || 0) > 0 && Number(s.busy_agents || 0) === 0) {
     actions.push("Poll or restart edge services so queued runs can be claimed.");
@@ -4268,8 +4301,9 @@ function isStaleQueuedRun(run, queuedRunStaleSeconds) {
   return (Date.now() - created) / 1000 > queuedRunStaleSeconds;
 }
 
-function statusWarnings({ authWarning, staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints }) {
+function statusWarnings({ authWarning, roomAccessWarning, staleQueuedRuns, queuedRunStaleSeconds, health, recoveryHints }) {
   const warnings = authWarning ? [authWarning] : [];
+  if (roomAccessWarning) warnings.push(roomAccessWarning);
   const count = staleQueuedRuns.length;
   if (count) {
     const queueNote = Number(health?.queued || 0) === 0 ? "; gateway queue is empty" : "";
@@ -4600,12 +4634,53 @@ async function getJson(pathname, options) {
   printJson(await gatewayJson(pathname, { ...options, args: argv }));
 }
 
+function resolveGatewayRequestContext(args = []) {
+  const config = loadGatewayQueryConfig(optionValue(args, "--config"));
+  return {
+    config,
+    gateway: optionValue(args, "--gateway")
+      || process.env.AGENT_BUS_GATEWAY_URL
+      || config?.gatewayUrl
+      || "http://127.0.0.1:8788",
+    token: optionValue(args, "--token")
+      || process.env.AGENT_BUS_TOKEN
+      || config?.token
+      || ""
+  };
+}
+
+function loadGatewayQueryConfig(configPath) {
+  if (!configPath) return null;
+  const resolved = path.resolve(expandHome(configPath));
+  if (gatewayQueryConfigCache.has(resolved)) return gatewayQueryConfigCache.get(resolved);
+  let config;
+  try {
+    config = readJsonFile(resolved);
+  } catch (err) {
+    throw new Error(`Failed to read --config ${resolved}: ${err.message || String(err)}`);
+  }
+  if (!isPlainObject(config)) {
+    throw new Error(`Failed to read --config ${resolved}: config must be a JSON object.`);
+  }
+  const mode = inferDoctorMode(config);
+  const context = {
+    path: resolved,
+    mode,
+    gatewayUrl: String(config.gatewayUrl || (mode === "central" ? localCentralGatewayUrl(config) : "") || "").trim(),
+    token: String(config.token || "").trim(),
+    tokenScope: String(config.tokenScope || config.token_scope || "").trim()
+  };
+  gatewayQueryConfigCache.set(resolved, context);
+  return context;
+}
+
 async function gatewayJson(pathname, options = {}) {
   const args = options.args || argv;
-  const gateway = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL || "http://127.0.0.1:8788";
-  const token = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN || "";
+  const request = resolveGatewayRequestContext(args);
+  const gateway = request.gateway;
+  const token = request.token;
   if (options.auth && !token) {
-    throw new Error("This endpoint requires --token or AGENT_BUS_TOKEN.");
+    throw new Error("This endpoint requires --token, AGENT_BUS_TOKEN, or --config with a token-bearing config.");
   }
   const url = gatewayEndpoint(gateway, pathname);
   const timeoutMs = positiveIntegerOption(
@@ -4636,7 +4711,7 @@ async function gatewayJson(pathname, options = {}) {
   }
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(text || `${res.status} ${res.statusText}`);
+    throw new Error(`${res.status} ${res.statusText}${text ? `: ${trimOneLine(text)}` : ""}`);
   }
   return parseJsonText(text);
 }
@@ -4647,6 +4722,10 @@ async function optionalGatewayJson(pathname, options = {}, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function isUnauthorizedGatewayError(err) {
+  return [401, 403].includes(httpStatusFromError(err?.message || err));
 }
 
 function parseJsonText(text) {

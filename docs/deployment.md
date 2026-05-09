@@ -132,6 +132,7 @@ For live deployments, roll changes out from central to edges in small reversible
 3. Check live room and node state before touching services: `agent-bus status --gateway ... --token ...`, then `agent-bus room inspect ROOM_ID --gateway ... --token ...` for any room flagged with stale queued work or unexpectedly old running work.
 4. Restart the central Python service before edge bridge scripts when the change affects room prompts, queue recovery, trace lookup, or model routing. With systemd, use `systemctl restart agent-bus-central` and then check `journalctl -u agent-bus-central -n 100 --no-pager` plus `/health`.
 5. Restart edge services one node at a time when bridge scripts or edge config changed. Confirm each node reappears in `agent-bus status` before moving to the next node.
+   On the edge host, prefer `agent-bus status --config edge.config.json` first because it reuses the local gateway/token and immediately shows whether that node and its agents are visible. Use an admin token only when you also need room inventory or recovery actions.
 6. For config-only changes, prefer adding new keys while keeping old keys valid until all edges have restarted. Do not rotate tokens and bridge commands in the same step; verify the new token or command with `agent-bus doctor --config edge.config.json` first.
 7. Keep secrets out of reports and commits: share service names, commit ids, room ids, and redacted command shapes rather than raw tokens, full private URLs, or model-provider quota details.
 
@@ -177,6 +178,8 @@ node edge-node.mjs connect --config edge.config.json
 ```
 
 For least privilege, use pairing or pre-provision a token hash in `edgeTokens` instead of sharing the admin token with every edge node.
+
+After the edge connects, run `agent-bus status --config edge.config.json` on that host to confirm the node and agents are visible without retyping the gateway URL or token. If the config holds only an edge-scoped token, status will still confirm edge visibility but will warn that room inspection and stale-run recovery require an admin token.
 
 Admin token management endpoints:
 

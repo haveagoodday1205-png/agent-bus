@@ -82,6 +82,12 @@ if [ "${CLAUDECODE_NO_SESSION_PERSISTENCE:-0}" = "1" ]; then
 fi
 args+=("$message")
 
+if ! command -v "$claude_command" >/dev/null 2>&1; then
+  echo "[claudecode-bridge] claude command not found: $claude_command" >&2
+  echo "[claudecode-bridge] Set CLAUDECODE_COMMAND or CLAUDE_CODE_COMMAND to the path of your Claude CLI binary, or ensure 'claude' is on PATH." >&2
+  exit 3
+fi
+
 if [ -n "$working_dir" ]; then
   if [ ! -d "$working_dir" ]; then
     echo "[claudecode-bridge] CLAUDECODE_CWD does not exist or is not a directory: $working_dir" >&2

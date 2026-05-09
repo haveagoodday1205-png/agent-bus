@@ -3,13 +3,24 @@ set -euo pipefail
 
 message="${AGENT_MESSAGE:-}"
 message_file=""
-if [ -n "${AGENT_MESSAGE_FILE:-}" ] && [ -r "$AGENT_MESSAGE_FILE" ]; then
-  message_file="$AGENT_MESSAGE_FILE"
+agent_bus_diag() {
+  printf 'Hermes Agent Bus: %s\n' "$*" >&2
+}
+if [ -n "${AGENT_MESSAGE_FILE:-}" ]; then
+  if [ -r "$AGENT_MESSAGE_FILE" ]; then
+    message_file="$AGENT_MESSAGE_FILE"
+  else
+    agent_bus_diag "AGENT_MESSAGE_FILE is not readable ($AGENT_MESSAGE_FILE); using AGENT_MESSAGE fallback."
+  fi
 fi
 
-session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
+raw_session_id="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
+session_id="$raw_session_id"
 if [ -n "$session_id" ]; then
   session_id="$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-120)"
+  if [ "$session_id" != "$raw_session_id" ]; then
+    agent_bus_diag "normalized session id for Hermes compatibility (allowed: A-Za-z0-9_.-, max 120 chars)."
+  fi
 fi
 
 hermes_root="${HERMES_AGENT_ROOT:-/usr/local/lib/hermes-agent}"
@@ -20,7 +31,11 @@ if [ -z "$python_bin" ] && [ -x "$hermes_root/venv/bin/python3" ]; then
 fi
 python_bin="${python_bin:-python3}"
 
-if [ -n "$session_id" ] && [ -d "$hermes_root" ]; then
+if [ -z "$session_id" ]; then
+  agent_bus_diag "AGENT_SESSION_ID/AGENT_CACHE_KEY is not set; using stateless hermes CLI fallback."
+elif [ ! -d "$hermes_root" ]; then
+  agent_bus_diag "HERMES_AGENT_ROOT does not exist ($hermes_root); using hermes CLI fallback."
+elif [ -n "$session_id" ]; then
   if [ -n "$message_file" ] && [ -r "$message_file" ]; then
     export HERMES_AGENT_BUS_MESSAGE_FILE="$message_file"
     unset HERMES_AGENT_BUS_MESSAGE

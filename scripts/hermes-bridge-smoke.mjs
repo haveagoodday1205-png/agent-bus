@@ -53,6 +53,9 @@ try {
 
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`bridge exited ${result.status}: ${result.stderr || result.stdout}`);
+  if (!result.stderr.includes("normalized session id for Hermes compatibility")) {
+    throw new Error(`missing session normalization diagnostic in stderr: ${result.stderr}`);
+  }
   if (!result.stderr.includes("HermesCLI is missing")) {
     throw new Error(`missing bootstrap fallback diagnostic in stderr: ${result.stderr}`);
   }
@@ -77,6 +80,26 @@ try {
   if (fileResult.status !== 0) throw new Error(`file bridge exited ${fileResult.status}: ${fileResult.stderr || fileResult.stdout}`);
   if (!fileResult.stdout.includes("fallback hermes argv: <chat> <-q> <message from readable file> <-Q>")) {
     throw new Error(`fallback hermes command did not prefer readable message file: ${fileResult.stdout}`);
+  }
+
+  const missingMessageFile = path.join(tempDir, "missing-message.txt");
+  const missingFileResult = spawnSync(bash, [path.join(root, "scripts", "hermes-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...env,
+      AGENT_MESSAGE: "message after missing file",
+      AGENT_MESSAGE_FILE: missingMessageFile
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (missingFileResult.error) throw missingFileResult.error;
+  if (missingFileResult.status !== 0) throw new Error(`missing-file bridge exited ${missingFileResult.status}: ${missingFileResult.stderr || missingFileResult.stdout}`);
+  if (!missingFileResult.stderr.includes("AGENT_MESSAGE_FILE is not readable")) {
+    throw new Error(`missing unreadable message-file diagnostic in stderr: ${missingFileResult.stderr}`);
+  }
+  if (!missingFileResult.stdout.includes("fallback hermes argv: <chat> <-q> <message after missing file> <-Q>")) {
+    throw new Error(`fallback hermes command did not use AGENT_MESSAGE after missing file: ${missingFileResult.stdout}`);
   }
 
   const largeMessageFile = path.join(tempDir, "large-message.txt");

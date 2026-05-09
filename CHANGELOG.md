@@ -76,6 +76,8 @@
 - Adds a README timed-path quickstart for 2-minute no-secret proof, 10-minute remote assistant node, and 15-minute Telegram operator bot setup.
 - Adds edge doctor checks for command bridge script paths and status warnings when active-room detail hydration is skipped, truncated, or partially failed.
 - Hardens Claude Code, Hermes, and OpenClaw bridge scripts with broader tool discovery, long prompt file handling, configurable OpenClaw binaries, and OpenClaw executable package mode.
+- Lets read-only gateway commands such as `status`, `agents`, and `nodes` use `--config edge.config.json` so edge operators can verify Central visibility without retyping gateway URLs or tokens.
+- Adds bridge-side actionable diagnostics for missing Claude Code/OpenClaw binaries and unreadable Agent Bus message files while keeping prompt contents out of stderr.
 
 ## 0.5.5 - Compact room session keys
 

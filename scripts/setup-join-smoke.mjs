@@ -40,7 +40,7 @@ try {
   assert(/agent-bus\.mjs/.test(centralExecStart), "central setup service should use the current CLI script when --agent-bus-path is omitted");
   assert(!/[/\\]agent-bus(\s|")/.test(centralExecStart.replace(/agent-bus\.mjs/g, "")), "central setup service should not point at a guessed agent-bus executable");
 
-  run([
+  const edgeSetup = run([
     "setup",
     "edge",
     "--gateway",
@@ -57,6 +57,8 @@ try {
   assert(edgeJson.gatewayUrl === gateway, "edge setup did not persist gatewayUrl");
   assert(edgeJson.token === edgeToken, "edge setup did not persist edge token");
   assert(edgeJson.tokenScope === "edge", "edge setup should mark tokenScope=edge");
+  assert(edgeSetup.stdout.includes(`agent-bus status --config ${edgeConfig}`), "edge setup did not print the local status checklist command");
+  assert(edgeSetup.stdout.includes(`agent-bus status --gateway ${gateway} --token ADMIN_TOKEN`), "edge setup did not print the Central status checklist command");
 
   const result = {
     ok: true,

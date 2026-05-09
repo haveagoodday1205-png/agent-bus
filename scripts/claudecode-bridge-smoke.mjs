@@ -70,6 +70,19 @@ console.log("CLAUDECODE_BRIDGE_OK");
   assert(badCwd.status === 2, "invalid CLAUDECODE_CWD should fail before invoking claude");
   assert(/CLAUDECODE_CWD does not exist/.test(badCwd.stderr || ""), "invalid CLAUDECODE_CWD error should be actionable");
 
+  const missingCmd = spawnSync(bash, [path.join(root, "scripts", "claudecode-agent-bus.sh")], {
+    cwd: root,
+    env: {
+      ...cleanEnv(),
+      CLAUDECODE_COMMAND: "/nonexistent/path/to/claude-fake-binary",
+      AGENT_MESSAGE: "hello"
+    },
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert(missingCmd.status === 3, "missing claude command should exit 3");
+  assert(/claude command not found/.test(missingCmd.stderr || ""), "missing command error should be actionable");
+
   console.log("claudecode bridge smoke ok");
 } catch (error) {
   console.error(error.stack || error.message || String(error));

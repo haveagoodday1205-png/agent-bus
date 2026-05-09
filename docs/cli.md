@@ -122,9 +122,12 @@ Then connect:
 ```bash
 agent-bus doctor --config edge.config.json
 agent-bus connect --config edge.config.json
+agent-bus status --config edge.config.json
 ```
 
 The machine now polls the central gateway and can receive tasks. It does not need an inbound public port.
+
+`agent-bus status --config edge.config.json` reuses `gatewayUrl` and `token` from the local config, so it is the fastest no-secret way to confirm that a new edge can see Central and that its agents are online. When that config only has an edge-scoped token, status still shows node and agent inventory but warns that room history and recovery details remain admin-only.
 
 For the shortest first-run path, use `setup edge` to combine config creation, zero-quota doctor checks, and optional service template generation:
 
@@ -189,9 +192,12 @@ Check gateway and room visibility with status:
 ```bash
 agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ***
 agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token *** --json
+agent-bus status --config edge.config.json
 ```
 
 Human output includes a `Readiness` line and `Next actions` list before the detailed inventory, then operator labels for node freshness (`online/fresh`, `stale`, or `unknown`), node agent membership from the authenticated `/nodes` inventory, agent activity (`running`, `queued`, `busy/room-active`, or `idle`), ping reachability (`reachable`, `unreachable`, `unhealthy`, `not configured`, or `unknown`), and last-run health (`ok`, `failed`, `running`, or `unknown`). Unlike `/agents`, which lists currently usable agents, `/nodes` and the status Nodes section keep registered nodes visible after they become stale so operators can tell "known but offline/stale" apart from "never registered". By default, status hydrates up to 25 active room details concurrently so an agent is marked `running` or `queued` only when it has live non-terminal room work; pass `--room-detail-limit N` to tune the detail count, `--room-detail-concurrency N` to tune parallel detail requests, or `--no-room-details` for the older lightweight summary-only behavior. When active-room detail coverage is skipped, truncated by the limit, or partially fails, status now emits an explicit warning plus a follow-up action because busy/stale queued analysis is only as complete as the hydrated room set. JSON output includes `status_meta.room_details` with `coverage`, `active_total`, `requested`, `hydrated`, `failed`, `omitted`, and `skipped` so scripts can see whether room analysis was full, partial, skipped, or not needed. All gateway CLI calls accept `--gateway-timeout-ms N` or `AGENT_BUS_GATEWAY_TIMEOUT_MS` when testing slow or filtered Central URLs; failures include a Central reachability hint instead of a raw fetch error. Old queued room snapshots are treated as stale/orphan candidates after 21600 seconds by default: they are labeled as `stale_queued_runs` in JSON/human output, surfaced in `recovery_hints` with copyable `room inspect`, guarded `room recover --yes`, and explicit `room pause` commands, and ignored for `busy_agents` and agent `activity` so an empty gateway queue is not confused with live queued work. Tune that adoption/ops threshold with `--queued-run-stale-seconds N` or `AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS`; when you tune it, status includes the same threshold flag in copyable inspect/recover commands so a follow-up command evaluates the same window. Running room runs are not marked stale by this threshold. The CLI labels nodes stale after 180 seconds by default; pass `--stale-seconds N` or set `AGENT_BUS_STATUS_STALE_SECONDS` to match a test gateway or custom heartbeat policy. JSON output preserves the raw fields and also includes derived `readiness`, `next_actions`, node `freshness`, agent `freshness`, `activity`, `active_runs`, `stale_queued_runs`, `current_run`, `ping_label`, `last_run_health`, and `recovery_hints` fields.
+
+For other read-only gateway queries such as `agent-bus agents`, `agent-bus nodes`, or `agent-bus manifest`, pass `--config edge.config.json` to reuse the same local gateway/token settings instead of retyping them.
 
 Edge commands receive task metadata in environment variables:
 

@@ -129,7 +129,11 @@ async function main() {
   step("Verifying central preflight doctor");
   const centralDoctor = await runDoctor(["--mode", "central", "--config", centralConfig, "--gateway", gateway, "--token", token, "--json"]);
   assertDoctor(centralDoctor, {
-    requiredPasses: ["doctor mode", "central dataDir", "central health endpoint", "central readiness status"]
+    requiredPasses: ["doctor mode", "central dataDir", "central health endpoint", "central readiness status", "runtime edge connectivity", "runtime edge tokens"]
+  });
+  const centralProductionDoctor = await runDoctor(["--mode", "central", "--production", "--config", centralConfig, "--gateway", gateway, "--token", token, "--json"]);
+  assertDoctor(centralProductionDoctor, {
+    requiredPasses: ["doctor profile", "runtime edge connectivity", "runtime edge tokens"]
   });
 
   step("Verifying gateway request failure guidance");

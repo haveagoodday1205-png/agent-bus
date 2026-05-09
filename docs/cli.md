@@ -451,6 +451,7 @@ This runs the edge health checks locally. URL ping checks do not run model infer
 agent-bus doctor --config edge.config.json
 agent-bus doctor --config edge.config.json --json
 agent-bus doctor --mode central --config central.config.json --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
+agent-bus doctor --mode central --production --config central.config.json --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
 agent-bus doctor --config edge.config.json --bundle diagnostics.json
 agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
 ```
@@ -463,7 +464,7 @@ Doctor is intentionally shallow and quota-safe: URL pings use cheap reachability
 
 - Node.js runtime
 - config file readability
-- central mode preflight for admin token strength, persistent `dataDir` writability, scoped edge token shape, model-router backend setup, Telegram plugin environment wiring, and Central readiness endpoints
+- central mode preflight for admin token strength, persistent `dataDir` writability, static and runtime scoped edge token state, model-router backend setup, Telegram plugin environment wiring, and Central readiness endpoints
 - local tool availability for command adapters
 - missing or placeholder gateway URL
 - malformed gateway URL
@@ -484,7 +485,7 @@ Doctor is intentionally shallow and quota-safe: URL pings use cheap reachability
 - authenticated `/rooms` listing without creating a room
 - local edge health probe
 
-It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation. For example, `/rooms` may warn with an edge token because room listing is an operator/admin endpoint, while `/v1/models` may warn with an edge token unless the gateway has edge agent models enabled. In central mode, placeholder admin tokens, unwritable data directories, malformed ports, duplicate edge tokens, and invalid backend URLs are hard failures; missing optional edge tokens, backend key environment variables, or Telegram allowlists are warnings.
+It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation. For example, `/rooms` may warn with an edge token because room listing is an operator/admin endpoint, while `/v1/models` may warn with an edge token unless the gateway has edge agent models enabled. In central mode, placeholder admin tokens, unwritable data directories, malformed ports, duplicate static edge tokens, and invalid backend URLs are hard failures; missing backend key environment variables or Telegram allowlists are warnings. Empty `edgeTokens` in `central.config.json` is healthy when edges were created through pair codes, the Web Console, or the runtime edge-token registry. Add `--production` to fail on short admin tokens, missing live edge connectivity, missing active runtime edge tokens, and incomplete enabled Telegram control wiring.
 
 `diagnostics bundle` writes a redacted support artifact for GitHub issues or maintainer triage. By default it redacts bearer tokens, provider keys, scoped edge tokens, hostnames, and private paths. Use `--include-hosts` or `--include-paths` only in private support channels where those details are safe to share.
 

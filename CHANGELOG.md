@@ -64,6 +64,8 @@
 - Documents a live-update impact matrix for central Python service changes, edge bridge scripts, edge config changes, and operator-only CLI/docs updates.
 - Adds Web Console quickstart recovery commands so stale queued room hints can be copied with the current gateway and redacted token placeholders.
 - Adds `agent-bus doctor --mode central` for quota-safe Central preflight checks covering admin token strength, data directory persistence, edge token shape, model router backends, Telegram plugin wiring, and readiness endpoints.
+- Splits Central doctor edge-token checks into static config tokens, runtime token registry, and live edge connectivity so Web Console/pair-code deployments do not look misconfigured just because `central.config.json` has no `edgeTokens`.
+- Adds a Central doctor `--production` profile that escalates short admin tokens, missing live edges, missing active runtime edge tokens, and incomplete enabled Telegram control wiring from warnings to failures.
 
 ## 0.5.5 - Compact room session keys
 

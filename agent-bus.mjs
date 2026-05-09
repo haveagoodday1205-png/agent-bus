@@ -671,6 +671,7 @@ async function collectDoctorContext(args) {
   const gatewayArg = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL;
   const tokenArg = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN;
   const localOnly = args.includes("--local-only");
+  const production = args.includes("--production");
   const requestedMode = doctorRequestedMode(args);
   const checks = [];
   let config = null;
@@ -701,7 +702,7 @@ async function collectDoctorContext(args) {
   const configDir = path.dirname(path.resolve(configPath));
 
   if (mode === "central") {
-    validateCentralConfig(checks, config, gatewayUrl, token, configDir);
+    validateCentralConfig(checks, config, gatewayUrl, token, configDir, { production });
   } else {
     validateEdgeConfig(checks, config, gatewayUrl, token, configDir);
     checkConfiguredTools(checks, config, configDir);
@@ -711,7 +712,7 @@ async function collectDoctorContext(args) {
     addCheck(checks, "pass", "gateway checks skipped", "--local-only");
   } else {
     if (mode === "central") {
-      await checkCentralGateway(checks, gatewayUrl, token);
+      await checkCentralGateway(checks, gatewayUrl, token, { production });
     } else {
       await checkGateway(checks, gatewayUrl, token, config);
     }
@@ -727,6 +728,7 @@ async function collectDoctorContext(args) {
     tokenPresent: Boolean(token && !isPlaceholder(token)),
     configDir,
     mode,
+    production,
     checks
   };
 }
@@ -1051,7 +1053,8 @@ async function checkGateway(checks, gatewayUrl, token, config = {}) {
   }
 }
 
-async function checkCentralGateway(checks, gatewayUrl, token) {
+async function checkCentralGateway(checks, gatewayUrl, token, options = {}) {
+  const production = options.production === true;
   if (!gatewayUrl || isPlaceholder(gatewayUrl) || !validateGatewayUrl(gatewayUrl).ok) return;
   const health = await fetchJson(gatewayUrl, "/health", "", 8000);
   if (health.ok) {
@@ -1069,11 +1072,34 @@ async function checkCentralGateway(checks, gatewayUrl, token) {
 
   if (!token || isPlaceholder(token)) return;
   const status = await fetchJson(gatewayUrl, "/v1/agent-bus/status", token, 8000);
+  let summary = {};
   if (status.ok) {
-    const summary = status.data.summary || status.data.health || {};
+    summary = status.data.summary || status.data.health || {};
     addCheck(checks, "pass", "central readiness status", `nodes=${summary.nodes ?? "?"} agents=${summary.agents ?? "?"} queued=${summary.queued ?? "?"}`);
+    const onlineNodes = Number(summary.nodes ?? 0);
+    const onlineAgents = Number(summary.agents ?? 0);
+    if (onlineNodes > 0 || onlineAgents > 0) {
+      addCheck(checks, "pass", "runtime edge connectivity", `nodes=${onlineNodes} agents=${onlineAgents}`);
+    } else {
+      addCheck(checks, production ? "fail" : "warn", "runtime edge connectivity", "no online edges", "Create or join at least one edge token, then start an edge service.");
+    }
   } else {
     addEndpointFailure(checks, "central readiness status", status, "The admin token must be valid to read /v1/agent-bus/status.");
+  }
+
+  const edgeTokens = await fetchJson(gatewayUrl, "/edge/tokens", token, 8000);
+  if (edgeTokens.ok) {
+    const list = asList(edgeTokens.data);
+    const active = list.filter((item) => String(item.status || "active").toLowerCase() === "active");
+    if (active.length) {
+      addCheck(checks, "pass", "runtime edge tokens", `${active.length}/${list.length} active`);
+    } else if (Number(summary.nodes ?? 0) > 0) {
+      addCheck(checks, "pass", "runtime edge tokens", "no active registry tokens, but online edges are present");
+    } else {
+      addCheck(checks, production ? "fail" : "warn", "runtime edge tokens", "none active", "Create an edge token from the Web Console, pair-code flow, or agent-bus pair create.");
+    }
+  } else {
+    addEndpointFailure(checks, "runtime edge tokens", edgeTokens, "Upgrade Central if you need token registry diagnostics.");
   }
 }
 
@@ -1780,8 +1806,10 @@ function checkConfiguredTools(checks, config, baseDir) {
   }
 }
 
-function validateCentralConfig(checks, config, gatewayUrl, token, baseDir) {
+function validateCentralConfig(checks, config, gatewayUrl, token, baseDir, options = {}) {
+  const production = options.production === true;
   addCheck(checks, "pass", "doctor mode", "central");
+  if (production) addCheck(checks, "pass", "doctor profile", "production");
 
   const host = String(config.host || process.env.AGENT_BUS_HOST || "127.0.0.1").trim();
   if (host) {
@@ -1804,22 +1832,23 @@ function validateCentralConfig(checks, config, gatewayUrl, token, baseDir) {
     addCheck(checks, "warn", "public gatewayUrl", gatewayStatus.error || "not configured", "Set gatewayUrl/AGENT_BUS_GATEWAY_URL to the public reverse-proxy URL users and edges will join.");
   }
 
-  validateCentralToken(checks, token);
+  validateCentralToken(checks, token, { production });
   validateCentralDataDir(checks, config, baseDir);
   validateCentralEdgeTokens(checks, config);
   validateCentralDefaults(checks, config);
   validateCentralModelRouter(checks, config);
-  validateCentralTelegram(checks, config);
+  validateCentralTelegram(checks, config, { production });
 }
 
-function validateCentralToken(checks, token) {
+function validateCentralToken(checks, token, options = {}) {
+  const production = options.production === true;
   const text = String(token || "").trim();
   if (!text || isPlaceholder(text)) {
     addCheck(checks, "fail", "admin token", "missing or placeholder", "Set AGENT_BUS_TOKEN or central.config.json token to a long random value before exposing Central.");
     return;
   }
   if (text.length < 24) {
-    addCheck(checks, "warn", "admin token", "configured but short", "Use at least 24 random characters for operator/admin access.");
+    addCheck(checks, production ? "fail" : "warn", "admin token", "configured but short", "Use at least 24 random characters for operator/admin access.");
     return;
   }
   addCheck(checks, "pass", "admin token", "configured");
@@ -1859,17 +1888,17 @@ function validateCentralDataDir(checks, config, baseDir) {
 function validateCentralEdgeTokens(checks, config) {
   const raw = Array.isArray(config.edgeTokens) ? config.edgeTokens : [];
   if (!raw.length) {
-    addCheck(checks, "warn", "edge tokens", "none configured", "Create scoped edge tokens or pair codes before expecting edges to connect.");
+    addCheck(checks, "pass", "static edge tokens", "none in config; runtime registry or pair codes may be used");
     return;
   }
   const tokens = raw.map(edgeTokenValue).filter(Boolean);
   const placeholders = tokens.filter((item) => isPlaceholder(item));
   const short = tokens.filter((item) => !isPlaceholder(item) && item.length < 20);
   const duplicates = duplicateValues(tokens);
-  if (placeholders.length) addCheck(checks, "fail", "edge tokens", `${placeholders.length} placeholder token(s)`, "Replace example edge tokens before exposing Central.");
-  if (short.length) addCheck(checks, "warn", "edge tokens strength", `${short.length} short token(s)`, "Use long random scoped edge tokens.");
-  if (duplicates.length) addCheck(checks, "fail", "edge tokens duplicates", `${duplicates.length} duplicate token(s)`, "Each edge token must be unique.");
-  if (!placeholders.length && !duplicates.length) addCheck(checks, "pass", "edge tokens", `${tokens.length} configured`);
+  if (placeholders.length) addCheck(checks, "fail", "static edge tokens", `${placeholders.length} placeholder token(s)`, "Replace example edge tokens before exposing Central.");
+  if (short.length) addCheck(checks, "warn", "static edge tokens strength", `${short.length} short token(s)`, "Use long random scoped edge tokens.");
+  if (duplicates.length) addCheck(checks, "fail", "static edge tokens duplicates", `${duplicates.length} duplicate token(s)`, "Each edge token must be unique.");
+  if (!placeholders.length && !duplicates.length) addCheck(checks, "pass", "static edge tokens", `${tokens.length} configured`);
 }
 
 function edgeTokenValue(item) {
@@ -1948,7 +1977,8 @@ function validateCentralBackend(checks, backend) {
   }
 }
 
-function validateCentralTelegram(checks, config) {
+function validateCentralTelegram(checks, config, options = {}) {
+  const production = options.production === true;
   const plugin = config.plugins?.telegramBot;
   const pluginConfig = isPlainObject(plugin) ? plugin : {};
   const envEnabled = envBoolean("AGENT_BUS_TELEGRAM_ENABLED");
@@ -1961,19 +1991,19 @@ function validateCentralTelegram(checks, config) {
   addCheck(checks, "pass", "telegram plugin", dryRun ? "enabled dry-run" : "enabled");
   const botTokenEnv = pluginConfig.botTokenEnv || "AGENT_BUS_TELEGRAM_BOT_TOKEN";
   const chatIdEnv = pluginConfig.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID";
-  addCheck(checks, process.env[botTokenEnv] || dryRun ? "pass" : "warn", "telegram bot token env", process.env[botTokenEnv] ? `${botTokenEnv} set` : `${botTokenEnv} not set`, "Set the bot token env var or keep dryRun enabled.");
-  addCheck(checks, process.env[chatIdEnv] || dryRun ? "pass" : "warn", "telegram chat id env", process.env[chatIdEnv] ? `${chatIdEnv} set` : `${chatIdEnv} not set`, "Set the operator chat id env var or keep dryRun enabled.");
+  addCheck(checks, process.env[botTokenEnv] || dryRun ? "pass" : production ? "fail" : "warn", "telegram bot token env", process.env[botTokenEnv] ? `${botTokenEnv} set` : `${botTokenEnv} not set`, "Set the bot token env var or keep dryRun enabled.");
+  addCheck(checks, process.env[chatIdEnv] || dryRun ? "pass" : production ? "fail" : "warn", "telegram chat id env", process.env[chatIdEnv] ? `${chatIdEnv} set` : `${chatIdEnv} not set`, "Set the operator chat id env var or keep dryRun enabled.");
 
   const control = isPlainObject(pluginConfig.control) ? pluginConfig.control : {};
   const controlEnabled = envBoolean("AGENT_BUS_TELEGRAM_CONTROL_ENABLED") ?? (control.enabled === true);
   if (controlEnabled) {
     const secretEnv = control.secretTokenEnv || "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET";
-    addCheck(checks, process.env[secretEnv] ? "pass" : "warn", "telegram webhook secret", process.env[secretEnv] ? `${secretEnv} set` : `${secretEnv} not set`, "Set a webhook secret before accepting public Telegram callbacks.");
+    addCheck(checks, process.env[secretEnv] ? "pass" : production ? "fail" : "warn", "telegram webhook secret", process.env[secretEnv] ? `${secretEnv} set` : `${secretEnv} not set`, "Set a webhook secret before accepting public Telegram callbacks.");
     const allowedChats = telegramAllowedChatIds(pluginConfig, control);
     if (allowedChats.length) {
       addCheck(checks, "pass", "telegram allowed chats", `${allowedChats.length} configured`);
     } else {
-      addCheck(checks, "warn", "telegram allowed chats", "not restricted", "Set allowedChatIds for production control bots.");
+      addCheck(checks, production ? "fail" : "warn", "telegram allowed chats", "not restricted", "Set allowedChatIds for production control bots.");
     }
   }
   const conversation = isPlainObject(control.conversation) ? control.conversation : {};

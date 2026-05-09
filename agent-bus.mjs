@@ -1983,7 +1983,7 @@ function validateCentralTelegram(checks, config) {
     if (agents.length) {
       addCheck(checks, "pass", "telegram conversation agents", agents.join(", "));
     } else {
-      addCheck(checks, "warn", "telegram conversation agents", "none selected", "Set conversation.agentId or conversation.agents before enabling chat control.");
+      addCheck(checks, "pass", "telegram conversation agents", "default routing");
     }
   }
 }

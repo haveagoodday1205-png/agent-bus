@@ -8,6 +8,15 @@ const root = path.resolve(import.meta.dirname, "..");
 const jsonOut = process.argv.includes("--json");
 const procs = [];
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-room-prompt-smoke-"));
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
 
 main().catch((err) => {
   if (jsonOut) {
@@ -148,7 +157,7 @@ async function main() {
 function start(command, args, env = {}) {
   const child = spawn(command, args, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: smokeChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -158,6 +167,12 @@ function start(command, args, env = {}) {
   }
   procs.push(child);
   return child;
+}
+
+function smokeChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
 }
 
 async function waitForRunCount(gateway, token, roomId, count, timeoutMs = 10000) {

@@ -53,6 +53,8 @@ try {
     "sdk/js/agent-bus-sdk.mjs",
     "sdk/python/agent_bus_sdk.py",
     "scripts/offline-smoke.mjs",
+    "scripts/hermes-bridge-smoke.mjs",
+    "scripts/openclaw-bridge-smoke.mjs",
     "scripts/release-check.mjs",
     "manifest.json"
   ];

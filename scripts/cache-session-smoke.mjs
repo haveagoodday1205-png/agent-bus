@@ -9,6 +9,15 @@ const root = path.resolve(import.meta.dirname, "..");
 const jsonOut = process.argv.includes("--json");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-cache-session-"));
 const children = [];
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
 
 Promise.resolve().then(main).catch((err) => {
   if (jsonOut) {
@@ -202,7 +211,7 @@ function telegramWebhook(gateway, secret, chatId, text) {
 function start(command, args, env = {}) {
   const child = spawn(command, args, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: smokeChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -217,6 +226,12 @@ function start(command, args, env = {}) {
   });
   children.push(child);
   return child;
+}
+
+function smokeChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
 }
 
 async function waitForAgents(gateway, token, agentIds, timeoutMs = 10000) {
@@ -291,15 +306,15 @@ function freePort() {
 }
 
 function findPython() {
-  const candidates = [
+  const candidates = [...new Set([
     process.env.AGENT_BUS_PYTHON,
     process.env.PYTHON,
     ...commonBundledPythonPaths(),
     process.platform === "win32" ? "python.exe" : "python3",
     "python3",
     "python"
-  ].filter(Boolean);
-  for (const command of [...new Set(candidates)]) {
+  ].filter(Boolean))];
+  for (const command of candidates) {
     const result = spawnSync(command, ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"], {
       cwd: root,
       windowsHide: true,

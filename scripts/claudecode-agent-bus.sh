@@ -81,4 +81,9 @@ if [ "${CLAUDECODE_NO_SESSION_PERSISTENCE:-0}" = "1" ]; then
 fi
 args+=("$message")
 
+if [ "${CLAUDECODE_VERBOSE:-0}" = "1" ]; then
+  echo "[claudecode-bridge] command=$claude_command output_format=$output_format permission_mode=${permission_mode:-none}" >&2
+  echo "[claudecode-bridge] session_id=${session_id:-none} message_bytes=${message_bytes:-0} message_file=${message_file:+present}" >&2
+fi
+
 exec "$claude_command" "${args[@]}" < /dev/null

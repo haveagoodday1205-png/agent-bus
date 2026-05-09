@@ -424,6 +424,7 @@ function boundedCacheKey(value) {
 function spawnCommand(config, agent, task, commandText, options = {}) {
   return new Promise((resolve) => {
     const timeoutMs = Number(agent.timeoutMs || config.defaultTimeoutMs || 600000);
+    const timeoutGraceMs = Math.max(0, Number(agent.timeoutGraceMs || config.timeoutGraceMs || 3000));
     const messageFile = writeTaskMessageFile(String(task.message || ""));
     const finish = (result) => {
       messageFile.cleanup();
@@ -447,17 +448,29 @@ function spawnCommand(config, agent, task, commandText, options = {}) {
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const timer = setTimeout(() => {
+    let timedOut = false;
+    let killTimer = null;
+    const finishOnce = (result) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      finish(result);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
       child.kill("SIGTERM");
-      finish({
-        status: "failed",
-        exit_code: 124,
-        stdout,
-        stderr: `${stderr}\nTimed out after ${timeoutMs}ms`.trim()
-      });
+      if (timeoutGraceMs > 0) {
+        killTimer = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, timeoutGraceMs);
+        killTimer.unref?.();
+      } else {
+        child.kill("SIGKILL");
+      }
     }, timeoutMs);
+    timer.unref?.();
 
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString("utf8");
@@ -470,16 +483,19 @@ function spawnCommand(config, agent, task, commandText, options = {}) {
       if (options.emit !== false) void event(config, task, { type: "run.output", stream: "stderr", text });
     });
     child.on("error", (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      finish({ status: "error", exit_code: 1, stdout, stderr: err.message });
+      finishOnce({ status: "error", exit_code: 1, stdout, stderr: err.message });
     });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      finish({
+    child.on("close", (code, signal) => {
+      if (timedOut) {
+        finishOnce({
+          status: "failed",
+          exit_code: 124,
+          stdout,
+          stderr: `${stderr}\nTimed out after ${timeoutMs}ms${signal ? ` (${signal})` : ""}`.trim()
+        });
+        return;
+      }
+      finishOnce({
         status: code === 0 ? "completed" : "failed",
         exit_code: code ?? 1,
         stdout,

@@ -32,7 +32,19 @@ if [ -n "$session_id" ] && [ -d "$hermes_root" ]; then
   export HERMES_SESSION_SOURCE="${HERMES_SESSION_SOURCE:-agent-bus}"
   export PYTHONPATH="$hermes_root${PYTHONPATH:+:$PYTHONPATH}"
   set +e
-  "$python_bin" - <<'PY'
+  child_pid=""
+  forward_signal() {
+    sig="$1"
+    code="$2"
+    if [ -n "$child_pid" ]; then
+      kill -"$sig" "$child_pid" 2>/dev/null || true
+      wait "$child_pid" 2>/dev/null || true
+    fi
+    exit "$code"
+  }
+  trap 'forward_signal TERM 143' TERM
+  trap 'forward_signal INT 130' INT
+  "$python_bin" - <<'PY' &
 import os
 import sys
 
@@ -42,6 +54,20 @@ except ModuleNotFoundError as exc:
     print(
         f"Hermes Agent Bus session bootstrap unavailable: missing Python module {exc.name!r}; "
         "falling back to the hermes CLI command.",
+        file=sys.stderr,
+    )
+    raise SystemExit(86)
+
+required_methods = [
+    "_ensure_runtime_credentials",
+    "_resolve_turn_agent_config",
+    "_init_agent",
+]
+missing_methods = [name for name in required_methods if not hasattr(HermesCLI, name)]
+if missing_methods:
+    print(
+        "Hermes Agent Bus session bootstrap unavailable: HermesCLI is missing "
+        f"{', '.join(missing_methods)}; falling back to the hermes CLI command.",
         file=sys.stderr,
     )
     raise SystemExit(86)
@@ -96,7 +122,11 @@ if response:
 print(f"\nsession_id: {cli.session_id}", file=sys.stderr)
 raise SystemExit(1 if isinstance(result, dict) and result.get("failed") else 0)
 PY
+  child_pid=$!
+  wait "$child_pid"
   status=$?
+  child_pid=""
+  trap - TERM INT
   set -e
   if [ "$status" -ne 86 ]; then
     exit "$status"

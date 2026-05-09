@@ -358,19 +358,33 @@ const HERMETIC_AGENT_BUS_ENV = [
 ];
 
 function findPython() {
-  const candidates = [
+  const candidates = [...new Set([
     process.env.AGENT_BUS_PYTHON,
     process.env.PYTHON,
     ...commonBundledPythonPaths(),
     process.platform === "win32" ? "python.exe" : "python3",
     "python3",
     "python"
-  ].filter(Boolean);
+  ].filter(Boolean))];
   for (const candidate of candidates) {
-    const result = spawnSync(candidate, ["--version"], { encoding: "utf8", windowsHide: true });
-    if (!result.error && result.status === 0) return candidate;
+    const version = pythonVersion(candidate);
+    if (version && (version.major > 3 || (version.major === 3 && version.minor >= 10))) return candidate;
   }
   return "";
+}
+
+function pythonVersion(candidate) {
+  const result = spawnSync(candidate, ["-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  if (result.error || result.status !== 0) return null;
+  const match = String(result.stdout || "").trim().match(/^(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10)
+  };
 }
 
 function commonBundledPythonPaths() {

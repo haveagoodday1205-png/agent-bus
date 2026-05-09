@@ -2,6 +2,10 @@
 set -euo pipefail
 
 agent_id="${OPENCLAW_AGENT_ID:-main}"
+agent_state_id="$(printf '%s' "$agent_id" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-180)"
+if [ -z "$agent_state_id" ]; then
+  agent_state_id="main"
+fi
 message="${AGENT_MESSAGE:-}"
 if [ -n "${AGENT_MESSAGE_FILE:-}" ] && [ -r "$AGENT_MESSAGE_FILE" ]; then
   message="$(cat "$AGENT_MESSAGE_FILE")"
@@ -43,7 +47,7 @@ prune_oversized_session() {
 
   local home_dir="${HOME:-${TMPDIR:-/tmp}}"
   local state_dir="${OPENCLAW_STATE_DIR:-$home_dir/.openclaw}"
-  local session_dir="$state_dir/agents/$agent_id/sessions"
+  local session_dir="$state_dir/agents/$agent_state_id/sessions"
   [ -d "$session_dir" ] || return 0
 
   local stamp

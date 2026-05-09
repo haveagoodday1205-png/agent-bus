@@ -41,6 +41,8 @@ try {
     "scripts/python-sdk-smoke.mjs",
     "scripts/python-room-agent-smoke.mjs",
     "scripts/offline-smoke.mjs",
+    "scripts/hermes-bridge-smoke.mjs",
+    "scripts/openclaw-bridge-smoke.mjs",
     "scripts/npm-install-smoke.mjs",
     "scripts/verify-protocol-v1.mjs",
     "scripts/make-portable-release.mjs",

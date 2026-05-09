@@ -8,6 +8,15 @@ const node = process.execPath;
 const procs = [];
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-smoke-"));
 const centralConfig = path.join(tempDir, "central.config.json");
+const HERMETIC_AGENT_BUS_ENV = [
+  "AGENT_BUS_GATEWAY_URL",
+  "AGENT_BUS_TOKEN",
+  "AGENT_BUS_NODE_ID",
+  "AGENT_BUS_CONFIG",
+  "AGENT_BUS_HOST",
+  "AGENT_BUS_PORT",
+  "AGENT_BUS_DATA_DIR"
+];
 
 main().catch((err) => {
   console.error(err.stack || err.message || String(err));
@@ -408,7 +417,7 @@ async function main() {
 function start(cmd, args, env = {}) {
   const child = spawn(cmd, args, {
     cwd: process.cwd(),
-    env: { ...process.env, ...env },
+    env: smokeChildEnv(env),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -433,7 +442,7 @@ function runNode(args, env = {}, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(node, args, {
       cwd: process.cwd(),
-      env: { ...process.env, ...env },
+      env: smokeChildEnv(env),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -455,6 +464,12 @@ function runNode(args, env = {}, timeoutMs = 15000) {
       reject(new Error(`${args.join(" ")} exited with ${code}\n${stderr || stdout}`));
     });
   });
+}
+
+function smokeChildEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const name of HERMETIC_AGENT_BUS_ENV) delete env[name];
+  return { ...env, ...overrides };
 }
 
 async function waitForJson(url, timeoutMs = 10000) {

@@ -66,6 +66,7 @@ agent-bus init edge --auto --out edge.config.json
 - Codex: `codex`
 - OpenClaw: `openclaw` or `OPENCLAW_AGENT_COMMAND`
 - Hermes: `hermes`
+- Claude Code: `claude`, exposed as the `claudecode` preset because it is a local CLI adapter, not an OpenAI-compatible backend
 - Ollama: `ollama` plus the local `/api/tags` endpoint when available
 
 If you want a specific preset instead of auto-detection:
@@ -100,6 +101,14 @@ HERMES_COMMAND=/root/.local/bin/hermes ./scripts/hermes-agent-bus.sh
 ```
 
 The Hermes bridge reads `AGENT_MESSAGE_FILE`/`AGENT_MESSAGE` and sets Hermes' internal session id from `AGENT_SESSION_ID` without resuming old conversation history. It passes the file path into its Python bootstrap instead of exporting the whole prompt, so long room turns avoid OS environment-size limits. For OpenAI Responses-compatible gateways such as sub2api, that stable id becomes the `prompt_cache_key`, so repeated wakes in the same room or thread reuse the provider-side prefix cache more consistently. A first request for a new room, thread, or newly changed prompt prefix can still show `cache_read_tokens = 0`; that is a normal cache warm-up. Investigate only when subsequent turns in the same room/session keep returning zero cached tokens.
+
+For Claude Code nodes on Linux, prefer the bundled bridge script:
+
+```bash
+CLAUDECODE_COMMAND=claude ./scripts/claudecode-agent-bus.sh
+```
+
+The Claude Code bridge uses `claude --print` as a command adapter. It reads `AGENT_MESSAGE_FILE` first, derives a UUID-shaped Claude session id from `AGENT_SESSION_ID`/`AGENT_CACHE_KEY`, and defaults to `--permission-mode acceptEdits` so noninteractive edge runs can modify files without using Claude Code's root-blocked `bypassPermissions` mode. Set `CLAUDECODE_PERMISSION_MODE`, `CLAUDECODE_MODEL`, `CLAUDECODE_EFFORT`, or `CLAUDECODE_MAX_BUDGET_USD` in the edge service environment when you need a different policy or a specific Claude model. Because this is not an OpenAI-compatible backend, do not configure it under `modelRouter.backends`; register it as an edge agent with `kind: "claudecode"` or `agent-bus init edge --preset claudecode`.
 
 Edit:
 

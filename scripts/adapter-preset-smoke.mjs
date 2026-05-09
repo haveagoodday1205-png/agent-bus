@@ -10,7 +10,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-adapter-preset-
 try {
   const binDir = path.join(tempDir, "bin");
   fs.mkdirSync(binDir, { recursive: true });
-  for (const name of ["codex", "openclaw", "hermes", "ollama"]) {
+  for (const name of ["codex", "openclaw", "hermes", "ollama", "claude"]) {
     writeFakeExecutable(binDir, name);
   }
 
@@ -25,7 +25,7 @@ try {
 
   const detect = runJson(["detect", "--json"], env);
   const detected = new Map((detect.tools || []).map((tool) => [tool.id, tool]));
-  for (const id of ["codex", "openclaw", "hermes", "ollama"]) {
+  for (const id of ["codex", "openclaw", "hermes", "claudecode", "ollama"]) {
     assert(detected.get(id)?.available === true, `detect did not find fake ${id}`);
   }
   if (process.platform !== "win32") {
@@ -34,6 +34,7 @@ try {
   assert(/Using bundled\/openclaw bridge script/.test(detected.get("openclaw")?.note || ""), "openclaw detection did not prefer the bridge script");
   if (process.platform !== "win32") {
     assert(/bundled Hermes Agent Bus bridge/.test(detected.get("hermes")?.note || ""), "hermes detection did not prefer the bridge script");
+    assert(/bundled Claude Code Agent Bus bridge/.test(detected.get("claudecode")?.note || ""), "claudecode detection did not prefer the bridge script");
   }
 
   const out = path.join(tempDir, "edge.config.json");
@@ -42,7 +43,7 @@ try {
     "edge",
     "--auto",
     "--tools",
-    "codex,openclaw,hermes,ollama",
+    "codex,openclaw,hermes,claudecode,ollama",
     "--gateway",
     "https://example.test/agent-bus",
     "--token",
@@ -56,7 +57,7 @@ try {
   assert(config.gatewayUrl === "https://example.test/agent-bus", "generated edge config did not preserve gateway URL");
   assert(config.token === "abt_edge_adapter_preset_smoke_token_000000", "generated edge config did not preserve token");
   const agents = new Map(config.agents.map((agent) => [agent.kind, agent]));
-  for (const kind of ["codex", "openclaw", "hermes", "ollama"]) {
+  for (const kind of ["codex", "openclaw", "hermes", "claudecode", "ollama"]) {
     assert(agents.has(kind), `generated config missing ${kind} agent`);
   }
 
@@ -88,6 +89,19 @@ try {
   }
   assert(hermes.capabilities.includes("memory"), "hermes preset should advertise memory capability");
 
+  const claudecode = agents.get("claudecode");
+  assert(claudecode.role === "coder", "claudecode preset has wrong role");
+  assert(claudecode.healthCommand.includes("--version"), "claudecode preset should include a shallow CLI health command");
+  if (process.platform === "win32") {
+    assert(claudecode.runCommand.includes(" --print "), "claudecode Windows preset must use claude --print");
+    assert(claudecode.runCommand.includes("--permission-mode acceptEdits"), "claudecode Windows preset must use a noninteractive edit-friendly mode");
+    assert(claudecode.runCommand.includes("AGENT_MESSAGE"), "claudecode Windows preset must pass AGENT_MESSAGE");
+  } else {
+    assert(claudecode.runCommand.includes("CLAUDECODE_COMMAND="), "claudecode preset must bind CLAUDECODE_COMMAND");
+    assert(claudecode.runCommand.includes("claudecode-agent-bus.sh"), "claudecode preset must use the bridge script when available");
+  }
+  assert(claudecode.capabilities.includes("agent"), "claudecode preset should advertise agent capability");
+
   const ollama = agents.get("ollama");
   assert(ollama.role === "model", "ollama preset has wrong role");
   assert(ollama.runCommand.includes(" run "), "ollama preset must call ollama run");
@@ -95,7 +109,7 @@ try {
   assert(ollama.pingUrl === "http://127.0.0.1:11434/api/tags", "ollama preset must use a shallow tags ping URL");
 
   const presets = {};
-  for (const preset of ["echo", "codex", "openclaw", "hermes", "ollama"]) {
+  for (const preset of ["echo", "codex", "openclaw", "hermes", "claudecode", "ollama"]) {
     const presetOut = path.join(tempDir, `${preset}.config.json`);
     runCli(["init", "edge", "--preset", preset, "--out", presetOut], env);
     const presetConfig = JSON.parse(fs.readFileSync(presetOut, "utf8"));
@@ -105,6 +119,7 @@ try {
   assert(presets.codex === "codex", "codex preset changed kind");
   assert(presets.openclaw === "openclaw", "openclaw preset changed kind");
   assert(presets.hermes === "hermes", "hermes preset changed kind");
+  assert(presets.claudecode === "claudecode", "claudecode preset changed kind");
   assert(presets.ollama === "ollama", "ollama preset changed kind");
 
   const result = {

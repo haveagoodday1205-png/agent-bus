@@ -192,7 +192,7 @@ function printHelp() {
 
 Usage:
   agent-bus init central [--out central.config.json] [--force]
-  agent-bus init edge [--out edge.config.json] [--preset echo|codex|openclaw|hermes|ollama] [--force]
+  agent-bus init edge [--out edge.config.json] [--preset echo|codex|openclaw|hermes|claudecode|ollama] [--force]
   agent-bus init edge --auto [--gateway https://YOUR-DOMAIN/agent-bus] [--token ...] [--out edge.config.json]
   agent-bus detect [--json]
   agent-bus openclaw prepare [--config ~/.openclaw/openclaw.json] [--workspace ./openclaw-workspace] [--context-tokens 48000]
@@ -1187,7 +1187,7 @@ function validateEdgeConfig(checks, config, gatewayUrl, token, baseDir) {
   if (agents.length) {
     addCheck(checks, "pass", "enabled agents", agents.map((agent) => agent.id).join(", "));
   } else {
-    addCheck(checks, "fail", "enabled agents", "no enabled agents configured", "Enable at least one echo, command, Codex, OpenClaw, Hermes, or Ollama agent.");
+    addCheck(checks, "fail", "enabled agents", "no enabled agents configured", "Enable at least one echo, command, Codex, OpenClaw, Hermes, Claude Code, or Ollama agent.");
   }
 
   for (const agent of agents) {
@@ -1865,6 +1865,7 @@ function presetAgents() {
     codex: [codexAgent("codex", "codex-local", { script: process.platform === "win32" ? "" : "./scripts/codex-agent-bus.sh" })],
     openclaw: [openclawAgent("./scripts/openclaw-agent-bus.sh")],
     hermes: [hermesAgent(defaultHermesCommand())],
+    claudecode: [claudeCodeAgent(defaultClaudeCodeCommand(), "claudecode-local", { script: process.platform === "win32" ? "" : "./scripts/claudecode-agent-bus.sh" })],
     ollama: [ollamaAgent("ollama", "llama3.1")]
   };
 }
@@ -1886,7 +1887,7 @@ async function edgeAutoTemplate(args = []) {
   });
   if (!selected.length) {
     const detected = tools.map((tool) => `${tool.id}:${tool.available ? "found" : "missing"}`).join(", ");
-    throw new Error(`No supported local AI tools were detected. Found: ${detected}. Install Codex, OpenClaw, Hermes, or Ollama, or use --preset echo.`);
+    throw new Error(`No supported local AI tools were detected. Found: ${detected}. Install Codex, OpenClaw, Hermes, Claude Code, or Ollama, or use --preset echo.`);
   }
   const agents = selected.map((tool) => tool.agent);
   return edgeConfigWithAgents(agents);
@@ -1942,6 +1943,7 @@ async function discoverLocalTools() {
     "/root/agent-bus/scripts/codex-agent-bus.sh"
   ]);
   const hermesPath = findExecutable("hermes", commonHermesPaths());
+  const claudeCodePath = findExecutable("claude", commonClaudeCodePaths()) || findExecutable("claude-code") || findExecutable("claudecode");
   const ollamaPath = findExecutable("ollama");
   const openclawCommand = process.env.OPENCLAW_AGENT_COMMAND || "";
   const openclawScript = findFirstExisting([
@@ -1953,6 +1955,11 @@ async function discoverLocalTools() {
     path.resolve(process.cwd(), "scripts", "hermes-agent-bus.sh"),
     path.resolve(__dirname, "scripts", "hermes-agent-bus.sh"),
     "/root/agent-bus/scripts/hermes-agent-bus.sh"
+  ]);
+  const claudeCodeScript = os.platform() === "win32" ? "" : findFirstExisting([
+    path.resolve(process.cwd(), "scripts", "claudecode-agent-bus.sh"),
+    path.resolve(__dirname, "scripts", "claudecode-agent-bus.sh"),
+    "/root/agent-bus/scripts/claudecode-agent-bus.sh"
   ]);
   const openclawPath = openclawCommand ? "" : findExecutable("openclaw");
   const openclawRunner = openclawCommand || (openclawPath && openclawScript) || openclawPath;
@@ -2000,6 +2007,17 @@ async function discoverLocalTools() {
       agent: hermesPath ? hermesAgent(hermesPath, `hermes-${host}`, { script: hermesScript }) : null
     },
     {
+      id: "claudecode",
+      name: "Claude Code",
+      available: Boolean(claudeCodePath),
+      command: claudeCodeScript || claudeCodePath || defaultClaudeCodeCommand(),
+      version: claudeCodePath ? commandVersion(claudeCodePath) : "",
+      note: claudeCodeScript
+        ? "Using bundled Claude Code Agent Bus bridge script for non-OpenAI CLI routing."
+        : "",
+      agent: claudeCodePath ? claudeCodeAgent(claudeCodePath, `claudecode-${host}`, { script: claudeCodeScript }) : null
+    },
+    {
       id: "ollama",
       name: "Ollama",
       available: Boolean(ollamaPath),
@@ -2024,7 +2042,7 @@ function printToolDetection(tools) {
   if (available.length) {
     console.log(`\nNext: agent-bus init edge --auto --out edge.config.json`);
   } else {
-    console.log("\nNo supported tools found. Install Codex, OpenClaw, Hermes, or Ollama, then run agent-bus detect again.");
+    console.log("\nNo supported tools found. Install Codex, OpenClaw, Hermes, Claude Code, or Ollama, then run agent-bus detect again.");
   }
 }
 
@@ -2335,6 +2353,22 @@ function hermesAgent(commandPath, id = "hermes-local", options = {}) {
     runCommand: script
       ? `HERMES_COMMAND=${quoteCommand(commandPath)} ${quoteCommand(script)}`
       : `${quoteCommand(commandPath)} chat -q ${messageArgument()} -Q`
+  };
+}
+
+function claudeCodeAgent(commandPath, id = "claudecode-local", options = {}) {
+  const script = options.script || "";
+  return {
+    id,
+    kind: "claudecode",
+    role: "coder",
+    enabled: true,
+    adapter: "command",
+    capabilities: ["code", "review", "shell", "files", "agent"],
+    healthCommand: `${quoteCommand(commandPath)} --version`,
+    runCommand: script
+      ? `CLAUDECODE_COMMAND=${quoteCommand(commandPath)} ${quoteCommand(script)}`
+      : `${quoteCommand(commandPath)} --print --output-format text --permission-mode acceptEdits ${messageArgument()}${nullInputRedirect()}`
   };
 }
 
@@ -4229,9 +4263,22 @@ function defaultHermesCommand() {
   return process.platform === "win32" ? "hermes" : "/root/.local/bin/hermes";
 }
 
+function defaultClaudeCodeCommand() {
+  return "claude";
+}
+
 function commonHermesPaths() {
   const paths = [path.join(os.homedir(), ".local", "bin", process.platform === "win32" ? "hermes.exe" : "hermes")];
   if (process.platform !== "win32") paths.push("/root/.local/bin/hermes");
+  return paths;
+}
+
+function commonClaudeCodePaths() {
+  const binary = process.platform === "win32" ? "claude.cmd" : "claude";
+  const paths = [
+    path.join(os.homedir(), ".local", "bin", binary)
+  ];
+  if (process.platform !== "win32") paths.push("/usr/local/bin/claude");
   return paths;
 }
 

@@ -3,7 +3,7 @@
 [![ci](https://github.com/haveagoodday1205-png/agent-bus/actions/workflows/ci.yml/badge.svg)](https://github.com/haveagoodday1205-png/agent-bus/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/haveagoodday1205-png/agent-bus)](https://github.com/haveagoodday1205-png/agent-bus/releases)
 
-A lightweight distributed agent and OpenAI-compatible model router for connecting Codex, Hermes, OpenClaw, and custom model gateways across machines.
+A lightweight distributed agent and OpenAI-compatible model router for connecting Codex, Hermes, OpenClaw, Claude Code, and custom model gateways across machines.
 
 Agent Bus is also an early AI-to-AI protocol surface: agents can discover each other, advertise capabilities, report shallow health, receive tasks, and coordinate inside shared rooms.
 
@@ -19,7 +19,7 @@ The core entrypoints intentionally have no npm runtime dependencies.
 
 Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable across machines. It is designed for contributors and operators who want a small, auditable bus rather than a monolithic agent platform.
 
-- Remote assistant nodes: keep Codex, Hermes, OpenClaw, Ollama, or shell adapters on private machines that connect outbound to a gateway.
+- Remote assistant nodes: keep Codex, Hermes, OpenClaw, Claude Code, Ollama, or shell adapters on private machines that connect outbound to a gateway.
 - AI-to-AI rooms: let agents coordinate with `@agent-id`, `REPORT`, `BLACKBOARD`, `WAKE`, and `DONE` directives instead of copying context by hand.
 - Local room memory cache: keep extractive compressed recall plus book-style source positions for older room context without embeddings, databases, or model calls.
 - OpenAI-compatible routing: expose selected model aliases behind one authenticated gateway.
@@ -347,7 +347,7 @@ The central gateway stores:
 
 Copy one edge config onto each machine and run `edge-node.mjs connect --config ...`.
 
-- Browser/shell machine: use `edge.hk.example.json` as a starting point for OpenClaw and Hermes.
+- Browser/shell machine: use `edge.hk.example.json` as a starting point for OpenClaw, Hermes, and Claude Code.
 - Code machine: use `edge.120.example.json` as a starting point for Codex.
 - Model gateway machine: use `edge.178.example.json` as a starting point for an OpenAI-compatible backend.
 
@@ -365,7 +365,7 @@ Each edge node sends:
 - `AGENT_ID`: local agent id
 - `EDGE_NODE_ID`: edge node id
 
-For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default Codex, OpenClaw, and Hermes bridge scripts do this so long room prompts do not become oversized environment variables. The OpenClaw wrapper also passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, falls back to a prompt file when the final OpenClaw CLI argument would be too large, and backs up oversized Agent Bus session files before a run so stale OpenClaw history does not balloon later room turns. Agent-backed `/v1/chat/completions` and `/v1/responses` calls can also pass `prompt_cache_key` or `metadata.agent_bus_cache_scope` to reuse the same derived session across otherwise separate requests.
+For large tasks, `AGENT_MESSAGE` may be empty to avoid OS environment-size limits; adapters should read `AGENT_MESSAGE_FILE` when present. The default Codex, OpenClaw, Hermes, and Claude Code bridge scripts do this so long room prompts do not become oversized environment variables. The OpenClaw wrapper also passes `AGENT_SESSION_ID` as `openclaw agent --session-id`, starts the message with a stable Agent Bus envelope, falls back to a prompt file when the final OpenClaw CLI argument would be too large, and backs up oversized Agent Bus session files before a run so stale OpenClaw history does not balloon later room turns. The Claude Code wrapper uses `claude --print` as a local CLI adapter, defaults to noninteractive `acceptEdits` instead of Claude Code's root-blocked bypass mode, and derives a UUID-shaped Claude session id from Agent Bus room/thread session keys; configure it with `agent-bus init edge --preset claudecode` or `CLAUDECODE_COMMAND=claude ./scripts/claudecode-agent-bus.sh`. Agent-backed `/v1/chat/completions` and `/v1/responses` calls can also pass `prompt_cache_key` or `metadata.agent_bus_cache_scope` to reuse the same derived session across otherwise separate requests.
 
 When using OpenClaw, prepare a dedicated Agent Bus agent/workspace before connecting the edge node:
 

@@ -71,7 +71,7 @@ jobs:
           node -e "for (const f of ['package.json','central.config.example.json','edge.config.example.json','edge.120.example.json','edge.178.example.json','edge.hk.example.json']) JSON.parse(require('fs').readFileSync(f, 'utf8'));"
       - name: Agent wrapper smoke
         run: |
-          bash -n scripts/hermes-agent-bus.sh scripts/openclaw-agent-bus.sh
+          bash -n scripts/hermes-agent-bus.sh scripts/openclaw-agent-bus.sh scripts/claudecode-agent-bus.sh
           tmpdir="$(mktemp -d)"
           printf '%s\n' 'import definitely_missing_agent_bus_test_dependency' > "$tmpdir/cli.py"
           output="$(AGENT_MESSAGE='hello' AGENT_SESSION_ID='room-1' HERMES_AGENT_ROOT="$tmpdir" HERMES_COMMAND=/bin/echo scripts/hermes-agent-bus.sh 2>&1)"

@@ -2,7 +2,7 @@
 
 This quickstart turns one machine into an Agent Bus central gateway and another machine into a remote assistant node. The edge machine connects outward to the gateway, so it does not need an inbound public port.
 
-Use this path when you want a real Codex, OpenClaw, Hermes, Ollama, or command adapter to receive work from another machine.
+Use this path when you want a real Codex, OpenClaw, Hermes, Claude Code, Ollama, or command adapter to receive work from another machine.
 
 ## 1. Install
 

@@ -28,6 +28,16 @@
       "pingUrl": "https://YOUR-MODEL-GATEWAY/v1/models",
       "healthCommand": "test -x /root/.local/bin/hermes && /root/.local/bin/hermes --help 2>&1 | head -30",
       "runCommand": "HERMES_COMMAND=/root/.local/bin/hermes ./scripts/hermes-agent-bus.sh"
+    },
+    {
+      "id": "claudecode-edge",
+      "kind": "claudecode",
+      "role": "coder",
+      "enabled": true,
+      "adapter": "command",
+      "capabilities": ["code", "review", "shell", "files", "agent"],
+      "healthCommand": "claude --version",
+      "runCommand": "CLAUDECODE_COMMAND=claude ./scripts/claudecode-agent-bus.sh"
     }
   ]
 }

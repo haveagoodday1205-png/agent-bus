@@ -31,6 +31,7 @@
 
 ### Deployment hardening
 
+- Adds Claude Code as a first-class edge CLI adapter (`--preset claudecode`, auto-detect for `claude`, and `scripts/claudecode-agent-bus.sh`) so Claude Code can join Agent Bus rooms without being treated as an OpenAI-compatible backend.
 - Adds a Central Telegram Bot plugin skeleton for startup, edge registration, run completion, and room completion notifications, with a dry-run smoke test that makes no external calls.
 - Adds admin plugin discovery plus `agent-bus plugin telegram test` so operators can verify Telegram wiring before relying on alerts.
 - Adds an opt-in Telegram control webhook for `/status`, `/agents`, and `/run agent-id task`, guarded by Telegram secret tokens and chat allowlists.

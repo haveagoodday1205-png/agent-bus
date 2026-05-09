@@ -7,10 +7,16 @@ if [ -n "$message_file" ] && [ -r "$message_file" ]; then
   message="$(cat "$message_file")"
 fi
 
-claude_command="${CLAUDECODE_COMMAND:-${CLAUDE_CODE_COMMAND:-claude}}"
+claude_command="${CLAUDECODE_COMMAND:-}"
+if [ -z "$claude_command" ]; then
+  claude_command="${CLAUDE_CODE_COMMAND:-claude}"
+fi
 permission_mode="${CLAUDECODE_PERMISSION_MODE:-acceptEdits}"
 output_format="${CLAUDECODE_OUTPUT_FORMAT:-text}"
-append_system_prompt="${CLAUDECODE_APPEND_SYSTEM_PROMPT:-Agent Bus request. Reply plainly and directly. Do not roleplay, do not introduce yourself, and do not mention Claude Code unless the user asks. Return only the answer to the user's request.}"
+append_system_prompt="${CLAUDECODE_APPEND_SYSTEM_PROMPT:-}"
+if [ -z "$append_system_prompt" ]; then
+  append_system_prompt="Agent Bus request. Reply plainly and directly. Do not roleplay, do not introduce yourself, and do not mention Claude Code unless the user asks. Return only the answer to the user's request."
+fi
 session_source="${AGENT_SESSION_ID:-${AGENT_CACHE_KEY:-}}"
 session_id=""
 

@@ -1950,35 +1950,73 @@ function validateCentralBackend(checks, backend) {
 
 function validateCentralTelegram(checks, config) {
   const plugin = config.plugins?.telegramBot;
-  if (!isPlainObject(plugin) || plugin.enabled === false) {
+  const pluginConfig = isPlainObject(plugin) ? plugin : {};
+  const envEnabled = envBoolean("AGENT_BUS_TELEGRAM_ENABLED");
+  const enabled = envEnabled === undefined ? pluginConfig.enabled === true : envEnabled;
+  if (!enabled) {
     addCheck(checks, "pass", "telegram plugin", "disabled");
     return;
   }
-  addCheck(checks, "pass", "telegram plugin", plugin.dryRun ? "enabled dry-run" : "enabled");
-  const botTokenEnv = plugin.botTokenEnv || "AGENT_BUS_TELEGRAM_BOT_TOKEN";
-  const chatIdEnv = plugin.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID";
-  addCheck(checks, process.env[botTokenEnv] || plugin.dryRun ? "pass" : "warn", "telegram bot token env", process.env[botTokenEnv] ? `${botTokenEnv} set` : `${botTokenEnv} not set`, "Set the bot token env var or keep dryRun enabled.");
-  addCheck(checks, process.env[chatIdEnv] || plugin.dryRun ? "pass" : "warn", "telegram chat id env", process.env[chatIdEnv] ? `${chatIdEnv} set` : `${chatIdEnv} not set`, "Set the operator chat id env var or keep dryRun enabled.");
+  const dryRun = envBoolean("AGENT_BUS_TELEGRAM_DRY_RUN") ?? (pluginConfig.dryRun === true || pluginConfig.dry_run === true);
+  addCheck(checks, "pass", "telegram plugin", dryRun ? "enabled dry-run" : "enabled");
+  const botTokenEnv = pluginConfig.botTokenEnv || "AGENT_BUS_TELEGRAM_BOT_TOKEN";
+  const chatIdEnv = pluginConfig.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID";
+  addCheck(checks, process.env[botTokenEnv] || dryRun ? "pass" : "warn", "telegram bot token env", process.env[botTokenEnv] ? `${botTokenEnv} set` : `${botTokenEnv} not set`, "Set the bot token env var or keep dryRun enabled.");
+  addCheck(checks, process.env[chatIdEnv] || dryRun ? "pass" : "warn", "telegram chat id env", process.env[chatIdEnv] ? `${chatIdEnv} set` : `${chatIdEnv} not set`, "Set the operator chat id env var or keep dryRun enabled.");
 
-  const control = isPlainObject(plugin.control) ? plugin.control : {};
-  if (control.enabled) {
+  const control = isPlainObject(pluginConfig.control) ? pluginConfig.control : {};
+  const controlEnabled = envBoolean("AGENT_BUS_TELEGRAM_CONTROL_ENABLED") ?? (control.enabled === true);
+  if (controlEnabled) {
     const secretEnv = control.secretTokenEnv || "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET";
     addCheck(checks, process.env[secretEnv] ? "pass" : "warn", "telegram webhook secret", process.env[secretEnv] ? `${secretEnv} set` : `${secretEnv} not set`, "Set a webhook secret before accepting public Telegram callbacks.");
-    if (Array.isArray(control.allowedChatIds) && control.allowedChatIds.length) {
-      addCheck(checks, "pass", "telegram allowed chats", `${control.allowedChatIds.length} configured`);
+    const allowedChats = telegramAllowedChatIds(pluginConfig, control);
+    if (allowedChats.length) {
+      addCheck(checks, "pass", "telegram allowed chats", `${allowedChats.length} configured`);
     } else {
       addCheck(checks, "warn", "telegram allowed chats", "not restricted", "Set allowedChatIds for production control bots.");
     }
   }
   const conversation = isPlainObject(control.conversation) ? control.conversation : {};
-  if (conversation.enabled) {
-    const agents = Array.isArray(conversation.agents) ? conversation.agents.filter(Boolean) : [];
-    if (conversation.agentId || agents.length) {
-      addCheck(checks, "pass", "telegram conversation agents", conversation.agentId || agents.join(", "));
+  const conversationEnabled = envBoolean("AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED") ?? (conversation.enabled === true);
+  if (conversationEnabled) {
+    const agents = telegramConversationAgents(conversation);
+    if (agents.length) {
+      addCheck(checks, "pass", "telegram conversation agents", agents.join(", "));
     } else {
       addCheck(checks, "warn", "telegram conversation agents", "none selected", "Set conversation.agentId or conversation.agents before enabling chat control.");
     }
   }
+}
+
+function telegramAllowedChatIds(plugin, control) {
+  const values = [];
+  const configured = control.allowedChatIds || control.allowed_chat_ids || [];
+  if (Array.isArray(configured)) values.push(...configured);
+  if (typeof configured === "string") values.push(...configured.split(","));
+  const chatIdEnv = plugin.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID";
+  if (process.env[chatIdEnv]) values.push(process.env[chatIdEnv]);
+  return unique(values.map((item) => String(item || "").trim()).filter(Boolean));
+}
+
+function telegramConversationAgents(conversation) {
+  const values = [];
+  for (const key of ["agentId", "agent_id", "defaultAgentId", "default_agent_id"]) {
+    if (conversation[key]) values.push(conversation[key]);
+  }
+  const configured = conversation.agents || conversation.agentIds || conversation.agent_ids || [];
+  if (Array.isArray(configured)) values.push(...configured);
+  if (typeof configured === "string") values.push(...configured.split(","));
+  if (process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENT) values.push(process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENT);
+  if (process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS) values.push(...process.env.AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS.split(","));
+  return unique(values.map((item) => String(item || "").trim()).filter(Boolean));
+}
+
+function envBoolean(name) {
+  if (!Object.hasOwn(process.env, name)) return undefined;
+  const value = String(process.env[name] || "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return undefined;
 }
 
 function codexAgent(commandPath, id = "codex-local", options = {}) {

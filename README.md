@@ -137,6 +137,14 @@ agent-bus doctor --config edge.config.json   # zero-quota read-only diagnostics;
 agent-bus connect --config edge.config.json
 ```
 
+For the central machine, run the same zero-quota preflight in central mode before exposing it:
+
+```bash
+agent-bus doctor --mode central --config central.config.json --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
+```
+
+It checks admin token strength, persistent `dataDir` writability, scoped edge token shape, model-router backend configuration, Telegram plugin environment wiring, and Central readiness endpoints without making model calls.
+
 For the full two-machine path, see [Remote Assistant Quickstart](docs/remote-assistant-quickstart.md).
 
 If setup fails, generate a redacted support bundle before opening an issue:

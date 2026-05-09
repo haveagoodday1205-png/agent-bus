@@ -126,6 +126,12 @@ async function main() {
   assert(statusHuman.stdout.includes("Readiness:"), "status human output omitted readiness");
   assert(statusHuman.stdout.includes("Next actions:"), "status human output omitted next actions");
 
+  step("Verifying central preflight doctor");
+  const centralDoctor = await runDoctor(["--mode", "central", "--config", centralConfig, "--gateway", gateway, "--token", token, "--json"]);
+  assertDoctor(centralDoctor, {
+    requiredPasses: ["doctor mode", "central dataDir", "central health endpoint", "central readiness status"]
+  });
+
   step("Verifying gateway request failure guidance");
   const closedPort = await freePort();
   const failedStatus = await runCliAllowFailure(["status", "--gateway", `http://127.0.0.1:${closedPort}`, "--gateway-timeout-ms", "250"], 5000);
@@ -175,6 +181,7 @@ async function main() {
     agents: ["doctor-echo"],
     admin_counts: adminDoctor.counts,
     edge_counts: edgeDoctor.counts,
+    central_counts: centralDoctor.counts,
     diagnostics_bundle: path.basename(bundlePath),
     edge_backend_denied: realBackendDenied
   };

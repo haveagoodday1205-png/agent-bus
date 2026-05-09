@@ -96,7 +96,7 @@ function main() {
   assert(!defaultText.includes("/tmp/agent-bus-diag-redaction"), "default diagnostics bundle leaked a Unix path");
   assert(!defaultText.includes("C:\\Users\\Alice"), "default diagnostics bundle leaked a Windows path");
   assert(!defaultText.includes(configPath), "default diagnostics bundle leaked the temporary config path");
-  assert(defaultBundle.doctor?.checks?.some((item) => item.name === "Read edge config" && item.detail === "[REDACTED_PATH]"), "default diagnostics bundle leaked the read-config check path");
+  assert(defaultBundle.doctor?.checks?.some((item) => item.name === "Read config" && item.detail === "[REDACTED_PATH]"), "default diagnostics bundle leaked the read-config check path");
   assert(defaultBundle.doctor?.checks?.some((item) => item.name === "agent unix-agent cwd" && item.detail === "[REDACTED_PATH] not found"), "default diagnostics bundle leaked the unix cwd check");
   assert(defaultBundle.doctor?.checks?.some((item) => item.name === "agent windows-agent cwd" && item.detail === "[REDACTED_PATH] not found"), "default diagnostics bundle leaked the Windows cwd check");
 
@@ -112,7 +112,7 @@ function main() {
   assert(includePathsBundle.config?.agents?.[0]?.cwd === "/tmp/agent-bus-diag-redaction/workspace", "include-paths bundle should preserve unix cwd");
   assert(includePathsBundle.config?.agents?.[1]?.cwd === "C:\\Users\\Alice\\Projects\\agent-bus-private", "include-paths bundle should preserve Windows cwd");
   assert(includePathsBundle.config?.gatewayUrl === "https://[REDACTED_HOST]/agent-bus?[REDACTED_QUERY]", "include-paths bundle should still redact hosts");
-  assert(includePathsBundle.doctor?.checks?.some((item) => item.name === "Read edge config" && item.detail === configPath), "include-paths bundle should preserve the read-config path");
+  assert(includePathsBundle.doctor?.checks?.some((item) => item.name === "Read config" && item.detail === configPath), "include-paths bundle should preserve the read-config path");
   assert(!includePathsText.includes("ops.example.com"), "include-paths bundle leaked a hostname");
   assert(!includePathsText.includes("models.example.com"), "include-paths bundle leaked a model hostname");
   assert(!includePathsText.includes("windows.example.com"), "include-paths bundle leaked a Windows hostname");

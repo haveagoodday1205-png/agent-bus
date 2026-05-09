@@ -199,6 +199,7 @@ Usage:
   agent-bus serve --config central.config.json [--runtime node|python]
   agent-bus connect --config edge.config.json
   agent-bus doctor --config edge.config.json [--json]
+  agent-bus doctor --mode central --config central.config.json [--json]
   agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
   agent-bus smoke --offline
   agent-bus demo
@@ -670,6 +671,7 @@ async function collectDoctorContext(args) {
   const gatewayArg = optionValue(args, "--gateway") || process.env.AGENT_BUS_GATEWAY_URL;
   const tokenArg = optionValue(args, "--token") || process.env.AGENT_BUS_TOKEN;
   const localOnly = args.includes("--local-only");
+  const requestedMode = doctorRequestedMode(args);
   const checks = [];
   let config = null;
 
@@ -679,31 +681,44 @@ async function collectDoctorContext(args) {
   try {
     config = JSON.parse(fs.readFileSync(configPath, "utf8"));
     if (!isPlainObject(config)) throw new Error("edge config must be a JSON object");
-    addCheck(checks, "pass", "Read edge config", configPath);
+    addCheck(checks, "pass", "Read config", configPath);
   } catch (err) {
-    addCheck(checks, "fail", "Read edge config", err.message);
+    addCheck(checks, "fail", "Read config", err.message);
     return {
       configPath,
       config: null,
       gatewayUrl: gatewayArg || "",
       tokenPresent: Boolean(tokenArg),
       configDir: path.dirname(path.resolve(configPath)),
+      mode: requestedMode || "edge",
       checks
     };
   }
 
-  const gatewayUrl = gatewayArg || config.gatewayUrl || "http://127.0.0.1:8788";
+  const mode = requestedMode || inferDoctorMode(config);
+  const gatewayUrl = gatewayArg || config.gatewayUrl || (mode === "central" ? localCentralGatewayUrl(config) : "http://127.0.0.1:8788");
   const token = tokenArg || config.token || "";
   const configDir = path.dirname(path.resolve(configPath));
-  validateEdgeConfig(checks, config, gatewayUrl, token, configDir);
-  checkConfiguredTools(checks, config, configDir);
+
+  if (mode === "central") {
+    validateCentralConfig(checks, config, gatewayUrl, token, configDir);
+  } else {
+    validateEdgeConfig(checks, config, gatewayUrl, token, configDir);
+    checkConfiguredTools(checks, config, configDir);
+  }
 
   if (localOnly) {
     addCheck(checks, "pass", "gateway checks skipped", "--local-only");
   } else {
-    await checkGateway(checks, gatewayUrl, token, config);
+    if (mode === "central") {
+      await checkCentralGateway(checks, gatewayUrl, token);
+    } else {
+      await checkGateway(checks, gatewayUrl, token, config);
+    }
   }
-  await checkLocalProbe(checks, configPath);
+  if (mode === "edge") {
+    await checkLocalProbe(checks, configPath);
+  }
 
   return {
     configPath,
@@ -711,6 +726,7 @@ async function collectDoctorContext(args) {
     gatewayUrl,
     tokenPresent: Boolean(token && !isPlaceholder(token)),
     configDir,
+    mode,
     checks
   };
 }
@@ -1035,6 +1051,32 @@ async function checkGateway(checks, gatewayUrl, token, config = {}) {
   }
 }
 
+async function checkCentralGateway(checks, gatewayUrl, token) {
+  if (!gatewayUrl || isPlaceholder(gatewayUrl) || !validateGatewayUrl(gatewayUrl).ok) return;
+  const health = await fetchJson(gatewayUrl, "/health", "", 8000);
+  if (health.ok) {
+    addCheck(checks, "pass", "central health endpoint", gatewayHealthSummary(health.data));
+  } else {
+    addCheck(checks, "fail", "central health endpoint", health.error, "Start Central, check the service port, and include any reverse-proxy path prefix in --gateway.");
+  }
+
+  const wellKnown = await fetchJson(gatewayUrl, "/.well-known/agent-bus.json", "", 8000);
+  if (wellKnown.ok) {
+    addCheck(checks, "pass", "central well-known", wellKnown.data.protocol || "ok");
+  } else {
+    addCheck(checks, "warn", "central well-known", wellKnown.error, "Discovery can still work manually, but public join UX is better when this endpoint is reachable.");
+  }
+
+  if (!token || isPlaceholder(token)) return;
+  const status = await fetchJson(gatewayUrl, "/v1/agent-bus/status", token, 8000);
+  if (status.ok) {
+    const summary = status.data.summary || status.data.health || {};
+    addCheck(checks, "pass", "central readiness status", `nodes=${summary.nodes ?? "?"} agents=${summary.agents ?? "?"} queued=${summary.queued ?? "?"}`);
+  } else {
+    addEndpointFailure(checks, "central readiness status", status, "The admin token must be valid to read /v1/agent-bus/status.");
+  }
+}
+
 function validateGatewayUrl(value) {
   const text = String(value || "").trim();
   if (!text) return { ok: false, error: "set gatewayUrl or AGENT_BUS_GATEWAY_URL" };
@@ -1151,6 +1193,48 @@ function isDirectory(value) {
     return fs.statSync(value).isDirectory();
   } catch {
     return false;
+  }
+}
+
+function pathExists(value) {
+  try {
+    fs.accessSync(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function nearestExistingAncestor(value) {
+  let current = path.resolve(value);
+  while (current && current !== path.dirname(current)) {
+    current = path.dirname(current);
+    if (pathExists(current)) return current;
+  }
+  return current && pathExists(current) ? current : "";
+}
+
+function isWritable(value) {
+  try {
+    fs.accessSync(value, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyEphemeralPath(value) {
+  const resolved = path.resolve(value).replace(/\\/g, "/").toLowerCase();
+  const tmp = path.resolve(os.tmpdir()).replace(/\\/g, "/").toLowerCase();
+  return resolved === tmp || resolved.startsWith(`${tmp}/`) || /^\/tmp(\/|$)/.test(resolved) || /^\/var\/tmp(\/|$)/.test(resolved);
+}
+
+function safeBackendUrlDetail(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ""}${url.pathname || ""}`;
+  } catch {
+    return "configured";
   }
 }
 
@@ -1297,7 +1381,7 @@ function createDiagnosticsBundle(context, options = {}) {
       cwd: process.cwd(),
       config_path: context.configPath
     },
-    config: config ? diagnosticsConfigSummary(config, context.gatewayUrl, context.tokenPresent) : {
+    config: config ? diagnosticsConfigSummary(config, context.gatewayUrl, context.tokenPresent, context.mode) : {
       readable: false
     },
     doctor: doctorResult(context.checks || []),
@@ -1309,9 +1393,46 @@ function createDiagnosticsBundle(context, options = {}) {
   });
 }
 
-function diagnosticsConfigSummary(config, gatewayUrl, tokenPresent) {
+function diagnosticsConfigSummary(config, gatewayUrl, tokenPresent, mode = "edge") {
+  if (mode === "central") {
+    const router = isPlainObject(config.modelRouter) ? config.modelRouter : {};
+    const telegram = config.plugins?.telegramBot;
+    return {
+      readable: true,
+      mode: "central",
+      host: config.host || "",
+      port: config.port,
+      gatewayUrl: gatewayUrl || config.gatewayUrl || "",
+      dataDir: config.dataDir || "",
+      token: tokenPresent ? "configured" : "missing_or_placeholder",
+      edgeTokens: Array.isArray(config.edgeTokens) ? config.edgeTokens.length : 0,
+      modelRouter: {
+        enabled: router.enabled !== false,
+        agentModels: router.agentModels !== false,
+        allowEdgeAgentModels: router.allowEdgeAgentModels === true,
+        defaultBackend: router.defaultBackend || "",
+        defaultModel: router.defaultModel || "",
+        backends: Array.isArray(router.backends)
+          ? router.backends.map((backend) => ({
+            id: backend?.id || "",
+            enabled: backend?.enabled !== false,
+            baseUrl: backend?.baseUrl || "",
+            apiKeyEnv: backend?.apiKeyEnv || "",
+            models: Array.isArray(backend?.models) ? backend.models : []
+          }))
+          : []
+      },
+      telegramBot: isPlainObject(telegram) ? {
+        enabled: telegram.enabled === true,
+        dryRun: telegram.dryRun === true,
+        controlEnabled: telegram.control?.enabled === true,
+        conversationEnabled: telegram.control?.conversation?.enabled === true
+      } : { enabled: false }
+    };
+  }
   return {
     readable: true,
+    mode: "edge",
     nodeId: config.nodeId || "",
     gatewayUrl: gatewayUrl || config.gatewayUrl || "",
     token: tokenPresent ? "configured" : "missing_or_placeholder",
@@ -1521,6 +1642,32 @@ function edgeConfigWithAgents(agents) {
   };
 }
 
+function doctorRequestedMode(args) {
+  const explicit = String(optionValue(args, "--mode") || "").trim().toLowerCase();
+  const positional = ["central", "edge"].includes(String(args[0] || "").toLowerCase())
+    ? String(args[0]).toLowerCase()
+    : "";
+  const mode = explicit || positional;
+  if (!mode) return "";
+  if (!["central", "edge"].includes(mode)) throw new Error("doctor --mode must be central or edge.");
+  return mode;
+}
+
+function inferDoctorMode(config) {
+  if (Array.isArray(config.agents) || config.nodeId) return "edge";
+  if (Object.hasOwn(config, "dataDir") || Object.hasOwn(config, "edgeTokens") || Object.hasOwn(config, "modelRouter") || Object.hasOwn(config, "port")) {
+    return "central";
+  }
+  return "edge";
+}
+
+function localCentralGatewayUrl(config) {
+  const host = String(config.host || process.env.AGENT_BUS_HOST || "127.0.0.1").trim();
+  const port = positiveIntegerOption(config.port || process.env.AGENT_BUS_PORT, 8788, 65535);
+  const clientHost = ["0.0.0.0", "::", ""].includes(host) ? "127.0.0.1" : host;
+  return `http://${clientHost}:${port}`;
+}
+
 async function discoverLocalTools() {
   const host = safeId(os.hostname() || "local");
   const codexPath = findExecutable("codex");
@@ -1629,6 +1776,207 @@ function checkConfiguredTools(checks, config, baseDir) {
       addCheck(checks, "pass", `agent ${agent.id} tool`, resolved);
     } else {
       addCheck(checks, "warn", `agent ${agent.id} tool`, `${command} not found; run agent-bus detect`);
+    }
+  }
+}
+
+function validateCentralConfig(checks, config, gatewayUrl, token, baseDir) {
+  addCheck(checks, "pass", "doctor mode", "central");
+
+  const host = String(config.host || process.env.AGENT_BUS_HOST || "127.0.0.1").trim();
+  if (host) {
+    addCheck(checks, "pass", "central host", host);
+  } else {
+    addCheck(checks, "warn", "central host", "missing; defaults to 127.0.0.1", "Set host explicitly in production service config.");
+  }
+
+  const port = Number(config.port || process.env.AGENT_BUS_PORT || 8788);
+  if (Number.isInteger(port) && port > 0 && port <= 65535) {
+    addCheck(checks, "pass", "central port", String(port));
+  } else {
+    addCheck(checks, "fail", "central port", String(config.port || process.env.AGENT_BUS_PORT || ""), "Use a TCP port between 1 and 65535.");
+  }
+
+  const gatewayStatus = validateGatewayUrl(gatewayUrl);
+  if (gatewayStatus.ok && !isPlaceholder(gatewayUrl)) {
+    addCheck(checks, "pass", "public gatewayUrl", gatewayUrl);
+  } else {
+    addCheck(checks, "warn", "public gatewayUrl", gatewayStatus.error || "not configured", "Set gatewayUrl/AGENT_BUS_GATEWAY_URL to the public reverse-proxy URL users and edges will join.");
+  }
+
+  validateCentralToken(checks, token);
+  validateCentralDataDir(checks, config, baseDir);
+  validateCentralEdgeTokens(checks, config);
+  validateCentralDefaults(checks, config);
+  validateCentralModelRouter(checks, config);
+  validateCentralTelegram(checks, config);
+}
+
+function validateCentralToken(checks, token) {
+  const text = String(token || "").trim();
+  if (!text || isPlaceholder(text)) {
+    addCheck(checks, "fail", "admin token", "missing or placeholder", "Set AGENT_BUS_TOKEN or central.config.json token to a long random value before exposing Central.");
+    return;
+  }
+  if (text.length < 24) {
+    addCheck(checks, "warn", "admin token", "configured but short", "Use at least 24 random characters for operator/admin access.");
+    return;
+  }
+  addCheck(checks, "pass", "admin token", "configured");
+}
+
+function validateCentralDataDir(checks, config, baseDir) {
+  const configured = config.dataDir || process.env.AGENT_BUS_DATA_DIR || "./data/central";
+  const resolved = resolveConfigPath(configured, baseDir);
+  if (!path.isAbsolute(String(configured))) {
+    addCheck(checks, "warn", "central dataDir path", `${configured} is relative`, "For systemd/Docker, prefer an absolute persistent path or mounted volume.");
+  }
+  if (pathExists(resolved)) {
+    if (!isDirectory(resolved)) {
+      addCheck(checks, "fail", "central dataDir", `${resolved} is not a directory`, "Point dataDir at a writable directory.");
+      return;
+    }
+    if (isWritable(resolved)) {
+      addCheck(checks, "pass", "central dataDir", `${resolved} writable`);
+    } else {
+      addCheck(checks, "fail", "central dataDir", `${resolved} is not writable`, "Fix ownership/permissions before starting Central.");
+    }
+  } else {
+    const ancestor = nearestExistingAncestor(resolved);
+    if (ancestor && isDirectory(ancestor) && isWritable(ancestor)) {
+      addCheck(checks, "pass", "central dataDir", `${resolved} can be created`);
+    } else {
+      addCheck(checks, "fail", "central dataDir", `${resolved} parent is not writable`, "Create the parent directory or use a persistent volume.");
+    }
+  }
+  if (isLikelyEphemeralPath(resolved)) {
+    addCheck(checks, "warn", "central dataDir persistence", `${resolved} looks ephemeral`, "Use a persistent disk or Docker volume for rooms, runs, traces, and Telegram sessions.");
+  } else {
+    addCheck(checks, "pass", "central dataDir persistence", "persistent-looking path");
+  }
+}
+
+function validateCentralEdgeTokens(checks, config) {
+  const raw = Array.isArray(config.edgeTokens) ? config.edgeTokens : [];
+  if (!raw.length) {
+    addCheck(checks, "warn", "edge tokens", "none configured", "Create scoped edge tokens or pair codes before expecting edges to connect.");
+    return;
+  }
+  const tokens = raw.map(edgeTokenValue).filter(Boolean);
+  const placeholders = tokens.filter((item) => isPlaceholder(item));
+  const short = tokens.filter((item) => !isPlaceholder(item) && item.length < 20);
+  const duplicates = duplicateValues(tokens);
+  if (placeholders.length) addCheck(checks, "fail", "edge tokens", `${placeholders.length} placeholder token(s)`, "Replace example edge tokens before exposing Central.");
+  if (short.length) addCheck(checks, "warn", "edge tokens strength", `${short.length} short token(s)`, "Use long random scoped edge tokens.");
+  if (duplicates.length) addCheck(checks, "fail", "edge tokens duplicates", `${duplicates.length} duplicate token(s)`, "Each edge token must be unique.");
+  if (!placeholders.length && !duplicates.length) addCheck(checks, "pass", "edge tokens", `${tokens.length} configured`);
+}
+
+function edgeTokenValue(item) {
+  if (typeof item === "string") return item;
+  if (isPlainObject(item)) return String(item.token || item.value || "");
+  return "";
+}
+
+function validateCentralDefaults(checks, config) {
+  const defaults = isPlainObject(config.defaults) ? config.defaults : {};
+  const pollTimeout = Number(defaults.pollTimeoutMs || 0);
+  if (Number.isFinite(pollTimeout) && pollTimeout >= 1000 && pollTimeout <= 120000) {
+    addCheck(checks, "pass", "central poll timeout", `${pollTimeout}ms`);
+  } else if (pollTimeout) {
+    addCheck(checks, "warn", "central poll timeout", `${pollTimeout}ms`, "Use a practical long-poll timeout such as 25000ms.");
+  } else {
+    addCheck(checks, "pass", "central poll timeout", "default");
+  }
+}
+
+function validateCentralModelRouter(checks, config) {
+  const router = isPlainObject(config.modelRouter) ? config.modelRouter : {};
+  if (router.enabled === false) {
+    addCheck(checks, "pass", "model router", "disabled");
+    return;
+  }
+  addCheck(checks, "pass", "model router", "enabled");
+  if (router.agentModels === false) {
+    addCheck(checks, "warn", "agent-backed models", "disabled", "Enable modelRouter.agentModels if you want model=agent:<id> routing.");
+  } else {
+    addCheck(checks, "pass", "agent-backed models", "enabled");
+  }
+  const backends = Array.isArray(router.backends) ? router.backends : [];
+  const enabled = backends.filter((backend) => isPlainObject(backend) && backend.enabled !== false);
+  if (!backends.length) {
+    addCheck(checks, "warn", "model backends", "none configured", "Agent-backed models can still work, but real upstream model routing needs a backend.");
+    return;
+  }
+  if (!enabled.length) {
+    addCheck(checks, "warn", "model backends", "all disabled", "Enable at least one backend before routing non-agent models.");
+  } else {
+    addCheck(checks, "pass", "model backends", `${enabled.length}/${backends.length} enabled`);
+  }
+  const backendIds = new Set(backends.map((backend) => backend?.id).filter(Boolean));
+  if (router.defaultBackend && !backendIds.has(router.defaultBackend)) {
+    addCheck(checks, "warn", "default backend", `${router.defaultBackend} not found`, "Set modelRouter.defaultBackend to an existing backend id.");
+  }
+  for (const backend of enabled) {
+    validateCentralBackend(checks, backend);
+  }
+}
+
+function validateCentralBackend(checks, backend) {
+  const prefix = `backend ${backend.id || "(missing id)"}`;
+  if (!backend.id) addCheck(checks, "fail", `${prefix} id`, "missing", "Give every model backend a stable id.");
+  const baseUrl = String(backend.baseUrl || "").trim();
+  const status = validateGatewayUrl(baseUrl);
+  if (!baseUrl || isPlaceholder(baseUrl)) {
+    addCheck(checks, "warn", `${prefix} baseUrl`, "missing or placeholder", "Set an OpenAI-compatible /v1 base URL before routing real model traffic.");
+  } else if (!status.ok) {
+    addCheck(checks, "fail", `${prefix} baseUrl`, status.error, "Backend baseUrl must be http or https.");
+  } else {
+    addCheck(checks, "pass", `${prefix} baseUrl`, safeBackendUrlDetail(baseUrl));
+  }
+  if (backend.apiKey && !isPlaceholder(backend.apiKey)) {
+    addCheck(checks, "warn", `${prefix} apiKey`, "inline secret configured", "Prefer apiKeyEnv so diagnostics and config files stay share-safe.");
+  } else if (backend.apiKeyEnv) {
+    addCheck(checks, process.env[backend.apiKeyEnv] ? "pass" : "warn", `${prefix} apiKeyEnv`, process.env[backend.apiKeyEnv] ? `${backend.apiKeyEnv} set` : `${backend.apiKeyEnv} not set`, "Set this environment variable before sending real model requests.");
+  } else {
+    addCheck(checks, "warn", `${prefix} api key`, "not configured", "Set apiKeyEnv or apiKey for authenticated upstream model routing.");
+  }
+  if (Array.isArray(backend.models) && backend.models.length) {
+    addCheck(checks, "pass", `${prefix} models`, `${backend.models.length} configured`);
+  } else {
+    addCheck(checks, "warn", `${prefix} models`, "none listed", "List models so /v1/models can advertise routing choices.");
+  }
+}
+
+function validateCentralTelegram(checks, config) {
+  const plugin = config.plugins?.telegramBot;
+  if (!isPlainObject(plugin) || plugin.enabled === false) {
+    addCheck(checks, "pass", "telegram plugin", "disabled");
+    return;
+  }
+  addCheck(checks, "pass", "telegram plugin", plugin.dryRun ? "enabled dry-run" : "enabled");
+  const botTokenEnv = plugin.botTokenEnv || "AGENT_BUS_TELEGRAM_BOT_TOKEN";
+  const chatIdEnv = plugin.chatIdEnv || "AGENT_BUS_TELEGRAM_CHAT_ID";
+  addCheck(checks, process.env[botTokenEnv] || plugin.dryRun ? "pass" : "warn", "telegram bot token env", process.env[botTokenEnv] ? `${botTokenEnv} set` : `${botTokenEnv} not set`, "Set the bot token env var or keep dryRun enabled.");
+  addCheck(checks, process.env[chatIdEnv] || plugin.dryRun ? "pass" : "warn", "telegram chat id env", process.env[chatIdEnv] ? `${chatIdEnv} set` : `${chatIdEnv} not set`, "Set the operator chat id env var or keep dryRun enabled.");
+
+  const control = isPlainObject(plugin.control) ? plugin.control : {};
+  if (control.enabled) {
+    const secretEnv = control.secretTokenEnv || "AGENT_BUS_TELEGRAM_WEBHOOK_SECRET";
+    addCheck(checks, process.env[secretEnv] ? "pass" : "warn", "telegram webhook secret", process.env[secretEnv] ? `${secretEnv} set` : `${secretEnv} not set`, "Set a webhook secret before accepting public Telegram callbacks.");
+    if (Array.isArray(control.allowedChatIds) && control.allowedChatIds.length) {
+      addCheck(checks, "pass", "telegram allowed chats", `${control.allowedChatIds.length} configured`);
+    } else {
+      addCheck(checks, "warn", "telegram allowed chats", "not restricted", "Set allowedChatIds for production control bots.");
+    }
+  }
+  const conversation = isPlainObject(control.conversation) ? control.conversation : {};
+  if (conversation.enabled) {
+    const agents = Array.isArray(conversation.agents) ? conversation.agents.filter(Boolean) : [];
+    if (conversation.agentId || agents.length) {
+      addCheck(checks, "pass", "telegram conversation agents", conversation.agentId || agents.join(", "));
+    } else {
+      addCheck(checks, "warn", "telegram conversation agents", "none selected", "Set conversation.agentId or conversation.agents before enabling chat control.");
     }
   }
 }

@@ -26,7 +26,7 @@
 
 ### Diagnostics hardening
 
-- Redacts temporary and common private absolute paths such as `/tmp/...` and Windows home-directory paths from `agent-bus diagnostics bundle` by default, including doctor check details like `Read edge config`.
+- Redacts temporary and common private absolute paths such as `/tmp/...` and Windows home-directory paths from `agent-bus diagnostics bundle` by default, including doctor check details like `Read config`.
 - Adds `npm run diagnostics:redaction:smoke` and runs it inside `npm run release:check` so host/path toggle regressions stay covered without live model calls.
 
 ### Deployment hardening
@@ -63,6 +63,7 @@
 - Clarifies the issue-to-PR demo maturity boundary so operators can distinguish the proven no-quota room/artifact workflow from future live GitHub PR automation.
 - Documents a live-update impact matrix for central Python service changes, edge bridge scripts, edge config changes, and operator-only CLI/docs updates.
 - Adds Web Console quickstart recovery commands so stale queued room hints can be copied with the current gateway and redacted token placeholders.
+- Adds `agent-bus doctor --mode central` for quota-safe Central preflight checks covering admin token strength, data directory persistence, edge token shape, model router backends, Telegram plugin wiring, and readiness endpoints.
 
 ## 0.5.5 - Compact room session keys
 

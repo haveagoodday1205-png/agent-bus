@@ -2920,16 +2920,20 @@ function roomHealthSummary(room, {
   const checklistAgents = checklist.agents && typeof checklist.agents === "object" ? checklist.agents : {};
   const runBuckets = roomHealthRunBuckets(room?.runs || []);
   const latestRunByAgent = latestRoomRunByAgent(room?.runs || []);
+  const activeRunsByAgent = roomHealthActiveRunsByAgent(room?.runs || []);
   const inspectionRunsById = roomInspectionRunsById(inspection);
   const agents = (Array.isArray(room?.agents) ? room.agents : []).map((agentId) => {
     const run = latestRunByAgent.get(agentId) || {};
     const checklistItem = checklistAgents[agentId] || {};
     const inspectRun = inspectionRunsById.get(run.id || checklistItem.run_id || "") || {};
     const contract = roomHealthContractStatus(room, run, checklistItem);
+    const activeRuns = activeRunsByAgent.get(agentId) || [];
     return {
       agent_id: agentId,
       status: checklistItem.status || run.status || "missing",
       run_id: checklistItem.run_id || run.id || "",
+      active_run_count: activeRuns.length,
+      active_run_ids: activeRuns.map((item) => item.id).filter(Boolean),
       node_id: run.node_id || checklistItem.node_id || inspectRun.node_id || "",
       edge_session_id: run.edge_session_id || run.lease?.edge_session_id || inspectRun.edge_session_id || "",
       lease_state: run.lease?.state || inspectRun.lease_state || "",
@@ -3016,6 +3020,10 @@ function roomHealthDerivedSummary(room, agents) {
   const expectedAgents = Array.isArray(room?.agents) ? room.agents.filter(Boolean) : [];
   const failedStatuses = new Set(["failed", "error", "cancelled", "canceled", "skipped", "replaced", "superseded"]);
   const terminalAgents = agents.filter((item) => roomHealthTerminalStatus(item.status));
+  const duplicateActiveAgents = agents
+    .filter((item) => Number(item.active_run_count || 0) > 1)
+    .map((item) => item.agent_id)
+    .filter(Boolean);
   return {
     expected_agents: expectedAgents.length,
     agents_with_runs: agents.filter((item) => item.run_id).length,
@@ -3025,6 +3033,8 @@ function roomHealthDerivedSummary(room, agents) {
     missing_agents: agents.filter((item) => !item.run_id).map((item) => item.agent_id),
     running_agents: agents.filter((item) => String(item.status || "").toLowerCase() === "running").map((item) => item.agent_id),
     queued_agents: agents.filter((item) => String(item.status || "").toLowerCase() === "queued").map((item) => item.agent_id),
+    duplicate_active_agents: duplicateActiveAgents,
+    duplicate_active_agent_count: duplicateActiveAgents.length,
     missing_report_agents: terminalAgents.filter((item) => !item.has_report).map((item) => item.agent_id),
     missing_done_agents: terminalAgents.filter((item) => !item.has_done).map((item) => item.agent_id)
   };
@@ -3037,6 +3047,10 @@ function roomHealthTerminalStatus(status) {
 function roomHealthRecoveryActions(room, agents, inspection) {
   const roomId = room?.id || "ROOM_ID";
   const actions = [];
+  const duplicateActiveAgents = agents
+    .filter((item) => Number(item.active_run_count || 0) > 1)
+    .map((item) => item.agent_id)
+    .filter(Boolean);
   const missingReport = agents
     .filter((item) => roomHealthTerminalStatus(item.status) && !item.has_report)
     .map((item) => item.agent_id)
@@ -3053,6 +3067,15 @@ function roomHealthRecoveryActions(room, agents, inspection) {
     .filter((item) => item.stale_state && !roomHealthTerminalStatus(item.status))
     .map((item) => item.agent_id)
     .filter(Boolean);
+  if (duplicateActiveAgents.length) {
+    actions.push({
+      kind: "inspect_duplicate_active_runs",
+      level: "warn",
+      agents: duplicateActiveAgents,
+      message: "One or more agents have multiple active runs in this room. Inspect before waking or resuming so duplicate work does not fork the room.",
+      command: `agent-bus room inspect ${roomId}`
+    });
+  }
   if (missingReport.length) {
     actions.push({
       kind: "request_report",
@@ -3129,6 +3152,30 @@ function roomHealthRunBuckets(runs = []) {
   return buckets;
 }
 
+function roomHealthActiveRunsByAgent(runs = []) {
+  const byAgent = new Map();
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!roomHealthRunIsActive(run)) continue;
+    const agentId = run?.agent_id || "";
+    if (!agentId) continue;
+    const list = byAgent.get(agentId) || [];
+    list.push(run);
+    byAgent.set(agentId, list);
+  }
+  for (const list of byAgent.values()) {
+    list.sort((a, b) => roomRunSortTime(b) - roomRunSortTime(a));
+  }
+  return byAgent;
+}
+
+function roomHealthRunIsActive(run) {
+  const status = String(run?.status || "queued").toLowerCase();
+  if (roomHealthTerminalStatus(status)) return false;
+  if (["replaced", "superseded"].includes(status)) return false;
+  if (run?.replaced_by_run_id || run?.replacement_run_id || run?.superseded_by_run_id || run?.late_complete_ignored_at) return false;
+  return true;
+}
+
 function latestRoomRunByAgent(runs = []) {
   const byAgent = new Map();
   for (const run of Array.isArray(runs) ? runs : []) {
@@ -3203,6 +3250,7 @@ function formatRoomHealth(health) {
   lines.push(`Steps: ${room.steps || 0}/${room.max_steps || 0}`);
   lines.push(`Runs: queued=${runStatuses.queued || 0} running=${runStatuses.running || 0} completed=${runStatuses.completed || 0} failed=${(runStatuses.failed || 0) + (runStatuses.error || 0)} total=${summary.total_runs || 0}`);
   lines.push(`Contract: replied=${summary.replied_agents ?? 0}/${summary.expected_agents ?? 0} completed=${summary.completed_agents ?? 0} failed=${summary.failed_agents ?? 0}`);
+  lines.push(`Duplicate active agents: ${formatInlineList(summary.duplicate_active_agents || [])}`);
   lines.push(`Missing REPORT: ${formatInlineList(summary.missing_report_agents || [])}`);
   lines.push(`Missing DONE: ${formatInlineList(summary.missing_done_agents || [])}`);
   if (summary.last_wake_reason) lines.push(`Last wake: ${oneLine(summary.last_wake_reason, 180)}`);
@@ -3216,8 +3264,9 @@ function formatRoomHealth(health) {
       const stale = agent.stale_state ? ` ${agent.stale_state}` : "";
       const lease = agent.lease_state ? ` lease=${agent.lease_state}` : "";
       const edgeSession = agent.edge_session_id ? ` edge_session=${oneLine(agent.edge_session_id, 36)}` : "";
+      const activeRuns = Number(agent.active_run_count || 0) > 1 ? ` active_runs=${agent.active_run_ids.join(",")}` : "";
       const wake = agent.wake_reason ? ` wake=${JSON.stringify(oneLine(agent.wake_reason, 100))}` : "";
-      lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${lease}${edgeSession}${wake}`);
+      lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${lease}${edgeSession}${activeRuns}${wake}`);
       if (agent.last_error) lines.push(`  error: ${oneLine(agent.last_error, 180)}`);
     }
   }

@@ -293,6 +293,29 @@ async function main() {
   if (!edge.killed) edge.kill("SIGTERM");
   await waitForExit(edge);
   await delay(1200);
+  const duplicateActiveRoom = await requestJson(`${base}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Offline duplicate active room",
+      goal: "Verify room health detects duplicate active runs for the same agent.",
+      agents: ["offline-agent"],
+      wakeAgents: ["offline-agent"],
+      auto_rotate: false,
+      max_steps: 3
+    })
+  });
+  const duplicateWokenRoom = await runCliJson(["room", "wake", duplicateActiveRoom.id, "--agent", "offline-agent", "--reason", "intentional duplicate active run smoke", "--gateway", base, "--token", token]);
+  assert((duplicateWokenRoom.runs || []).filter((item) => item.agent_id === "offline-agent" && item.status === "queued").length === 2, "duplicate active room did not create two queued runs for the same agent");
+  const duplicateHealth = await runCliJson(["room", "health", duplicateActiveRoom.id, "--json", "--gateway", base, "--token", token]);
+  assert(duplicateHealth.summary?.duplicate_active_agent_count === 1, "CLI room health did not count duplicate active agents");
+  assert(duplicateHealth.summary?.duplicate_active_agents?.includes("offline-agent"), "CLI room health did not expose duplicate active agent ids");
+  assert(duplicateHealth.agents?.some((item) => item.agent_id === "offline-agent" && item.active_run_count === 2 && item.active_run_ids?.length === 2), "CLI room health did not expose duplicate active run ids");
+  assert(duplicateHealth.recovery_actions?.some((item) => item.kind === "inspect_duplicate_active_runs" && item.agents?.includes("offline-agent")), "CLI room health did not suggest inspecting duplicate active runs");
+  const duplicateHealthText = await runCliText(["room", "health", duplicateActiveRoom.id, "--gateway", base, "--token", token]);
+  assert(duplicateHealthText.includes("Duplicate active agents: `offline-agent`"), "CLI room health text did not render duplicate active agents");
+  await runCliJson(["room", "pause", duplicateActiveRoom.id, "--reason", "offline smoke duplicate active checked", "--gateway", base, "--token", token]);
+
   const pauseRoom = await requestJson(`${base}/rooms`, {
     method: "POST",
     headers: authJsonHeaders(token),

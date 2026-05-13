@@ -2602,24 +2602,27 @@ async function room(args) {
   }
   if (action === "recover") {
     const roomId = requiredPositional(args, 1, "room id");
-    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
     const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
-    const inspection = inspectRoomRecovery(roomData, { queuedRunStaleSeconds });
-    const reason = optionValue(args, "--reason") || optionValue(args, "--message") || `Stale/orphan room recovery: cancelling ${inspection.stale_queued_runs.length || "old"} queued run(s).`;
-    const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
-    if (!args.includes("--yes")) {
-      process.stdout.write(formatRoomInspection(inspection));
-      process.stdout.write(`\nDry run. Re-run with --yes to pause the room and cancel queued runs:\nagent-bus room recover ${roomId} --yes${thresholdFlag} --reason ${JSON.stringify(reason)}\n`);
-      return;
-    }
+    const yes = args.includes("--yes");
     const force = args.includes("--force");
-    if (!force && inspection.recommendation !== "pause_recover_orphan_queued_runs") {
-      process.stdout.write(formatRoomInspection(inspection));
-      throw new Error("Refusing room recover --yes because no stale queued orphan runs were found. Use `agent-bus room pause ROOM_ID --reason ...` for an intentional operator pause, or add --force after verifying no agent process should keep running.");
+    const reason = optionValue(args, "--reason") || optionValue(args, "--message") || "Stale/orphan room recovery.";
+    const body = {
+      queued_run_stale_seconds: queuedRunStaleSeconds,
+      dry_run: !yes,
+      confirm: yes,
+      yes,
+      force,
+      reason
+    };
+    let result;
+    try {
+      result = await gatewayJson(`/rooms/${pathPart(roomId)}/recover`, { auth: true, args, method: "POST", body });
+    } catch (err) {
+      if (httpStatusFromError(err?.message || err) !== 404) throw err;
+      return legacyRoomRecover(args, roomId, { queuedRunStaleSeconds, reason });
     }
-    const recovered = await gatewayJson(`/rooms/${pathPart(roomId)}/pause`, { auth: true, args, method: "POST", body: { reason } });
-    if (args.includes("--json")) return printJson(recovered);
-    console.log(`Recovered room ${roomId}: paused and cancelled queued runs. Use room export before creating a follow-up room if work should continue.`);
+    if (args.includes("--json")) return printJson(result);
+    process.stdout.write(formatRoomRecoveryResult(result, { roomId, queuedRunStaleSeconds, reason }));
     return;
   }
   if (action === "message" || action === "say") {
@@ -2763,6 +2766,62 @@ function formatRoomInspection(inspection) {
   return `${lines.join("\n")}\n`;
 }
 
+async function legacyRoomRecover(args, roomId, { queuedRunStaleSeconds = 21600, reason = "Stale/orphan room recovery." } = {}) {
+  const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+  const inspection = inspectRoomRecovery(roomData, { queuedRunStaleSeconds });
+  const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
+  if (!args.includes("--yes")) {
+    if (args.includes("--json")) {
+      return printJson({
+        ok: true,
+        dry_run: true,
+        legacy_client_side_recover: true,
+        room_id: roomId,
+        reason,
+        inspection
+      });
+    }
+    process.stdout.write(formatRoomInspection(inspection));
+    process.stdout.write(`\nDry run. This gateway does not expose server-side /recover; re-run with --yes to pause the room and cancel queued runs via the legacy pause path:\nagent-bus room recover ${roomId} --yes${thresholdFlag} --reason ${JSON.stringify(reason)}\n`);
+    return;
+  }
+  const force = args.includes("--force");
+  if (!force && inspection.recommendation !== "pause_recover_orphan_queued_runs") {
+    process.stdout.write(formatRoomInspection(inspection));
+    throw new Error("Refusing room recover --yes because no stale queued orphan runs were found. Use `agent-bus room pause ROOM_ID --reason ...` for an intentional operator pause, or add --force after verifying no agent process should keep running.");
+  }
+  const recovered = await gatewayJson(`/rooms/${pathPart(roomId)}/pause`, { auth: true, args, method: "POST", body: { reason } });
+  if (args.includes("--json")) {
+    return printJson({
+      ok: true,
+      dry_run: false,
+      executed: true,
+      legacy_client_side_recover: true,
+      room_id: roomId,
+      reason,
+      room: recovered
+    });
+  }
+  console.log(`Recovered room ${roomId}: paused and cancelled queued runs via legacy pause path. Use room export before creating a follow-up room if work should continue.`);
+}
+
+function formatRoomRecoveryResult(result, { roomId, queuedRunStaleSeconds = 21600, reason = "Stale/orphan room recovery." } = {}) {
+  const lines = [];
+  const inspection = result?.inspection || result?.inspection_after;
+  if (inspection) lines.push(formatRoomInspection(inspection).trimEnd());
+  if (result?.dry_run !== false) {
+    const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
+    lines.push("");
+    lines.push("Dry run. Re-run with --yes to pause the room and cancel queued runs.");
+    lines.push("Server-side recovery did not modify the room.");
+    lines.push(`agent-bus room recover ${roomId} --yes${thresholdFlag} --reason ${JSON.stringify(reason)}`);
+    return `${lines.join("\n")}\n`;
+  }
+  const count = Array.isArray(result?.cancelled_queued_runs) ? result.cancelled_queued_runs.length : 0;
+  lines.push(`Recovered room ${roomId}: paused and cancelled ${count} queued run${count === 1 ? "" : "s"}. Use room export before creating a follow-up room if work should continue.`);
+  return `${lines.join("\n").trimStart()}\n`;
+}
+
 function inspectRoomState(room, {
   nodes = [],
   staleSeconds = 180,
@@ -2784,6 +2843,10 @@ function inspectRoomState(room, {
   const orphanedRunningRuns = [];
   const otherNonTerminalRuns = [];
   for (const rawRun of Array.isArray(room?.runs) ? room.runs : []) {
+    if (isReplacedRun(rawRun)) {
+      terminalRuns.push(statusRunRecord(rawRun, room?.id || "", { staleSeconds, nodeById, nodeLookupAvailable, heartbeatIntervalByAgentId }));
+      continue;
+    }
     const run = roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailable, heartbeatIntervalByAgentId);
     const status = String(run.status || "queued").toLowerCase();
     if (STATUS_TERMINAL_RUNS.has(status)) {
@@ -4388,7 +4451,11 @@ function isActiveRoom(room) {
   return ["active", "running", "finishing"].includes(String(room?.status || "").toLowerCase());
 }
 
-const STATUS_TERMINAL_RUNS = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped"]);
+const STATUS_TERMINAL_RUNS = new Set(["completed", "failed", "error", "cancelled", "canceled", "skipped", "replaced", "superseded"]);
+
+function isReplacedRun(run) {
+  return Boolean(run?.replaced_by_run_id || run?.replacement_run_id || run?.superseded_by_run_id || run?.late_complete_ignored_at);
+}
 
 function activeRunsForRoom(room, options = {}) {
   return activeRunBucketsForRoom(room, options).liveRuns;
@@ -4420,6 +4487,7 @@ function activeRunBucketsForRoom(room, {
   const staleQueuedRuns = [];
   const orphanedRunningRuns = [];
   for (const rawRun of Array.isArray(room?.runs) ? room.runs : []) {
+    if (isReplacedRun(rawRun)) continue;
     const run = statusRunRecord(rawRun, roomId, { staleSeconds, nodeById, nodeLookupAvailable, heartbeatIntervalByAgentId });
     const status = String(run.status || "queued").toLowerCase();
     if (STATUS_TERMINAL_RUNS.has(status)) continue;

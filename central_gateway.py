@@ -525,6 +525,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(wake_room(self.config, parts[1], body, self.request_trace_id(body)))
                 if len(parts) == 3 and parts[2] == "pause":
                     return self.json(pause_room(self.config, parts[1], body))
+                if len(parts) == 3 and parts[2] == "recover":
+                    return self.json(recover_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "reminders":
                     return self.json(add_room_reminder(self.config, parts[1], body), 201)
             return self.json({"error": "not_found"}, 404)
@@ -963,9 +965,9 @@ def status_run_buckets(room):
     stale_queued_runs = []
     room_id = room.get("id") or ""
     for raw_run in room.get("runs") or []:
-        status = str(raw_run.get("status") or "queued").lower()
-        if status in TERMINAL_RUN_STATUSES:
+        if not run_is_active_for_room(raw_run):
             continue
+        status = str(raw_run.get("status") or "queued").lower()
         run = {
             "id": raw_run.get("id"),
             "room_id": raw_run.get("room_id") or room_id,
@@ -2089,6 +2091,127 @@ def pause_room(config, room_id, body):
     })
     write_room(config, room)
     return room
+
+
+def recover_room(config, room_id, body):
+    room = get_room(config, room_id)
+    queued_run_stale_seconds = max(1, int(body.get("queued_run_stale_seconds") or body.get("queuedRunStaleSeconds") or STATUS_QUEUED_RUN_STALE_SECONDS))
+    dry_run = body_bool(body, "dry_run", "dryRun", default=True)
+    confirm = body_bool(body, "confirm", "yes", default=False)
+    force = body_bool(body, "force", default=False)
+    reason = (body.get("reason") or "Stale/orphan room recovery.").strip() or "Stale/orphan room recovery."
+    inspection = inspect_room_recovery(room, queued_run_stale_seconds)
+    result = {
+        "ok": True,
+        "dry_run": dry_run,
+        "executed": False,
+        "room_id": room_id,
+        "action": "pause_room_cancel_queued_runs",
+        "reason": reason,
+        "force": force,
+        "requires_confirmation": True,
+        "inspection": inspection,
+    }
+    if dry_run:
+        return result
+    if not confirm:
+        err = Exception("room recover execution requires confirm=true or yes=true")
+        err.status_code = 409
+        raise err
+    if not force and inspection.get("recommendation") != "pause_recover_orphan_queued_runs":
+        err = Exception("Refusing room recover --yes because no stale queued orphan runs were found.")
+        err.status_code = 409
+        err.details = inspection
+        raise err
+    recovered = pause_room(config, room_id, {"reason": reason})
+    result["dry_run"] = False
+    result["executed"] = True
+    result["room"] = recovered
+    result["cancelled_queued_runs"] = (recovered.get("pause") or {}).get("cancelled_queued_runs") or []
+    result["inspection_after"] = inspect_room_recovery(recovered, queued_run_stale_seconds)
+    return result
+
+
+def inspect_room_recovery(room, queued_run_stale_seconds=STATUS_QUEUED_RUN_STALE_SECONDS):
+    runs = room.get("runs") or []
+    active_runs = []
+    stale_queued_runs = []
+    for run in runs:
+        if not run_is_active_for_room(run):
+            continue
+        item = room_recovery_run_record(room, run)
+        if is_stale_queued_run_for_recovery(run, queued_run_stale_seconds):
+            stale_queued_runs.append(item)
+        else:
+            active_runs.append(item)
+    if stale_queued_runs and not active_runs:
+        recommendation = "pause_recover_orphan_queued_runs"
+    elif active_runs:
+        recommendation = "wait_or_inspect_running_agents"
+    elif str(room.get("status") or "").lower() == "paused":
+        recommendation = "room_paused"
+    elif str(room.get("status") or "").lower() == "completed":
+        recommendation = "room_completed"
+    else:
+        recommendation = "no_active_run_recovery_needed"
+    return {
+        "room": {
+            "id": room.get("id") or "",
+            "title": room.get("title") or "",
+            "status": room.get("status") or "unknown",
+            "updated_at": room.get("updated_at"),
+            "agents": room.get("agents") or [],
+        },
+        "thresholds": {"queued_run_stale_seconds": queued_run_stale_seconds},
+        "counts": {
+            "runs": len(runs),
+            "active_runs": len(active_runs),
+            "stale_queued_runs": len(stale_queued_runs),
+        },
+        "active_runs": active_runs,
+        "stale_queued_runs": stale_queued_runs,
+        "recommendation": recommendation,
+    }
+
+
+def room_recovery_run_record(room, run):
+    item = dict(run)
+    item["room_id"] = run.get("room_id") or room.get("id")
+    item["age_seconds"] = run_age_seconds(run)
+    return item
+
+
+def is_stale_queued_run_for_recovery(run, queued_run_stale_seconds):
+    if str(run.get("status") or "queued").lower() != "queued":
+        return False
+    created_at = status_timestamp(run.get("created_at"))
+    if created_at is None:
+        return False
+    return time.time() - created_at > queued_run_stale_seconds
+
+
+def run_age_seconds(run):
+    started = status_timestamp(run.get("started_at") or run.get("created_at"))
+    if started is None:
+        return None
+    return max(0, int(round(time.time() - started)))
+
+
+def body_bool(body, *names, default=False):
+    for name in names:
+        if name not in body:
+            continue
+        value = body.get(name)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        text = str(value or "").strip().lower()
+        if text in ("1", "true", "yes", "y", "on"):
+            return True
+        if text in ("0", "false", "no", "n", "off"):
+            return False
+    return default
 
 
 def remove_queued_tasks(run_ids):

@@ -245,6 +245,112 @@ async function main() {
   });
   assert(idlePoll.type === "idle", `late old directives unexpectedly enqueued another task: ${JSON.stringify(idlePoll)}`);
 
+  step("Verifying server-side recover defaults to dry-run and requires confirmation");
+  const staleRoom = await requestJson(`${gateway}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Room recover PR-2 smoke",
+      goal: "Verify stale queued room recovery is a server-side dry-run unless explicitly confirmed.",
+      agents: roomAgentIds,
+      wakeAgents: ["old-runner"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const staleRunId = staleRoom.runs?.[0]?.id;
+  assert(staleRunId, "stale recover room did not create a queued run");
+
+  await stopChild(central);
+  central = null;
+  const oldCreatedAt = "2020-01-01T00:00:00Z";
+  patchRunSnapshot(dataDir, staleRunId, (run) => {
+    run.created_at = oldCreatedAt;
+  });
+  patchRoomSnapshot(dataDir, staleRoom.id, staleRunId, (run, patchedRoom) => {
+    run.created_at = oldCreatedAt;
+    patchedRoom.updated_at = oldCreatedAt;
+  });
+
+  central = start(python, [path.join(root, "central_gateway.py")], {
+    AGENT_BUS_CONFIG: configPath,
+    AGENT_BUS_TOKEN: token,
+    AGENT_BUS_HOST: "127.0.0.1",
+    AGENT_BUS_PORT: String(port),
+    AGENT_BUS_DATA_DIR: dataDir
+  });
+  await waitForJson(`${gateway}/health`, 15000, central);
+  await registerFakeEdge(gateway, token, roomAgentIds);
+
+  const staleBefore = await requestJson(`${gateway}/rooms/${encodeURIComponent(staleRoom.id)}`, {
+    headers: authHeaders(token)
+  });
+  const healthBeforeDryRun = await requestJson(`${gateway}/health`);
+  const recoverDryRun = await runCliJson([
+    "room",
+    "recover",
+    staleRoom.id,
+    "--json",
+    "--gateway",
+    gateway,
+    "--token",
+    token,
+    "--queued-run-stale-seconds",
+    "1"
+  ]);
+  assert(recoverDryRun.dry_run === true, "CLI room recover did not default to server-side dry-run");
+  assert(recoverDryRun.executed === false, "dry-run recover unexpectedly executed");
+  assert(recoverDryRun.inspection?.recommendation === "pause_recover_orphan_queued_runs", "dry-run recover did not identify stale queued room recovery");
+  assert(recoverDryRun.inspection?.stale_queued_runs?.some((run) => run.id === staleRunId), "dry-run recover did not report the stale queued run");
+  const staleAfterDry = await requestJson(`${gateway}/rooms/${encodeURIComponent(staleRoom.id)}`, {
+    headers: authHeaders(token)
+  });
+  const healthAfterDryRun = await requestJson(`${gateway}/health`);
+  assert(staleAfterDry.status === staleBefore.status, "dry-run recover changed room status");
+  assert(staleAfterDry.runs?.find((run) => run.id === staleRunId)?.status === "queued", "dry-run recover changed the queued run");
+  assert(healthAfterDryRun.queued === healthBeforeDryRun.queued, "dry-run recover changed gateway queue length");
+
+  const noConfirm = await fetch(`${gateway}/rooms/${encodeURIComponent(staleRoom.id)}/recover`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      dry_run: false,
+      queued_run_stale_seconds: 1,
+      reason: "unconfirmed smoke recover"
+    })
+  });
+  const noConfirmText = await noConfirm.text();
+  assert(noConfirm.status === 409, `unconfirmed server recover returned ${noConfirm.status}: ${noConfirmText}`);
+
+  const recoverExecuted = await runCliJson([
+    "room",
+    "recover",
+    staleRoom.id,
+    "--yes",
+    "--json",
+    "--gateway",
+    gateway,
+    "--token",
+    token,
+    "--queued-run-stale-seconds",
+    "1",
+    "--reason",
+    "confirmed room-supervisor smoke recover"
+  ]);
+  assert(recoverExecuted.dry_run === false && recoverExecuted.executed === true, "confirmed recover did not execute");
+  assert(recoverExecuted.cancelled_queued_runs?.includes(staleRunId), "confirmed recover did not cancel the stale queued run");
+  const staleAfterRecover = await requestJson(`${gateway}/rooms/${encodeURIComponent(staleRoom.id)}`, {
+    headers: authHeaders(token)
+  });
+  assert(staleAfterRecover.status === "paused", "confirmed recover did not pause the room");
+  assert(staleAfterRecover.runs?.find((run) => run.id === staleRunId)?.status === "cancelled", "confirmed recover did not mark the stale queued run cancelled");
+  const queueAfterRecover = await requestJson(`${gateway}/edge/poll`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({ node_id: "room-supervisor-edge", timeout_ms: 1 })
+  });
+  assert(queueAfterRecover.type === "idle", `confirmed recover left the cancelled run queued: ${JSON.stringify(queueAfterRecover)}`);
+
   const result = {
     ok: true,
     quota: "no_model_calls",
@@ -253,7 +359,10 @@ async function main() {
     old_run_id: oldRunId,
     replacement_run_id: replacementRunId,
     late_complete_ignored: true,
-    duplicate_complete_idempotent: true
+    duplicate_complete_idempotent: true,
+    recover_room_id: staleRoom.id,
+    server_recover_dry_run: true,
+    server_recover_confirmed: true
   };
   if (jsonOut) {
     console.log(JSON.stringify(result, null, 2));
@@ -372,6 +481,20 @@ async function requestJson(url, options = {}) {
   const text = await res.text();
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
   return text.trim() ? JSON.parse(text) : {};
+}
+
+async function runCliJson(args) {
+  const result = spawnSync(process.execPath, [path.join(root, "agent-bus.mjs"), ...args], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+    env: smokeChildEnv()
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`agent-bus ${redactDiagnostics(args.join(" "))} failed with ${result.status}: ${redactDiagnostics(result.stderr || result.stdout)}`);
+  }
+  return JSON.parse(result.stdout || "{}");
 }
 
 function authHeaders(token) {

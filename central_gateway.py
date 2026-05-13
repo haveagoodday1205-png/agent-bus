@@ -862,6 +862,43 @@ def public_agents():
     return sorted(out, key=lambda item: item["id"])
 
 
+def agent_id_conflicts(agents):
+    by_id = {}
+    for agent in agents or []:
+        agent_id = str((agent or {}).get("id") or "").strip()
+        if not agent_id:
+            continue
+        item = by_id.setdefault(agent_id, {"id": agent_id, "nodes": [], "count": 0})
+        item["count"] += 1
+        node_id = str((agent or {}).get("node_id") or "").strip()
+        if node_id and node_id not in item["nodes"]:
+            item["nodes"].append(node_id)
+    conflicts = []
+    for item in by_id.values():
+        if item["count"] <= 1:
+            continue
+        item["nodes"] = sorted(item["nodes"])
+        conflicts.append(item)
+    return sorted(conflicts, key=lambda item: item["id"])
+
+
+def raise_if_agent_ids_ambiguous(agent_ids, agents):
+    wanted = {str(agent_id or "").strip() for agent_id in agent_ids or [] if str(agent_id or "").strip()}
+    if not wanted:
+        return
+    conflicts = [item for item in agent_id_conflicts(agents) if item["id"] in wanted]
+    if not conflicts:
+        return
+    parts = []
+    for item in conflicts:
+        locations = ", ".join(item["nodes"]) or (str(item["count"]) + " nodes")
+        parts.append(f"{item['id']} on {locations}")
+    details = ", ".join(parts)
+    err = Exception("ambiguous registered agents: " + details + ". Rename duplicate agent ids before routing work.")
+    err.status_code = 409
+    raise err
+
+
 def central_health():
     agents = public_agents()
     nodes = public_nodes()
@@ -890,6 +927,7 @@ def public_status(config):
     health = central_health()
     agents = public_agents()
     nodes = public_registered_nodes()
+    conflicts = agent_id_conflicts(agents)
     rooms = status_room_details(config)
     active_rooms = [room for room in rooms if status_is_active_room(room)]
     run_summary = status_room_run_summary(active_rooms)
@@ -917,9 +955,11 @@ def public_status(config):
             "active_rooms": len(active_rooms),
             "active_runs": len(run_summary["live_runs"]),
             "stale_queued_runs": len(run_summary["stale_queued_runs"]),
+            "duplicate_agent_ids": len(conflicts),
         },
         "nodes": [status_node_item(node) for node in nodes],
         "agents": [status_agent_item(agent, active_rooms, run_summary) for agent in agents],
+        "agent_id_conflicts": conflicts,
         "rooms": [status_room_item(room) for room in rooms[:8]],
         "recovery_hints": recovery_hints,
     }
@@ -1123,6 +1163,16 @@ def status_recovery_hints(stale_queued_runs):
 
 def status_warnings(result, stale_queued_runs, recovery_hints):
     warnings = []
+    conflicts = result.get("agent_id_conflicts") or []
+    if conflicts:
+        details = "; ".join(
+            f"{item.get('id')} on {', '.join(item.get('nodes') or []) or item.get('count')}"
+            for item in conflicts[:5]
+        )
+        warnings.append(
+            "Duplicate online agent ids are registered; routing to those ids is blocked until each agent id is unique. "
+            + details
+        )
     if stale_queued_runs:
         room_note = f" Example: {recovery_hints[0]['inspect_command']}" if recovery_hints else ""
         queue_note = "; gateway queue is empty" if int((result.get("health") or {}).get("queued") or 0) == 0 else ""
@@ -1146,6 +1196,12 @@ def status_readiness(result):
             "level": "setup",
             "status": "waiting-for-edge",
             "message": "Central is up, but no online edge agents are ready to receive work.",
+        }
+    if int(summary.get("duplicate_agent_ids") or 0) > 0:
+        return {
+            "level": "attention",
+            "status": "duplicate-agent-ids",
+            "message": "Central has duplicate online agent ids. Rename duplicates before routing work to those agents.",
         }
     if int(summary.get("stale_queued_runs") or 0) > 0:
         return {
@@ -1185,6 +1241,8 @@ def status_next_actions(result):
         actions.append("Run agent-bus doctor --config edge.config.json on the edge host and restart its service.")
     if int(summary.get("registered_agents") or 0) > int(summary.get("agents") or 0):
         actions.append("Some registered agents are offline or stale; inspect the Nodes section before routing work to them.")
+    if int(summary.get("duplicate_agent_ids") or 0) > 0:
+        actions.append("Rename duplicate agent ids in edge.config.json, then restart the affected edge services.")
     if int(summary.get("queued") or 0) > 0 and int(summary.get("busy_agents") or 0) == 0:
         actions.append("Poll or restart edge services so queued runs can be claimed.")
     if result.get("recovery_hints"):
@@ -1379,7 +1437,12 @@ def create_agent_chat_completion(config, body, agent_id, trace_id=None):
         return openai_error("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), 503
     if body.get("stream"):
         return openai_error("agent-backed models do not support stream=true yet", "unsupported_feature", "stream"), 400
-    agent = next((item for item in public_agents() if item["id"] == agent_id), None)
+    agents = public_agents()
+    conflict = next((item for item in agent_id_conflicts(agents) if item["id"] == agent_id), None)
+    if conflict:
+        nodes = ", ".join(conflict.get("nodes") or [])
+        return openai_error("agent model id is ambiguous: agent:" + agent_id + " is registered on " + nodes, "agent_bus_agent_ambiguous", "model"), 409
+    agent = next((item for item in agents if item["id"] == agent_id), None)
     if not agent:
         return openai_error("agent model is not online: agent:" + agent_id, "agent_bus_agent_not_online", "model"), 404
 
@@ -1459,7 +1522,12 @@ def create_agent_response(config, body, agent_id, trace_id=None):
         return openai_error("agent-backed models are disabled", "agent_bus_agent_models_disabled", "model"), 503
     if body.get("stream"):
         return openai_error("agent-backed responses do not support stream=true yet", "unsupported_feature", "stream"), 400
-    agent = next((item for item in public_agents() if item["id"] == agent_id), None)
+    agents = public_agents()
+    conflict = next((item for item in agent_id_conflicts(agents) if item["id"] == agent_id), None)
+    if conflict:
+        nodes = ", ".join(conflict.get("nodes") or [])
+        return openai_error("agent model id is ambiguous: agent:" + agent_id + " is registered on " + nodes, "agent_bus_agent_ambiguous", "model"), 409
+    agent = next((item for item in agents if item["id"] == agent_id), None)
     if not agent:
         return openai_error("agent model is not online: agent:" + agent_id, "agent_bus_agent_not_online", "model"), 404
     input_value = body.get("input")
@@ -1883,8 +1951,10 @@ def select_agents(message, body):
             err = Exception("unknown registered agents: " + ", ".join(missing))
             err.status_code = 400
             raise err
+        raise_if_agent_ids_ambiguous(wanted, agents)
         return {"mode": "explicit", "reason": "Explicit agent selector was provided.", "matched": ["agents"], "agents": selected}
     if body.get("mode") != "orchestrate":
+        raise_if_agent_ids_ambiguous([agent["id"] for agent in agents], agents)
         return {"mode": "broadcast", "reason": "Broadcast selected all registered agents.", "matched": ["all"], "agents": agents}
 
     text = (message or "").lower()
@@ -1911,11 +1981,13 @@ def select_agents(message, body):
         for agent in agents:
             if agent["role"] in ("coder", "executor"):
                 selected[agent["id"]] = agent
+    selected_agents = list(selected.values()) or agents
+    raise_if_agent_ids_ambiguous([agent["id"] for agent in selected_agents], agents)
     return {
         "mode": "orchestrate",
         "reason": "Selected agents by message intent: " + ", ".join(matched) + ".",
         "matched": matched,
-        "agents": list(selected.values()) or agents,
+        "agents": selected_agents,
     }
 
 
@@ -2605,6 +2677,8 @@ def wake_room_agents(config, room, agent_ids, reason, trace_id=None):
     if isinstance(agent_ids, str):
         agent_ids = [agent_ids]
     trace_id = trace_id or room.get("trace_id") or new_trace_id()
+    online_agents = public_agents()
+    raise_if_agent_ids_ambiguous(agent_ids, online_agents)
     out = []
     for agent_id in agent_ids:
         if not agent_id:
@@ -2618,7 +2692,7 @@ def wake_room_agents(config, room, agent_ids, reason, trace_id=None):
             room["status"] = "paused"
             room.setdefault("reports", []).append({"at": now(), "speaker": "system", "content": "Paused: max autonomous steps reached."})
             break
-        agent = next((item for item in public_agents() if item["id"] == agent_id), None)
+        agent = next((item for item in online_agents if item["id"] == agent_id), None)
         if not agent:
             room.setdefault("reports", []).append({"at": now(), "speaker": "system", "content": "Agent offline or unknown: " + agent_id})
             continue
@@ -4020,12 +4094,14 @@ def validate_agent_ids(agent_ids):
             wanted.append(text)
     if not wanted:
         return []
-    online = {agent["id"] for agent in public_agents()}
+    agents = public_agents()
+    online = {agent["id"] for agent in agents}
     missing = [agent_id for agent_id in wanted if agent_id not in online]
     if missing:
         err = Exception("unknown registered agents: " + ", ".join(missing))
         err.status_code = 400
         raise err
+    raise_if_agent_ids_ambiguous(wanted, agents)
     return wanted
 
 

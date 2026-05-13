@@ -47,6 +47,8 @@ try {
     gateway,
     "--token",
     edgeToken,
+    "--node-id",
+    "setup-smoke-edge",
     "--preset",
     "echo",
     "--out",
@@ -56,7 +58,9 @@ try {
   const edgeJson = JSON.parse(fs.readFileSync(edgeConfig, "utf8"));
   assert(edgeJson.gatewayUrl === gateway, "edge setup did not persist gatewayUrl");
   assert(edgeJson.token === edgeToken, "edge setup did not persist edge token");
+  assert(edgeJson.nodeId === "setup-smoke-edge", "edge setup did not honor --node-id");
   assert(edgeJson.tokenScope === "edge", "edge setup should mark tokenScope=edge");
+  assert(edgeSetup.stdout.includes("Node id: setup-smoke-edge"), "edge setup did not print the configured node id");
   assert(edgeSetup.stdout.includes(`agent-bus status --config ${edgeConfig}`), "edge setup did not print the local status checklist command");
   assert(edgeSetup.stdout.includes(`agent-bus status --gateway ${gateway} --token ADMIN_TOKEN`), "edge setup did not print the Central status checklist command");
 

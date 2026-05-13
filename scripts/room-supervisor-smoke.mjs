@@ -68,6 +68,27 @@ async function main() {
   step("Registering a fake edge node");
   await registerFakeEdge(gateway, token, roomAgentIds);
 
+  step("Verifying duplicate agent id guardrail");
+  await registerDuplicateAgentEdges(gateway, token);
+  const duplicateStatus = await runCliJson(["status", "--json", "--gateway", gateway, "--token", token]);
+  assert(duplicateStatus.summary?.duplicate_agent_ids === 1, "CLI status did not count duplicate agent ids");
+  assert(duplicateStatus.readiness?.status === "duplicate-agent-ids", "CLI status did not elevate duplicate agent ids into readiness");
+  assert(duplicateStatus.agent_id_conflicts?.some((item) => item.id === "duplicate-agent" && item.nodes?.includes("duplicate-edge-a") && item.nodes?.includes("duplicate-edge-b")), "CLI status did not expose duplicate agent conflict metadata");
+  const duplicateRoom = await fetch(`${gateway}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Duplicate agent guardrail smoke",
+      goal: "Verify duplicate agent ids cannot be routed ambiguously.",
+      agents: ["duplicate-agent"],
+      wakeAgents: ["duplicate-agent"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const duplicateRoomText = await duplicateRoom.text();
+  assert(duplicateRoom.status === 409, `duplicate agent room create returned ${duplicateRoom.status}: ${duplicateRoomText}`);
+
   step("Creating a room and claiming the original run");
   const room = await requestJson(`${gateway}/rooms`, {
     method: "POST",
@@ -468,6 +489,7 @@ async function main() {
     recover_room_id: staleRoom.id,
     server_recover_dry_run: true,
     server_recover_confirmed: true,
+    duplicate_agent_guardrail: true,
     supervisor_dry_run: true,
     supervisor_orphan_no_auto_replace: true
   };
@@ -499,6 +521,25 @@ async function registerFakeEdge(gateway, token, agentIds) {
       }))
     })
   });
+}
+
+async function registerDuplicateAgentEdges(gateway, token) {
+  for (const nodeId of ["duplicate-edge-a", "duplicate-edge-b"]) {
+    await requestJson(`${gateway}/edge/register`, {
+      method: "POST",
+      headers: authJsonHeaders(token),
+      body: JSON.stringify({
+        node_id: nodeId,
+        hostname: nodeId,
+        agents: [{
+          id: "duplicate-agent",
+          kind: "smoke",
+          role: "worker",
+          capabilities: ["duplicate-guardrail", "no-quota"]
+        }]
+      })
+    });
+  }
 }
 
 async function pollTask(gateway, token, runId) {

@@ -438,7 +438,7 @@ async function setup(args) {
     await writePairedEdgeConfig({ args, gateway, code, out, force, preset, auto, nodeId });
   } else {
     console.log("Step 1/3: writing edge config");
-    await writeSetupEdgeConfig({ args, gateway, token, out, preset, auto });
+    await writeSetupEdgeConfig({ args, gateway, token, out, preset, auto, nodeId });
   }
 
   const serviceTarget = resolveSetupServiceTarget(optionValue(args, "--service") || "");
@@ -796,12 +796,14 @@ async function writePairedEdgeConfig({ args, gateway, code, out, force, preset, 
   await joinPairCode(joinArgs);
 }
 
-async function writeSetupEdgeConfig({ args, gateway, token, out, preset, auto }) {
+async function writeSetupEdgeConfig({ args, gateway, token, out, preset, auto, nodeId }) {
   const config = auto ? await edgeAutoTemplate(args) : edgeTemplate(preset || "echo");
+  if (nodeId) config.nodeId = safeId(nodeId);
   if (gateway) config.gatewayUrl = gateway;
   if (token) config.token = token;
   fs.writeFileSync(out, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
   console.log(`Wrote ${out}`);
+  console.log(`Node id: ${config.nodeId || "(hostname default)"}`);
 }
 
 function resolveSetupServiceTarget(value) {
@@ -4214,6 +4216,7 @@ function summarizeStatus({
   const agentList = Array.isArray(agents) ? agents : [];
   const roomList = Array.isArray(rooms) ? rooms : [];
   const nodeList = Array.isArray(nodes) ? nodes : [];
+  const agentConflicts = agentIdConflicts(agentList);
   const onlineAgents = agentList.filter((agent) => agent.status === "online");
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
   const activeRooms = roomList.filter(isActiveRoom);
@@ -4257,7 +4260,8 @@ function summarizeStatus({
       active_runs: runSummary.liveRuns.length,
       stale_running_runs: runSummary.staleRunningRuns.length,
       stale_queued_runs: runSummary.staleQueuedRuns.length,
-      orphaned_running_runs: runSummary.orphanedRunningRuns.length
+      orphaned_running_runs: runSummary.orphanedRunningRuns.length,
+      duplicate_agent_ids: agentConflicts.length
     },
     nodes: nodeList.map((node) => ({
       id: node.node_id || node.id || "unknown",
@@ -4303,6 +4307,7 @@ function summarizeStatus({
         last_run_health: lastRunHealth(lastRunStatus)
       };
     }),
+    agent_id_conflicts: agentConflicts,
     recovery_hints: recoveryHints,
     stale_running_hints: staleRunningHints,
     orphaned_running_hints: orphanedRunningHints,
@@ -4334,7 +4339,8 @@ function summarizeStatus({
       health,
       staleRunningHints,
       recoveryHints,
-      orphanedRunningHints
+      orphanedRunningHints,
+      agentIdConflicts: agentConflicts
     })
   };
   result.readiness = statusReadiness(result, { authWarning });
@@ -4363,6 +4369,13 @@ function statusReadiness(result, { authWarning = "" } = {}) {
       level: "setup",
       status: "waiting-for-edge",
       message: "Central is up, but no online edge agents are ready to receive work."
+    };
+  }
+  if (Number(s.duplicate_agent_ids || 0) > 0) {
+    return {
+      level: "attention",
+      status: "duplicate-agent-ids",
+      message: "Central has duplicate online agent ids. Rename duplicates before routing work to those agents."
     };
   }
   if (Number(s.orphaned_running_runs || 0) > 0) {
@@ -4427,6 +4440,9 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
   }
   if (!authWarning && Number(s.registered_agents || 0) > Number(s.agents || 0)) {
     actions.push("Some registered agents are offline or stale; inspect the Nodes section before routing work to them.");
+  }
+  if (!authWarning && Number(s.duplicate_agent_ids || 0) > 0) {
+    actions.push("Rename duplicate agent ids in edge.config.json, then restart the affected edge services.");
   }
   if (!authWarning && roomAccess !== "full") {
     actions.push("Pass an admin token to inspect rooms, export room history, or recover stale queued work.");
@@ -4828,10 +4844,18 @@ function statusWarnings({
   health,
   staleRunningHints = [],
   recoveryHints,
-  orphanedRunningHints = []
+  orphanedRunningHints = [],
+  agentIdConflicts = []
 }) {
   const warnings = authWarning ? [authWarning] : [];
   if (roomAccessWarning) warnings.push(roomAccessWarning);
+  if (agentIdConflicts.length) {
+    const detail = agentIdConflicts
+      .slice(0, 5)
+      .map((item) => `${item.id} on ${(item.nodes || []).join(",") || item.count}`)
+      .join("; ");
+    warnings.push(`Duplicate online agent ids are registered; routing to those ids is blocked until each agent id is unique. ${detail}`);
+  }
   const staleRunningCount = staleRunningRuns.length;
   if (staleRunningCount) {
     const cadenceMismatchRuns = staleRunningRuns.filter((run) => runHeartbeatThresholdBelowCadence(run, runHeartbeatStaleSeconds));
@@ -4909,6 +4933,23 @@ function unique(values) {
   return Array.from(new Set(values));
 }
 
+function agentIdConflicts(agents = []) {
+  const byId = new Map();
+  for (const agent of Array.isArray(agents) ? agents : []) {
+    const id = String(agent?.id || "").trim();
+    if (!id) continue;
+    const item = byId.get(id) || { id, nodes: [], count: 0 };
+    item.count += 1;
+    const nodeId = String(agent?.node_id || agent?.nodeId || "").trim();
+    if (nodeId && !item.nodes.includes(nodeId)) item.nodes.push(nodeId);
+    byId.set(id, item);
+  }
+  return [...byId.values()]
+    .filter((item) => item.count > 1)
+    .map((item) => ({ ...item, nodes: item.nodes.sort() }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
 function statusFreshness(status, lastSeenAt, staleSeconds = 180) {
   if (status !== "online") return status || "unknown";
   if (!lastSeenAt) return "online/unknown";
@@ -4940,7 +4981,7 @@ function lastRunHealth(status) {
 function printStatus(result) {
   const s = result.summary || {};
   console.log(`Agent Bus status: ${result.ok ? "OK" : "WARN"}`);
-  console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, stale_running ${s.stale_running_runs || 0}, orphaned_running ${s.orphaned_running_runs || 0}, queued ${s.queued}`);
+  console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, duplicate_agents ${s.duplicate_agent_ids || 0}, stale_running ${s.stale_running_runs || 0}, orphaned_running ${s.orphaned_running_runs || 0}, queued ${s.queued}`);
   if (result.readiness) {
     console.log(`Readiness: ${result.readiness.status} (${result.readiness.level}) - ${result.readiness.message}`);
   }
@@ -4972,6 +5013,12 @@ function printStatus(result) {
     for (const hint of result.recovery_hints) {
       const pause = hint.pause_command ? `, pause=\`${hint.pause_command}\`` : "";
       console.log(`- ${hint.room_id}: inspect=\`${hint.inspect_command}\`, recover=\`${hint.recover_command}\`${pause}, stale_runs=${hint.stale_queued_runs.join(",") || "-"}`);
+    }
+  }
+  if (result.agent_id_conflicts?.length) {
+    console.log("\nDuplicate agent ids:");
+    for (const conflict of result.agent_id_conflicts) {
+      console.log(`- ${conflict.id}: nodes=${(conflict.nodes || []).join(",") || "-"} count=${conflict.count || 0}`);
     }
   }
   if (result.nodes?.length) {

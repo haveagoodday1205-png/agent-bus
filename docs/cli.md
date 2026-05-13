@@ -479,6 +479,8 @@ Use `agent-bus room inspect ROOM_ID` before recovering a stale/orphan room. It r
 
 `agent-bus room resolve-duplicates ROOM_ID` is also a dry run by default. Add `--yes` to cancel only duplicate queued runs for agents that have multiple active runs in the same room. It keeps running processes untouched; when every duplicate is queued, it keeps the oldest queued run and cancels the later queued duplicates.
 
+`agent-bus room supervisor ROOM_ID` includes that duplicate-run inspection. With `--yes`, it will choose the safe duplicate queued-run cleanup before considering heavier stale queued-room recovery.
+
 ## Traces
 
 ```bash

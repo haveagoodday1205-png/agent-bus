@@ -89,6 +89,67 @@ async function main() {
   const duplicateRoomText = await duplicateRoom.text();
   assert(duplicateRoom.status === 409, `duplicate agent room create returned ${duplicateRoom.status}: ${duplicateRoomText}`);
 
+  step("Verifying supervisor resolves duplicate queued runs conservatively");
+  const duplicateQueuedRoom = await requestJson(`${gateway}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Room supervisor duplicate queued smoke",
+      goal: "Verify conservative supervisor cancels duplicate queued work without pausing the room.",
+      agents: ["old-runner"],
+      wakeAgents: ["old-runner"],
+      auto_rotate: false,
+      max_steps: 3
+    })
+  });
+  await runCliJson([
+    "room",
+    "wake",
+    duplicateQueuedRoom.id,
+    "--agent",
+    "old-runner",
+    "--reason",
+    "intentional duplicate queued run for supervisor smoke",
+    "--gateway",
+    gateway,
+    "--token",
+    token
+  ]);
+  const duplicateSupervisorDryRun = await runCliJson([
+    "room",
+    "supervisor",
+    duplicateQueuedRoom.id,
+    "--json",
+    "--gateway",
+    gateway,
+    "--token",
+    token
+  ]);
+  assert(duplicateSupervisorDryRun.dry_run === true, "duplicate supervisor did not default to dry-run");
+  assert(duplicateSupervisorDryRun.plan?.safe_executable_actions?.some((action) => action.kind === "resolve_duplicate_active_runs"), "duplicate supervisor did not plan duplicate resolution");
+  assert(duplicateSupervisorDryRun.inspection?.analysis?.duplicate_active_runs?.cancellable_queued_run_ids?.length === 1, "duplicate supervisor did not identify one cancellable queued duplicate");
+  const duplicateSupervisorResolved = await runCliJson([
+    "room",
+    "supervisor",
+    duplicateQueuedRoom.id,
+    "--yes",
+    "--json",
+    "--gateway",
+    gateway,
+    "--token",
+    token,
+    "--reason",
+    "confirmed duplicate queued supervisor smoke"
+  ]);
+  assert(duplicateSupervisorResolved.executed === true, "duplicate supervisor did not execute");
+  assert(duplicateSupervisorResolved.executed_action?.kind === "resolve_duplicate_active_runs", "duplicate supervisor executed the wrong action");
+  assert(duplicateSupervisorResolved.cancelled_queued_runs?.length === 1, "duplicate supervisor did not cancel one queued duplicate");
+  assert(duplicateSupervisorResolved.room?.status === "active", "duplicate supervisor unexpectedly paused the room");
+  assert(duplicateSupervisorResolved.room?.runs?.filter((run) => run.agent_id === "old-runner" && run.status === "queued").length === 1, "duplicate supervisor did not leave exactly one queued run");
+  assert(duplicateSupervisorResolved.room?.runs?.filter((run) => run.agent_id === "old-runner" && run.status === "cancelled").length === 1, "duplicate supervisor did not mark one duplicate cancelled");
+  assert(duplicateSupervisorResolved.inspection_after?.analysis?.duplicate_active_runs?.duplicate_active_agent_count === 0, "duplicate supervisor still reported duplicate active runs after execution");
+  await runCliJson(["room", "pause", duplicateQueuedRoom.id, "--reason", "room supervisor duplicate queued smoke cleanup", "--gateway", gateway, "--token", token]);
+
   step("Creating a room and claiming the original run");
   const room = await requestJson(`${gateway}/rooms`, {
     method: "POST",
@@ -490,6 +551,7 @@ async function main() {
     server_recover_dry_run: true,
     server_recover_confirmed: true,
     duplicate_agent_guardrail: true,
+    supervisor_duplicate_resolution: true,
     supervisor_dry_run: true,
     supervisor_orphan_no_auto_replace: true
   };

@@ -2367,6 +2367,30 @@ def supervise_room(config, room_id, body):
         result["requires_operator_inspection"] = True
         result["refusal_reason"] = "Conservative supervisor has no safe executable action for this room state."
         return result
+    executed_action = executable_actions[0]
+    if executed_action.get("kind") == "resolve_duplicate_active_runs":
+        resolve_result = resolve_duplicate_room_runs(config, room_id, {
+            "dry_run": False,
+            "confirm": True,
+            "yes": True,
+            "reason": reason,
+        })
+        resolved_room = resolve_result.get("room") or get_room(config, room_id)
+        result["executed"] = bool(resolve_result.get("executed"))
+        result["executed_action"] = executed_action
+        result["resolve_duplicates_result"] = resolve_result
+        result["room"] = resolved_room
+        result["cancelled_queued_runs"] = resolve_result.get("cancelled_queued_runs") or []
+        if not result["executed"]:
+            result["requires_operator_inspection"] = True
+            result["refusal_reason"] = resolve_result.get("refusal_reason") or "Duplicate run resolution did not execute."
+        result["inspection_after"] = inspect_room_supervisor(
+            resolved_room,
+            queued_run_stale_seconds=queued_run_stale_seconds,
+            node_stale_seconds=node_stale_seconds,
+            run_heartbeat_stale_seconds=run_heartbeat_stale_seconds,
+        )
+        return result
     recover_result = recover_room(config, room_id, {
         "queued_run_stale_seconds": queued_run_stale_seconds,
         "dry_run": False,
@@ -2377,7 +2401,7 @@ def supervise_room(config, room_id, body):
     })
     recovered_room = recover_result.get("room") or get_room(config, room_id)
     result["executed"] = True
-    result["executed_action"] = executable_actions[0]
+    result["executed_action"] = executed_action
     result["recover_result"] = recover_result
     result["room"] = recovered_room
     result["cancelled_queued_runs"] = recover_result.get("cancelled_queued_runs") or []
@@ -2467,6 +2491,7 @@ def inspect_room_supervisor(room, queued_run_stale_seconds=STATUS_QUEUED_RUN_STA
         "node_stale_seconds": node_stale_seconds,
         "run_heartbeat_stale_seconds": run_heartbeat_stale_seconds,
     }
+    duplicate_active_runs = inspect_room_duplicate_active_runs(room)
     return {
         "room": {
             "id": room.get("id") or "",
@@ -2488,7 +2513,9 @@ def inspect_room_supervisor(room, queued_run_stale_seconds=STATUS_QUEUED_RUN_STA
             "stale_running_runs": stale_running_runs,
             "orphaned_running_runs": orphaned_running_runs,
             "other_non_terminal_runs": other_non_terminal_runs,
+            "duplicate_active_runs": duplicate_active_runs,
         },
+        "duplicate_active_runs": duplicate_active_runs,
         "thresholds": thresholds,
         "counts": {
             "runs": counts["total_runs"],
@@ -2496,6 +2523,7 @@ def inspect_room_supervisor(room, queued_run_stale_seconds=STATUS_QUEUED_RUN_STA
             "stale_queued_runs": len(stale_queued_runs),
             "stale_running_runs": len(stale_running_runs),
             "orphaned_running_runs": len(orphaned_running_runs),
+            "duplicate_active_agents": duplicate_active_runs.get("duplicate_active_agent_count") or 0,
         },
         "active_runs": non_terminal_runs,
         "stale_queued_runs": stale_queued_runs,
@@ -2512,6 +2540,31 @@ def supervisor_actions(room, inspection, queued_run_stale_seconds, node_stale_se
     threshold_flag = "" if queued_run_stale_seconds == STATUS_QUEUED_RUN_STALE_SECONDS else f" --queued-run-stale-seconds {queued_run_stale_seconds}"
     node_stale_flag = "" if node_stale_seconds == NODE_STALE_SECONDS else f" --node-stale-seconds {node_stale_seconds}"
     heartbeat_flag = "" if run_heartbeat_stale_seconds == STATUS_RUN_HEARTBEAT_STALE_SECONDS else f" --run-heartbeat-stale-seconds {run_heartbeat_stale_seconds}"
+    duplicate_active_runs = ((inspection.get("analysis") or {}).get("duplicate_active_runs") or inspection.get("duplicate_active_runs") or {})
+    duplicate_agents = duplicate_active_runs.get("duplicate_active_agents") or []
+    cancellable_duplicate_runs = duplicate_active_runs.get("cancellable_queued_run_ids") or []
+    if duplicate_agents:
+        if cancellable_duplicate_runs:
+            actions.append({
+                "kind": "resolve_duplicate_active_runs",
+                "level": "warn",
+                "executable": True,
+                "message": "Duplicate active runs exist, and the duplicate queued runs can be cancelled without touching running work.",
+                "command": f"agent-bus room supervisor {room_id} --yes{threshold_flag}{node_stale_flag}{heartbeat_flag}",
+                "fallback_command": f"agent-bus room resolve-duplicates {room_id} --yes",
+                "agents": duplicate_agents,
+                "cancellable_queued_run_ids": cancellable_duplicate_runs,
+            })
+        else:
+            actions.append({
+                "kind": "inspect_duplicate_active_runs",
+                "level": "warn",
+                "executable": False,
+                "message": "Duplicate active runs exist, but no queued duplicate is safe to cancel automatically. Inspect running processes before waking or replacing work.",
+                "command": f"agent-bus room inspect {room_id}{node_stale_flag}{heartbeat_flag}{threshold_flag}",
+                "agents": duplicate_agents,
+            })
+        return actions
     if summary == "stale_queued_recovery_candidate":
         actions.append({
             "kind": "recover_stale_queued_room",

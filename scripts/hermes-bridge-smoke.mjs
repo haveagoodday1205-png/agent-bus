@@ -20,6 +20,7 @@ try {
 
   const fakeRoot = path.join(tempDir, "hermes-root");
   const binDir = path.join(tempDir, "bin");
+  const defaultLockRoot = path.join(tempDir, "locks");
   fs.mkdirSync(fakeRoot, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(
@@ -39,6 +40,7 @@ try {
     HERMES_AGENT_ROOT: fakeRoot,
     HERMES_COMMAND: fakeHermes,
     HERMES_PYTHON: python,
+    HERMES_AGENT_BUS_LOCK_DIR: defaultLockRoot,
     AGENT_SESSION_ID: "room/test session",
     AGENT_MESSAGE: "bridge smoke message"
   };
@@ -224,7 +226,7 @@ class FakeAgent:
     ...env,
     HERMES_AGENT_ROOT: lockingRoot,
     HERMES_AGENT_BUS_LOCK_DIR: lockRoot,
-    HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "1",
+    HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "60",
     HERMES_AGENT_BUS_SESSION_LOCK_TOUCH_SECONDS: "1",
     AGENT_SESSION_ID: "hermes-lock-shared",
     AGENT_MESSAGE: "hold lock"
@@ -237,7 +239,7 @@ class FakeAgent:
       HERMES_AGENT_ROOT: lockingRoot,
       HERMES_AGENT_BUS_LOCK_DIR: lockRoot,
       HERMES_AGENT_BUS_SESSION_LOCK_TIMEOUT_SECONDS: "0",
-      HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "1",
+      HERMES_AGENT_BUS_SESSION_LOCK_STALE_SECONDS: "60",
       AGENT_SESSION_ID: "hermes-lock-shared",
       AGENT_MESSAGE: "contend lock"
     },
@@ -245,7 +247,7 @@ class FakeAgent:
     windowsHide: true
   });
   firstLockedBridge.child.kill("SIGTERM");
-  await firstLockedBridge.closed;
+  await waitForBridgeClose(firstLockedBridge, "lock holder bridge");
   if (secondLockedResult.error) throw secondLockedResult.error;
   if (secondLockedResult.status !== 75) {
     throw new Error(`contended lock bridge exited ${secondLockedResult.status} instead of 75: ${secondLockedResult.stderr || secondLockedResult.stdout}`);
@@ -455,6 +457,22 @@ function spawnBridgeUntilStdout(command, script, cwd, env, readyText) {
       stderr += chunk;
     });
     child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
+function waitForBridgeClose(bridge, label, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      bridge.child.kill("SIGKILL");
+      reject(new Error(`${label} did not close within ${timeoutMs}ms after signal; stdout=${bridge.stdout}; stderr=${bridge.stderr}`));
+    }, timeoutMs);
+    bridge.closed.then((result) => {
+      clearTimeout(timeout);
+      resolve(result);
+    }, (error) => {
       clearTimeout(timeout);
       reject(error);
     });

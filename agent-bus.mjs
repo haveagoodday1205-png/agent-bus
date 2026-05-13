@@ -2940,11 +2940,13 @@ function formatRoomSupervisorResult(result, {
     const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
     const heartbeatFlag = runHeartbeatStaleThresholdFlag(runHeartbeatStaleSeconds);
     const staleFlag = staleThresholdFlag(staleSeconds);
-    const canExecute = Array.isArray(result?.plan?.safe_executable_actions) && result.plan.safe_executable_actions.length > 0;
+    const safeActions = Array.isArray(result?.plan?.safe_executable_actions) ? result.plan.safe_executable_actions : [];
+    const canExecute = safeActions.length > 0;
+    const safeActionLabel = safeActions[0]?.kind === "resolve_duplicate_active_runs" ? "duplicate-run cleanup" : "queued-run recovery";
     lines.push("");
     lines.push("Dry run. Server-side supervisor did not modify the room.");
     if (canExecute) {
-      lines.push(`To execute the safe queued-run recovery: agent-bus room supervisor ${roomId} --yes${thresholdFlag}${staleFlag}${heartbeatFlag} --reason ${JSON.stringify(reason)}`);
+      lines.push(`To execute the safe ${safeActionLabel}: agent-bus room supervisor ${roomId} --yes${thresholdFlag}${staleFlag}${heartbeatFlag} --reason ${JSON.stringify(reason)}`);
     } else {
       lines.push("No safe automatic action is available; inspect the listed room state before pausing, waking, or replacing work.");
     }
@@ -2952,7 +2954,11 @@ function formatRoomSupervisorResult(result, {
   }
   if (result?.executed) {
     const count = Array.isArray(result?.cancelled_queued_runs) ? result.cancelled_queued_runs.length : 0;
-    lines.push(`Supervisor executed conservative recovery for ${roomId}: paused the room and cancelled ${count} queued run${count === 1 ? "" : "s"}.`);
+    if (result?.executed_action?.kind === "resolve_duplicate_active_runs") {
+      lines.push(`Supervisor resolved duplicate active runs for ${roomId}: cancelled ${count} duplicate queued run${count === 1 ? "" : "s"} and left running work untouched.`);
+    } else {
+      lines.push(`Supervisor executed conservative recovery for ${roomId}: paused the room and cancelled ${count} queued run${count === 1 ? "" : "s"}.`);
+    }
   } else {
     lines.push(`Supervisor did not execute a room change for ${roomId}.`);
     if (result?.refusal_reason) lines.push(result.refusal_reason);
@@ -3743,6 +3749,11 @@ function formatRoomStateInspection(result) {
   lines.push(`Updated: ${room.updated_at || "-"}`);
   lines.push(`Runs: live_running=${counts.live_running_runs || 0} live_queued=${counts.live_queued_runs || 0} stale_queued=${counts.stale_queued_runs || 0} stale_running=${counts.stale_running_runs || 0} orphaned_running=${counts.orphaned_running_runs || 0} terminal=${counts.terminal_runs || 0}`);
   lines.push(`Thresholds: node_stale=${analysis.thresholds?.node_stale_seconds || 0}s queued_stale=${analysis.thresholds?.queued_run_stale_seconds || 0}s heartbeat_stale=${analysis.thresholds?.run_heartbeat_stale_seconds || 0}s`);
+  const duplicateActiveRuns = analysis.duplicate_active_runs || result?.duplicate_active_runs || {};
+  if (duplicateActiveRuns.duplicate_active_agent_count) {
+    lines.push(`Duplicate active agents: ${formatInlineList(duplicateActiveRuns.duplicate_active_agents || [])}`);
+    lines.push(`Duplicate queued runs safe to cancel: ${formatInlineList(duplicateActiveRuns.cancellable_queued_run_ids || [])}`);
+  }
   appendRoomInspectionRuns(lines, "Live running runs", analysis.live_running_runs);
   appendRoomInspectionRuns(lines, "Live queued runs", analysis.live_queued_runs);
   appendRoomInspectionRuns(lines, "Stale queued runs", analysis.stale_queued_runs);

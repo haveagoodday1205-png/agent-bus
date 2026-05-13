@@ -527,6 +527,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(pause_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "recover":
                     return self.json(recover_room(self.config, parts[1], body))
+                if len(parts) == 3 and parts[2] in ("resolve-duplicates", "dedupe", "deduplicate"):
+                    return self.json(resolve_duplicate_room_runs(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] in ("supervisor", "supervise"):
                     return self.json(supervise_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "reminders":
@@ -1316,6 +1318,7 @@ def agent_bus_manifest(config):
             "room_memory_expand": "GET /rooms/{room_id}/memory/expand?ref=messages[7]&around=1",
             "room_message": "POST /rooms/{room_id}/messages",
             "room_wake": "POST /rooms/{room_id}/wake",
+            "room_resolve_duplicates": "POST /rooms/{room_id}/resolve-duplicates",
             "trace": "GET /traces/{trace_id}",
             "models": "GET /v1/models",
             "chat_completions": "POST /v1/chat/completions",
@@ -2243,6 +2246,74 @@ def recover_room(config, room_id, body):
     return result
 
 
+def resolve_duplicate_room_runs(config, room_id, body):
+    room = get_room(config, room_id)
+    dry_run = body_bool(body, "dry_run", "dryRun", default=True)
+    confirm = body_bool(body, "confirm", "yes", default=False)
+    reason = (body.get("reason") or "Resolve duplicate active room runs.").strip() or "Resolve duplicate active room runs."
+    inspection = inspect_room_duplicate_active_runs(room)
+    result = {
+        "ok": True,
+        "dry_run": dry_run,
+        "executed": False,
+        "room_id": room_id,
+        "action": "cancel_duplicate_queued_runs",
+        "reason": reason,
+        "requires_confirmation": True,
+        "inspection": inspection,
+    }
+    if dry_run:
+        return result
+    if not confirm:
+        err = Exception("room resolve-duplicates execution requires confirm=true or yes=true")
+        err.status_code = 409
+        raise err
+    cancellable_ids = inspection.get("cancellable_queued_run_ids") or []
+    if not cancellable_ids:
+        result["refusal_reason"] = "No duplicate queued runs are safe to cancel."
+        return result
+    resolved_at = now()
+    cancelled_ids = []
+    for run in room.get("runs") or []:
+        if run.get("id") not in cancellable_ids:
+            continue
+        if run_status(run) != "queued":
+            continue
+        run["status"] = "cancelled"
+        run["completed_at"] = resolved_at
+        run["summary"] = "Cancelled by duplicate active run resolution."
+        run["duplicate_resolution"] = {
+            "at": resolved_at,
+            "reason": reason,
+        }
+        cancelled_ids.append(run.get("id"))
+        update_room_agent_checklist(room, run)
+        if run.get("id"):
+            STATE["runs"][run["id"]] = run
+            write_snapshot(config, "runs", run["id"], run)
+    remove_queued_tasks(cancelled_ids)
+    room["updated_at"] = resolved_at
+    room.setdefault("operations", {}).setdefault("duplicate_resolutions", []).append({
+        "at": resolved_at,
+        "reason": reason,
+        "cancelled_queued_runs": [run_id for run_id in cancelled_ids if run_id],
+    })
+    room.setdefault("reports", []).append({
+        "at": resolved_at,
+        "speaker": "system",
+        "content": "Resolved duplicate active runs: " + reason,
+        "cancelled_queued_runs": [run_id for run_id in cancelled_ids if run_id],
+    })
+    finalize_room_completion(room)
+    write_room(config, room)
+    result["dry_run"] = False
+    result["executed"] = True
+    result["cancelled_queued_runs"] = [run_id for run_id in cancelled_ids if run_id]
+    result["room"] = room
+    result["inspection_after"] = inspect_room_duplicate_active_runs(room)
+    return result
+
+
 def supervise_room(config, room_id, body):
     room = get_room(config, room_id)
     queued_run_stale_seconds = max(1, int(body.get("queued_run_stale_seconds") or body.get("queuedRunStaleSeconds") or STATUS_QUEUED_RUN_STALE_SECONDS))
@@ -2654,6 +2725,65 @@ def room_recovery_run_record(room, run):
     item["room_id"] = run.get("room_id") or room.get("id")
     item["age_seconds"] = run_age_seconds(run)
     return item
+
+
+def inspect_room_duplicate_active_runs(room):
+    groups = []
+    cancellable_ids = []
+    for agent_id, runs in duplicate_active_runs_by_agent(room).items():
+        running = [run for _, run in runs if run_status(run) == "running"]
+        queued = [run for _, run in runs if run_status(run) == "queued"]
+        non_queued = [run for _, run in runs if run_status(run) != "queued"]
+        if running or non_queued:
+            kept = non_queued
+            cancellable = queued
+        else:
+            ordered_queued = sorted(queued, key=lambda run: room_run_order_key(room, run))
+            kept = ordered_queued[:1]
+            cancellable = ordered_queued[1:]
+        group = {
+            "agent_id": agent_id,
+            "active_run_ids": [run.get("id") for _, run in runs if run.get("id")],
+            "running_run_ids": [run.get("id") for run in running if run.get("id")],
+            "queued_run_ids": [run.get("id") for run in queued if run.get("id")],
+            "kept_run_ids": [run.get("id") for run in kept if run.get("id")],
+            "cancellable_queued_run_ids": [run.get("id") for run in cancellable if run.get("id")],
+        }
+        cancellable_ids.extend(group["cancellable_queued_run_ids"])
+        groups.append(group)
+    return {
+        "object": "agent_bus.room_duplicate_active_runs",
+        "room_id": room.get("id"),
+        "room_status": room.get("status"),
+        "duplicate_active_agent_count": len(groups),
+        "duplicate_active_agents": [group["agent_id"] for group in groups],
+        "cancellable_queued_run_ids": cancellable_ids,
+        "groups": groups,
+        "recommendation": "cancel_duplicate_queued_runs" if cancellable_ids else "inspect_duplicate_running_runs" if groups else "none",
+    }
+
+
+def duplicate_active_runs_by_agent(room):
+    by_agent = {}
+    for index, run in enumerate(room.get("runs") or []):
+        if not run_is_active_for_room(run):
+            continue
+        agent_id = run.get("agent_id")
+        if not agent_id:
+            continue
+        by_agent.setdefault(agent_id, []).append((index, run))
+    return {
+        agent_id: sorted(runs, key=lambda item: room_run_order_key(room, item[1], item[0]))
+        for agent_id, runs in by_agent.items()
+        if len(runs) > 1
+    }
+
+
+def room_run_order_key(room, run, fallback_index=None):
+    if fallback_index is None:
+        fallback_index = next((index for index, item in enumerate(room.get("runs") or []) if item.get("id") == run.get("id")), 0)
+    timestamp = status_timestamp(run.get("created_at") or run.get("started_at"))
+    return (timestamp if timestamp is not None else 0, fallback_index)
 
 
 def is_stale_queued_run_for_recovery(run, queued_run_stale_seconds):

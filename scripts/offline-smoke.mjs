@@ -311,9 +311,19 @@ async function main() {
   assert(duplicateHealth.summary?.duplicate_active_agent_count === 1, "CLI room health did not count duplicate active agents");
   assert(duplicateHealth.summary?.duplicate_active_agents?.includes("offline-agent"), "CLI room health did not expose duplicate active agent ids");
   assert(duplicateHealth.agents?.some((item) => item.agent_id === "offline-agent" && item.active_run_count === 2 && item.active_run_ids?.length === 2), "CLI room health did not expose duplicate active run ids");
-  assert(duplicateHealth.recovery_actions?.some((item) => item.kind === "inspect_duplicate_active_runs" && item.agents?.includes("offline-agent")), "CLI room health did not suggest inspecting duplicate active runs");
+  assert(duplicateHealth.recovery_actions?.some((item) => item.kind === "resolve_duplicate_active_runs" && item.agents?.includes("offline-agent")), "CLI room health did not suggest resolving duplicate active runs");
   const duplicateHealthText = await runCliText(["room", "health", duplicateActiveRoom.id, "--gateway", base, "--token", token]);
   assert(duplicateHealthText.includes("Duplicate active agents: `offline-agent`"), "CLI room health text did not render duplicate active agents");
+  const duplicateDryRun = await runCliJson(["room", "resolve-duplicates", duplicateActiveRoom.id, "--json", "--gateway", base, "--token", token]);
+  assert(duplicateDryRun.dry_run === true, "CLI room resolve-duplicates did not default to dry run");
+  assert(duplicateDryRun.inspection?.cancellable_queued_run_ids?.length === 1, "CLI room resolve-duplicates did not identify one queued duplicate");
+  const duplicateResolved = await runCliJson(["room", "resolve-duplicates", duplicateActiveRoom.id, "--yes", "--json", "--gateway", base, "--token", token]);
+  assert(duplicateResolved.executed === true, "CLI room resolve-duplicates --yes did not execute");
+  assert(duplicateResolved.cancelled_queued_runs?.length === 1, "CLI room resolve-duplicates --yes did not cancel one queued duplicate");
+  assert(duplicateResolved.room?.runs?.filter((item) => item.agent_id === "offline-agent" && item.status === "queued").length === 1, "CLI room resolve-duplicates --yes did not leave exactly one queued run");
+  assert(duplicateResolved.room?.runs?.filter((item) => item.agent_id === "offline-agent" && item.status === "cancelled").length === 1, "CLI room resolve-duplicates --yes did not mark one duplicate run cancelled");
+  const duplicateAfterHealth = await runCliJson(["room", "health", duplicateActiveRoom.id, "--json", "--gateway", base, "--token", token]);
+  assert(duplicateAfterHealth.summary?.duplicate_active_agent_count === 0, "CLI room health still reported duplicate active agents after resolve-duplicates");
   await runCliJson(["room", "pause", duplicateActiveRoom.id, "--reason", "offline smoke duplicate active checked", "--gateway", base, "--token", token]);
 
   const pauseRoom = await requestJson(`${base}/rooms`, {

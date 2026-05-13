@@ -232,6 +232,7 @@ Usage:
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
   agent-bus room recover room_xxx --yes --reason "stale queued run recovery"
+  agent-bus room resolve-duplicates room_xxx [--yes] --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room supervisor room_xxx [--yes] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus room recover room_xxx --yes --force --reason "operator-confirmed pause"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
@@ -2641,6 +2642,21 @@ async function room(args) {
     process.stdout.write(formatRoomRecoveryResult(result, { roomId, queuedRunStaleSeconds, reason }));
     return;
   }
+  if (action === "resolve-duplicates" || action === "dedupe" || action === "deduplicate") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const yes = args.includes("--yes");
+    const reason = optionValue(args, "--reason") || optionValue(args, "--message") || "Resolve duplicate active room runs.";
+    const body = {
+      dry_run: !yes,
+      confirm: yes,
+      yes,
+      reason
+    };
+    const result = await gatewayJson(`/rooms/${pathPart(roomId)}/resolve-duplicates`, { auth: true, args, method: "POST", body });
+    if (args.includes("--json")) return printJson(result);
+    process.stdout.write(formatRoomDuplicateResolutionResult(result, { roomId, reason }));
+    return;
+  }
   if (action === "supervisor" || action === "supervise" || action === "tick") {
     const roomId = requiredPositional(args, 1, "room id");
     const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
@@ -2683,7 +2699,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|export|replay|create|wake|pause|recover|supervisor|message [options]");
+  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|export|replay|create|wake|pause|recover|resolve-duplicates|supervisor|message [options]");
 }
 
 function formatRoomMemory(value, options = {}) {
@@ -2862,6 +2878,41 @@ function formatRoomRecoveryResult(result, { roomId, queuedRunStaleSeconds = 2160
   }
   const count = Array.isArray(result?.cancelled_queued_runs) ? result.cancelled_queued_runs.length : 0;
   lines.push(`Recovered room ${roomId}: paused and cancelled ${count} queued run${count === 1 ? "" : "s"}. Use room export before creating a follow-up room if work should continue.`);
+  return `${lines.join("\n").trimStart()}\n`;
+}
+
+function formatRoomDuplicateResolutionResult(result, { roomId, reason = "Resolve duplicate active room runs." } = {}) {
+  const inspection = result?.inspection || {};
+  const lines = [];
+  lines.push(`Room duplicate active run resolution: ${roomId}`);
+  lines.push(`Recommendation: ${inspection.recommendation || "unknown"}`);
+  lines.push(`Duplicate active agents: ${formatInlineList(inspection.duplicate_active_agents || [])}`);
+  lines.push(`Cancellable queued runs: ${formatInlineList(inspection.cancellable_queued_run_ids || [])}`);
+  if (Array.isArray(inspection.groups) && inspection.groups.length) {
+    lines.push("", "Groups:");
+    for (const group of inspection.groups) {
+      lines.push(`- ${group.agent_id || "-"}: active=${formatInlineList(group.active_run_ids || [])} kept=${formatInlineList(group.kept_run_ids || [])} cancellable=${formatInlineList(group.cancellable_queued_run_ids || [])}`);
+    }
+  }
+  if (result?.dry_run !== false) {
+    lines.push("");
+    lines.push("Dry run. Server-side duplicate resolution did not modify the room.");
+    if (Array.isArray(inspection.cancellable_queued_run_ids) && inspection.cancellable_queued_run_ids.length) {
+      lines.push(`To cancel only the duplicate queued runs: agent-bus room resolve-duplicates ${roomId} --yes --reason ${JSON.stringify(reason)}`);
+    } else if (Array.isArray(inspection.groups) && inspection.groups.length) {
+      lines.push("Duplicate active runs exist, but no queued duplicate is safe to cancel automatically. Inspect running processes before taking action.");
+    } else {
+      lines.push("No duplicate active runs were found.");
+    }
+    return `${lines.join("\n")}\n`;
+  }
+  if (result?.executed) {
+    const count = Array.isArray(result?.cancelled_queued_runs) ? result.cancelled_queued_runs.length : 0;
+    lines.push(`Resolved duplicates: cancelled ${count} queued run${count === 1 ? "" : "s"} and left running work untouched.`);
+  } else {
+    lines.push("Duplicate resolution did not execute a room change.");
+    if (result?.refusal_reason) lines.push(result.refusal_reason);
+  }
   return `${lines.join("\n").trimStart()}\n`;
 }
 
@@ -3069,11 +3120,11 @@ function roomHealthRecoveryActions(room, agents, inspection) {
     .filter(Boolean);
   if (duplicateActiveAgents.length) {
     actions.push({
-      kind: "inspect_duplicate_active_runs",
+      kind: "resolve_duplicate_active_runs",
       level: "warn",
       agents: duplicateActiveAgents,
       message: "One or more agents have multiple active runs in this room. Inspect before waking or resuming so duplicate work does not fork the room.",
-      command: `agent-bus room inspect ${roomId}`
+      command: `agent-bus room resolve-duplicates ${roomId}`
     });
   }
   if (missingReport.length) {

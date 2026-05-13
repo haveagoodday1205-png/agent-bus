@@ -237,6 +237,8 @@ def recover_queued_runs():
     for run in STATE["runs"].values():
         if str(run.get("status") or "queued").lower() != "queued":
             continue
+        if run_is_replaced(run) or run_is_late_complete_ignored(run):
+            continue
         node_id = run.get("node_id")
         if not node_id:
             continue
@@ -2872,11 +2874,20 @@ def record_event(config, body):
     event["trace_id"] = sanitize_trace_id(body.get("trace_id") or event.get("trace_id") or run.get("trace_id"))
     if event["trace_id"] and not run.get("trace_id"):
         run["trace_id"] = event["trace_id"]
+    if run_is_replaced(run) or run_is_late_complete_ignored(run):
+        event["ignored"] = True
+        event["ignored_reason"] = "run_replaced"
+        run.setdefault("events", []).append(event)
+        STATE["runs"][run["id"]] = run
+        write_snapshot(config, "runs", run["id"], run)
+        update_room_run(config, run)
+        append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
+        return
     if event.get("type") == "run.started":
         run["status"] = "running"
         run["started_at"] = run.get("started_at") or event["at"]
         run["last_heartbeat_at"] = run.get("last_heartbeat_at") or event["at"]
-    if event.get("type") == "run.heartbeat":
+    if event.get("type") in ("run.heartbeat", "run.progress") or event.get("stream") in ("stdout", "stderr"):
         run["last_heartbeat_at"] = event["at"]
     if event.get("stream") == "stdout" and event.get("text"):
         run["stdout"] = run.get("stdout", "") + event["text"]
@@ -2886,6 +2897,7 @@ def record_event(config, body):
     STATE["runs"][run["id"]] = run
     write_snapshot(config, "runs", run["id"], run)
     update_thread_run(config, run)
+    update_room_run(config, run)
     append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
 
 
@@ -2920,12 +2932,16 @@ def complete_run(config, body):
             raise err
         touch_node_seen(body.get("node_id") or run.get("node_id"))
         STATE["runs"][run["id"]] = run
-        if (run.get("status") or "").lower() in TERMINAL_RUN_STATUSES:
+        if run_is_terminal(run):
             if stored_completion_state(run) == requested_completion_state(run, body):
                 return run
+            if run_is_replaced(run) or run_is_late_complete_ignored(run):
+                return mark_run_late_complete_ignored(config, run, body)
             err = Exception("run already completed with different result")
             err.status_code = 409
             raise err
+        if run_is_replaced(run) or run_is_late_complete_ignored(run):
+            return mark_run_late_complete_ignored(config, run, body)
         if body.get("trace_id") and not run.get("trace_id"):
             run["trace_id"] = sanitize_trace_id(body.get("trace_id"))
         completion = requested_completion_state(run, body)
@@ -2955,6 +2971,39 @@ def complete_run(config, body):
         return run
 
 
+def mark_run_late_complete_ignored(config, run, body):
+    if run.get("late_complete_ignored_at"):
+        return run
+    ignored_at = now()
+    result = body.get("result") or {}
+    run["late_complete_ignored_at"] = ignored_at
+    run["late_complete_ignored"] = {
+        "at": ignored_at,
+        "node_id": body.get("node_id") or run.get("node_id"),
+        "trace_id": sanitize_trace_id(body.get("trace_id") or run.get("trace_id")),
+        "status": result.get("status"),
+        "exit_code": result.get("exit_code"),
+        "reason": "run_replaced",
+    }
+    if run_is_replaced(run):
+        run["status"] = "replaced"
+    event = {
+        "at": ignored_at,
+        "type": "run.late_complete_ignored",
+        "node_id": body.get("node_id") or run.get("node_id"),
+        "trace_id": sanitize_trace_id(body.get("trace_id") or run.get("trace_id")),
+        "ignored_reason": "run_replaced",
+        "replaced_by_run_id": run.get("replaced_by_run_id") or run.get("replacement_run_id"),
+    }
+    run.setdefault("events", []).append(event)
+    STATE["runs"][run["id"]] = run
+    write_snapshot(config, "runs", run["id"], run)
+    update_thread_run(config, run)
+    update_room_run(config, run)
+    append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
+    return run
+
+
 def update_agent_run_health(run):
     node = STATE["nodes"].get(run.get("node_id"))
     if not node:
@@ -2975,6 +3024,9 @@ def update_agent_run_health(run):
 
 
 def continue_room_run(config, run):
+    if run_is_replaced(run) or run_is_late_complete_ignored(run):
+        update_room_run(config, run)
+        return
     room_id = run.get("room_id") or run.get("thread_id")
     room = STATE["rooms"].get(room_id) or read_snapshot(config, "rooms", room_id)
     if not room:
@@ -3059,6 +3111,31 @@ def process_room_directives(config, room, run, content):
 
 
 TERMINAL_RUN_STATUSES = {"completed", "failed", "error", "cancelled", "canceled", "skipped"}
+REPLACED_RUN_STATUSES = {"replaced", "superseded"}
+
+
+def run_status(run):
+    return str((run or {}).get("status") or "").lower()
+
+
+def run_is_terminal(run):
+    return run_status(run) in TERMINAL_RUN_STATUSES
+
+
+def run_is_replaced(run):
+    if not isinstance(run, dict):
+        return False
+    if run_status(run) in REPLACED_RUN_STATUSES:
+        return True
+    return bool(run.get("replaced_by_run_id") or run.get("replacement_run_id") or run.get("superseded_by_run_id"))
+
+
+def run_is_late_complete_ignored(run):
+    return bool(isinstance(run, dict) and run.get("late_complete_ignored_at"))
+
+
+def run_is_active_for_room(run):
+    return not run_is_terminal(run) and not run_is_replaced(run) and not run_is_late_complete_ignored(run)
 
 
 def sync_room_run(room, run):
@@ -3068,7 +3145,7 @@ def sync_room_run(room, run):
 def active_room_runs(room):
     return [
         item for item in room.get("runs", [])
-        if (item.get("status") or "queued").lower() not in TERMINAL_RUN_STATUSES
+        if run_is_active_for_room(item)
     ]
 
 
@@ -3128,6 +3205,19 @@ def update_thread_run(config, run):
     thread["updated_at"] = now()
     STATE["threads"][thread["id"]] = thread
     write_snapshot(config, "threads", thread["id"], thread)
+
+
+def update_room_run(config, run):
+    room_id = run.get("room_id")
+    if not room_id:
+        return
+    room = STATE["rooms"].get(room_id) or read_snapshot(config, "rooms", room_id)
+    if not room:
+        return
+    sync_room_run(room, run)
+    room["updated_at"] = now()
+    STATE["rooms"][room["id"]] = room
+    write_snapshot(config, "rooms", room["id"], room)
 
 
 def get_room(config, room_id):

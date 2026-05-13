@@ -47,6 +47,7 @@ const jsFiles = [
   "scripts/python-room-agent-smoke.mjs",
   "scripts/room-replay-fixture-check.mjs",
   "scripts/room-autonomy-stale-smoke.mjs",
+  "scripts/room-supervisor-smoke.mjs",
   "scripts/room-prompt-compaction-smoke.mjs",
   "scripts/room-memory-cache-smoke.mjs",
   "scripts/cache-session-smoke.mjs",
@@ -101,6 +102,7 @@ try {
   step("agent-backed model demo", process.execPath, ["scripts/demo-agent-model.mjs", "--json"]);
   step("offline room smoke", process.execPath, ["scripts/offline-smoke.mjs", "--json"]);
   step("stale room autonomy smoke", process.execPath, ["scripts/room-autonomy-stale-smoke.mjs", "--json"]);
+  step("room supervisor smoke", process.execPath, ["scripts/room-supervisor-smoke.mjs", "--json"]);
   step("room prompt compaction smoke", process.execPath, ["scripts/room-prompt-compaction-smoke.mjs", "--json"]);
   step("room memory cache smoke", process.execPath, ["scripts/room-memory-cache-smoke.mjs", "--json"]);
   step("cache session smoke", process.execPath, ["scripts/cache-session-smoke.mjs", "--json"]);

@@ -54,6 +54,7 @@
     "smoke:duplicate-complete": "node scripts/duplicate-complete-smoke.mjs",
     "smoke:python-edge-heartbeat": "node scripts/python-edge-heartbeat-smoke.mjs",
     "smoke:room-stale": "node scripts/room-autonomy-stale-smoke.mjs",
+    "smoke:room-supervisor": "node scripts/room-supervisor-smoke.mjs",
     "smoke:room-prompt": "node scripts/room-prompt-compaction-smoke.mjs",
     "smoke:room-memory": "node scripts/room-memory-cache-smoke.mjs",
     "smoke:cache-session": "node scripts/cache-session-smoke.mjs",

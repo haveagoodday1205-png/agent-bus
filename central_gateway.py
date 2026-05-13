@@ -2007,6 +2007,8 @@ def public_selection(selection):
 
 
 def room_summary(room):
+    board = room.get("blackboard") if isinstance(room.get("blackboard"), dict) else {}
+    checklist = board.get("agent_checklist") if isinstance(board.get("agent_checklist"), dict) else {}
     return {
         "id": room["id"],
         "title": room.get("title"),
@@ -2017,6 +2019,7 @@ def room_summary(room):
         "max_steps": room.get("autonomy", {}).get("max_steps", 0),
         "message_count": len(room.get("messages") or []),
         "report_count": len(room.get("reports") or []),
+        "agent_checklist": checklist.get("summary") or {},
         "updated_at": room.get("updated_at"),
     }
 
@@ -2154,6 +2157,7 @@ def pause_room(config, room_id, body):
         run["completed_at"] = paused_at
         run["summary"] = "Cancelled by room pause."
         cancelled_run_ids.append(run.get("id"))
+        update_room_agent_checklist(room, run)
         if run.get("id"):
             STATE["runs"][run["id"]] = run
             write_snapshot(config, "runs", run["id"], run)
@@ -2753,7 +2757,36 @@ def compact_room_blackboard(room):
         compact["recent_notes"] = [compact_room_item(item, item_limit) for item in notes[-item_count:] if isinstance(item, dict)]
     if reports:
         compact["recent_reports"] = [compact_room_item(item, item_limit) for item in reports[-item_count:] if isinstance(item, dict)]
+    checklist = compact_room_agent_checklist(board.get("agent_checklist"))
+    if checklist:
+        compact["agent_checklist"] = checklist
     return {key: value for key, value in compact.items() if value not in (None, "", [])}
+
+
+def compact_room_agent_checklist(checklist):
+    if not isinstance(checklist, dict):
+        return None
+    agents = {}
+    for agent_id, item in (checklist.get("agents") or {}).items():
+        if not isinstance(item, dict):
+            continue
+        agents[agent_id] = {
+            key: value
+            for key, value in {
+                "status": item.get("status"),
+                "run_id": item.get("run_id"),
+                "has_report": item.get("has_report"),
+                "has_done": item.get("has_done"),
+                "duration_seconds": item.get("duration_seconds"),
+                "error": item.get("error"),
+            }.items()
+            if value not in (None, "", [])
+        }
+    out = {
+        "summary": checklist.get("summary") or {},
+        "agents": agents,
+    }
+    return {key: value for key, value in out.items() if value not in (None, "", {}, [])}
 
 
 def compact_recent_room_messages(room):
@@ -3207,6 +3240,7 @@ def create_room_run(config, room, agent, message, trace_id=None):
         "events": [],
     }
     room.setdefault("runs", []).append(run)
+    update_room_agent_checklist(room, run)
     STATE["runs"][run["id"]] = run
     write_snapshot(config, "runs", run["id"], run)
     append_jsonl(config, "runs.jsonl", run)
@@ -3614,6 +3648,7 @@ def continue_room_run(config, run):
     })
     previous_status = room.get("status")
     actions = process_room_directives(config, room, run, content)
+    update_room_agent_checklist(room, run, content, actions)
     finalize_room_completion(room)
     if previous_status != "completed" and room.get("status") == "completed":
         notify_plugin(config, "room.completed", {
@@ -3676,6 +3711,179 @@ def process_room_directives(config, room, run, content):
                 actions.append("wake")
             continue
     return actions
+
+
+def update_room_agent_checklist(room, run, content=None, actions=None):
+    if not isinstance(room, dict) or not isinstance(run, dict):
+        return None
+    agent_id = run.get("agent_id")
+    run_id = run.get("id")
+    if not agent_id or not run_id:
+        return None
+    board = room.setdefault("blackboard", {})
+    checklist = board.setdefault("agent_checklist", {
+        "object": "agent_bus.room_agent_checklist",
+        "version": 1,
+        "agents": {},
+        "summary": {},
+    })
+    checklist["object"] = "agent_bus.room_agent_checklist"
+    checklist["version"] = 1
+    checklist["expected_agents"] = list(room.get("agents") or [])
+    checklist.setdefault("agents", {})
+    if not isinstance(checklist.get("agents"), dict):
+        checklist["agents"] = {}
+    agent = checklist["agents"].setdefault(agent_id, {
+        "agent_id": agent_id,
+        "runs": {},
+    })
+    if not isinstance(agent, dict):
+        agent = {"agent_id": agent_id, "runs": {}}
+        checklist["agents"][agent_id] = agent
+    if not isinstance(agent.get("runs"), dict):
+        agent["runs"] = {}
+    text = str(content if content is not None else (run.get("stdout") or run.get("summary") or run.get("stderr") or ""))
+    counts = room_contract_directive_counts(text)
+    previous = agent["runs"].get(run_id) if isinstance(agent.get("runs"), dict) else {}
+    if not isinstance(previous, dict):
+        previous = {}
+    if actions is None:
+        wake_count = int(previous.get("wake_count") or 0)
+        reminder_count = int(previous.get("reminder_count") or 0)
+    else:
+        wake_count = sum(1 for action in actions if action == "wake")
+        reminder_count = sum(1 for action in actions if action == "reminder")
+    status = run_status(run) or "unknown"
+    updated_at = now()
+    record = {
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "node_id": run.get("node_id"),
+        "status": status,
+        "created_at": run.get("created_at"),
+        "started_at": run.get("started_at"),
+        "completed_at": run.get("completed_at"),
+        "last_heartbeat_at": run.get("last_heartbeat_at"),
+        "duration_seconds": room_run_duration_seconds(run),
+        "has_report": counts["report"] > 0,
+        "has_done": counts["done"] > 0,
+        "report_count": counts["report"],
+        "blackboard_count": counts["blackboard"],
+        "done_count": counts["done"],
+        "wake_count": wake_count,
+        "reminder_count": reminder_count,
+        "summary": room_run_contract_summary(run, text),
+        "updated_at": updated_at,
+    }
+    error = room_run_contract_error(run, text)
+    if error:
+        record["error"] = error
+    clean_record = {key: value for key, value in record.items() if value not in (None, "")}
+    agent["runs"][run_id] = clean_record
+    for key in (
+        "run_id", "node_id", "status", "created_at", "started_at", "completed_at",
+        "last_heartbeat_at", "duration_seconds", "has_report", "has_done",
+        "report_count", "blackboard_count", "done_count", "wake_count",
+        "reminder_count", "summary", "error",
+    ):
+        agent.pop(key, None)
+    agent.update(clean_record)
+    agent["run_count"] = len(agent.get("runs") or {})
+    agent["updated_at"] = updated_at
+    checklist["updated_at"] = updated_at
+    checklist["summary"] = summarize_room_agent_checklist(room, checklist)
+    return checklist
+
+
+def room_contract_directive_counts(content):
+    counts = {"report": 0, "blackboard": 0, "done": 0, "wake": 0, "agent_wake": 0}
+    for raw_line in str(content or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r"^REPORT\s*:", line, re.I):
+            counts["report"] += 1
+        if re.match(r"^BLACKBOARD\s*:", line, re.I):
+            counts["blackboard"] += 1
+        if re.match(r"^DONE\b", line, re.I):
+            counts["done"] += 1
+        if re.match(r"^WAKE\s+@?[A-Za-z0-9_.-]+\s+IN\s+[0-9]+", line, re.I):
+            counts["wake"] += 1
+        if re.match(r"^@[A-Za-z0-9_.-]+\s*:", line):
+            counts["agent_wake"] += 1
+    return counts
+
+
+def room_run_duration_seconds(run):
+    start = status_timestamp(run.get("started_at") or run.get("created_at"))
+    end = status_timestamp(run.get("completed_at"))
+    if start is None:
+        return None
+    if end is None:
+        if run_is_active_for_room(run):
+            return max(0, int(round(time.time() - start)))
+        return None
+    return max(0, int(round(end - start)))
+
+
+def room_run_contract_summary(run, content):
+    return trim_one_line(run.get("summary") or content or run.get("stderr") or "", 500)
+
+
+def room_run_contract_error(run, content):
+    status = run_status(run)
+    if status not in {"failed", "error", "cancelled", "canceled", "skipped", "replaced", "superseded"}:
+        return ""
+    return trim_one_line(run.get("stderr") or run.get("summary") or content or f"run {status}", 500)
+
+
+def trim_one_line(value, limit=240):
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def summarize_room_agent_checklist(room, checklist):
+    expected = [agent_id for agent_id in (room.get("agents") or []) if agent_id]
+    agents = checklist.get("agents") if isinstance(checklist.get("agents"), dict) else {}
+    records = []
+    for item in agents.values():
+        if not isinstance(item, dict):
+            continue
+        runs = item.get("runs") if isinstance(item.get("runs"), dict) else {}
+        records.extend(run for run in runs.values() if isinstance(run, dict))
+    latest = {
+        agent_id: agents.get(agent_id)
+        for agent_id in expected
+        if isinstance(agents.get(agent_id), dict)
+    }
+    terminal_agents = [
+        agent_id for agent_id, item in latest.items()
+        if item and is_room_checklist_terminal_status(item.get("status"))
+    ]
+    failed_statuses = {"failed", "error", "cancelled", "canceled", "skipped", "replaced", "superseded"}
+    return {
+        "expected_agents": len(expected),
+        "agents_with_runs": len([agent_id for agent_id in expected if agent_id in latest]),
+        "replied_agents": len(terminal_agents),
+        "completed_agents": len([agent_id for agent_id, item in latest.items() if run_status(item) == "completed"]),
+        "failed_agents": len([agent_id for agent_id, item in latest.items() if run_status(item) in failed_statuses]),
+        "missing_agents": [agent_id for agent_id in expected if agent_id not in latest],
+        "running_agents": [agent_id for agent_id, item in latest.items() if run_status(item) == "running"],
+        "queued_agents": [agent_id for agent_id, item in latest.items() if run_status(item) == "queued"],
+        "missing_report_agents": [agent_id for agent_id in terminal_agents if not latest[agent_id].get("has_report")],
+        "missing_done_agents": [agent_id for agent_id in terminal_agents if not latest[agent_id].get("has_done")],
+        "run_count": len(records),
+        "completed_runs": len([item for item in records if run_status(item) == "completed"]),
+        "failed_runs": len([item for item in records if run_status(item) in failed_statuses]),
+        "runs_with_report": len([item for item in records if item.get("has_report")]),
+        "runs_with_done": len([item for item in records if item.get("has_done")]),
+    }
+
+
+def is_room_checklist_terminal_status(status):
+    return str(status or "").lower() in TERMINAL_RUN_STATUSES | REPLACED_RUN_STATUSES
 
 
 TERMINAL_RUN_STATUSES = {"completed", "failed", "error", "cancelled", "canceled", "skipped"}
@@ -3783,6 +3991,7 @@ def update_room_run(config, run):
     if not room:
         return
     sync_room_run(room, run)
+    update_room_agent_checklist(room, run)
     room["updated_at"] = now()
     STATE["rooms"][room["id"]] = room
     write_snapshot(config, "rooms", room["id"], room)

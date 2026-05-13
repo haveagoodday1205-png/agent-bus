@@ -3457,6 +3457,11 @@ function oneLine(value, limit = 240) {
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }
 
+function roomAgentChecklist(room) {
+  const checklist = room?.blackboard?.agent_checklist || room?.agent_checklist || null;
+  return checklist && typeof checklist === "object" ? checklist : null;
+}
+
 function redactRoomExport(value) {
   return redactRoomExportValue(value);
 }
@@ -3487,6 +3492,7 @@ function redactExportText(value) {
 }
 
 function roomExportSummary(room) {
+  const checklist = roomAgentChecklist(room);
   return {
     object: "agent_bus.room_reports_summary",
     reports_only: true,
@@ -3502,7 +3508,8 @@ function roomExportSummary(room) {
     blackboard: {
       notes: room.blackboard?.notes || [],
       next_actions: room.blackboard?.next_actions || [],
-      open_questions: room.blackboard?.open_questions || []
+      open_questions: room.blackboard?.open_questions || [],
+      ...(checklist ? { agent_checklist: checklist } : {})
     },
     runs: (room.runs || []).map((run) => ({
       id: run.id,
@@ -3858,6 +3865,7 @@ function formatRoomReplayMarkdown(summary) {
 function formatRoomMarkdown(room, options = {}) {
   const reports = room.reports || room.blackboard?.reports || [];
   const notes = room.blackboard?.notes || [];
+  const checklist = roomAgentChecklist(room);
   const reportsOnly = options.reportsOnly === true;
   const messages = reportsOnly ? [] : (room.messages || []);
   const runs = room.runs || [];
@@ -3895,6 +3903,9 @@ function formatRoomMarkdown(room, options = {}) {
     }
     lines.push("");
   }
+  if (checklist) {
+    appendRoomAgentChecklistMarkdown(lines, checklist);
+  }
   if (runs.length) {
     lines.push("## Runs");
     lines.push("");
@@ -3917,6 +3928,34 @@ function formatRoomMarkdown(room, options = {}) {
     }
   }
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
+function appendRoomAgentChecklistMarkdown(lines, checklist) {
+  const summary = checklist.summary || {};
+  const agents = checklist.agents && typeof checklist.agents === "object" ? checklist.agents : {};
+  lines.push("## Agent Checklist");
+  lines.push("");
+  lines.push(`- expected: ${summary.expected_agents ?? 0}`);
+  lines.push(`- replied: ${summary.replied_agents ?? 0}`);
+  lines.push(`- completed: ${summary.completed_agents ?? 0}`);
+  lines.push(`- failed: ${summary.failed_agents ?? 0}`);
+  const missingReport = Array.isArray(summary.missing_report_agents) ? summary.missing_report_agents : [];
+  const missingDone = Array.isArray(summary.missing_done_agents) ? summary.missing_done_agents : [];
+  if (missingReport.length) lines.push(`- missing REPORT: ${formatInlineList(missingReport)}`);
+  if (missingDone.length) lines.push(`- missing DONE: ${formatInlineList(missingDone)}`);
+  const agentIds = Object.keys(agents).sort();
+  if (agentIds.length) {
+    lines.push("");
+    for (const agentId of agentIds) {
+      const item = agents[agentId] || {};
+      const duration = Number.isFinite(item.duration_seconds) ? ` duration=${item.duration_seconds}s` : "";
+      const report = item.has_report === undefined ? "" : ` report=${item.has_report ? "yes" : "no"}`;
+      const done = item.has_done === undefined ? "" : ` done=${item.has_done ? "yes" : "no"}`;
+      lines.push(`- ${agentId}: ${item.status || "unknown"} run=${item.run_id || "-"}${report}${done}${duration}`);
+      if (item.error) lines.push(`  error: ${oneLine(item.error, 180)}`);
+    }
+  }
+  lines.push("");
 }
 
 function formatInlineList(value) {

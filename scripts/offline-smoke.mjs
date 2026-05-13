@@ -37,6 +37,7 @@ async function main() {
   const centralConfig = path.join(tempDir, "central.config.json");
   const edgeConfig = path.join(tempDir, "edge.config.json");
   const agentScript = path.join(tempDir, "offline-agent.mjs");
+  const failAgentScript = path.join(tempDir, "offline-fail-agent.mjs");
 
   fs.writeFileSync(centralConfig, `${JSON.stringify({
     host: "127.0.0.1",
@@ -57,6 +58,7 @@ async function main() {
   }, null, 2)}\n`);
 
   fs.writeFileSync(agentScript, `const room = process.env.AGENT_ROOM_ID || "";\nconst cache = process.env.AGENT_CACHE_KEY || "";\nconsole.log("REPORT: offline smoke run completed for " + room);\nconsole.log("BLACKBOARD: cache key " + cache);\nconsole.log("BLACKBOARD: fake token=sk-test-secret-000000000000000000");\nconsole.log("DONE");\n`);
+  fs.writeFileSync(failAgentScript, `console.error("API Error: 502 Upstream request failed in offline smoke");\nprocess.exit(1);\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "offline-smoke-node",
@@ -73,6 +75,14 @@ async function main() {
       adapter: "command",
       capabilities: ["test", "room", "offline"],
       runCommand: `${quoteCommandArg(process.execPath)} ${quoteCommandArg(agentScript)}`
+    }, {
+      id: "offline-fail-agent",
+      kind: "offline",
+      role: "executor",
+      enabled: true,
+      adapter: "command",
+      capabilities: ["test", "room", "offline", "failure"],
+      runCommand: `${quoteCommandArg(process.execPath)} ${quoteCommandArg(failAgentScript)}`
     }]
   }, null, 2)}\n`);
 
@@ -89,6 +99,7 @@ async function main() {
     AGENT_BUS_CONFIG: edgeConfig
   });
   const agent = await waitForAgent(base, token, "offline-agent");
+  await waitForAgent(base, token, "offline-fail-agent");
   assert(agent.status === "online", "agent discovery did not expose online status");
   assert(agent.node_status === "online", "agent discovery did not expose online node status");
   assert(Boolean(agent.last_seen_at), "agent discovery did not expose last_seen_at");
@@ -143,6 +154,17 @@ async function main() {
   assert(finalRoom.reports?.some((item) => /offline smoke run completed/.test(item.content || "")), "REPORT directive was not captured");
   assert(finalRoom.blackboard?.notes?.some((item) => /cache key agent-bus-offline-agent/.test(item.content || "")), "BLACKBOARD directive was not captured");
   assert((run.stdout || "").includes("DONE"), "agent stdout did not include DONE");
+  const checklist = finalRoom.blackboard?.agent_checklist;
+  const checklistAgent = checklist?.agents?.["offline-agent"];
+  assert(checklist?.summary?.expected_agents === 1, "room checklist did not count expected agents");
+  assert(checklist?.summary?.replied_agents === 1, "room checklist did not count replied agents");
+  assert(checklist?.summary?.completed_agents === 1, "room checklist did not count completed agents");
+  assert(checklist?.summary?.missing_report_agents?.length === 0, "room checklist incorrectly marked REPORT missing");
+  assert(checklist?.summary?.missing_done_agents?.length === 0, "room checklist incorrectly marked DONE missing");
+  assert(checklistAgent?.status === "completed", "room checklist did not record agent completion");
+  assert(checklistAgent?.has_report === true, "room checklist did not record REPORT compliance");
+  assert(checklistAgent?.has_done === true, "room checklist did not record DONE compliance");
+  assert(Number.isFinite(checklistAgent?.duration_seconds), "room checklist did not record run duration");
 
   const cliRoom = await runCliJson(["room", "show", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliRoom.id === finalRoom.id, "CLI room show did not return the expected room");
@@ -152,7 +174,7 @@ async function main() {
   assert(Array.isArray(cliNodes) && cliNodes.some((item) => item.node_id === "offline-smoke-node"), "CLI nodes did not include the smoke node");
   const cliStatus = await runCliJson(["status", "--json", "--gateway", base, "--token", token]);
   assert(cliStatus.ok === true, "CLI status did not report ok=true");
-  assert(cliStatus.summary?.online_agents === 1, "CLI status did not count the online smoke agent");
+  assert(cliStatus.summary?.online_agents === 2, "CLI status did not count both online smoke agents");
   assert(cliStatus.nodes?.some((item) => item.id === "offline-smoke-node" && item.freshness?.startsWith("online/fresh")), "CLI status did not include node freshness");
   assert(cliStatus.rooms?.some((item) => item.id === finalRoom.id), "CLI status did not include the smoke room");
   const statusAgent = cliStatus.agents?.find((item) => item.id === "offline-agent");
@@ -170,10 +192,12 @@ async function main() {
   const cliExport = await runCliText(["room", "export", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliExport.includes(`# Agent Bus Room: ${finalRoom.title}`), "CLI room export did not render markdown title");
   assert(cliExport.includes("offline smoke run completed"), "CLI room export did not include report content");
+  assert(cliExport.includes("## Agent Checklist"), "CLI room export did not include agent checklist");
   assert(!cliExport.includes("sk-test-secret-000000000000000000"), "CLI room export did not redact token-like content");
   assert(cliExport.includes("token=[REDACTED]"), "CLI room export did not include a redaction marker");
   const summaryExport = await runCliText(["room", "export", finalRoom.id, "--reports-only", "--gateway", base, "--token", token]);
   assert(summaryExport.includes("## Reports"), "CLI room export --reports-only did not include reports");
+  assert(summaryExport.includes("## Agent Checklist"), "CLI room export --reports-only did not include agent checklist");
   assert(summaryExport.includes("reports-only:"), "CLI room export --reports-only did not mark the sharing boundary");
   assert(!summaryExport.includes("## Goal"), "CLI room export --reports-only included the room goal");
   assert(!summaryExport.includes("## Messages"), "CLI room export --reports-only included full messages");
@@ -186,6 +210,7 @@ async function main() {
   const summaryJson = await runCliJson(["room", "export", finalRoom.id, "--format", "json", "--reports-only", "--gateway", base, "--token", token]);
   assert(summaryJson.id === finalRoom.id, "CLI room export --reports-only json wrote the wrong room");
   assert(summaryJson.object === "agent_bus.room_reports_summary", "CLI room export --reports-only json omitted the summary object type");
+  assert(summaryJson.blackboard?.agent_checklist?.summary?.completed_agents === 1, "CLI room export --reports-only json omitted checklist summary");
   assert(!Object.hasOwn(summaryJson, "goal"), "CLI room export --reports-only json included the room goal");
   assert(!Object.hasOwn(summaryJson, "messages"), "CLI room export --reports-only json included full messages");
   const eventBundle = await runCliJson(["room", "export", finalRoom.id, "--format", "events", "--gateway", base, "--token", token]);
@@ -213,6 +238,32 @@ async function main() {
   const replayMarkdown = await runCliText(["room", "replay", "--in", eventBundlePath, "--format", "markdown"]);
   assert(replayMarkdown.includes("# Agent Bus Room Replay:"), "CLI room replay --format markdown did not render a title");
   assert(replayMarkdown.includes("offline smoke run completed"), "CLI room replay markdown did not include report content");
+
+  const failedRoom = await requestJson(`${base}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Offline failed room",
+      goal: "Verify failed room runs are visible in the agent checklist without requiring model quota.",
+      agents: ["offline-fail-agent"],
+      wakeAgents: ["offline-fail-agent"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const failedFinalRoom = await waitForRoomRunTerminal(base, token, failedRoom.id, "offline-fail-agent");
+  const failedRun = failedFinalRoom.runs?.find((item) => item.agent_id === "offline-fail-agent");
+  const failedChecklist = failedFinalRoom.blackboard?.agent_checklist;
+  const failedChecklistAgent = failedChecklist?.agents?.["offline-fail-agent"];
+  assert(failedRun?.status === "failed", "offline failed room run did not fail");
+  assert(failedChecklist?.summary?.failed_agents === 1, "room checklist did not count failed agents");
+  assert(failedChecklist?.summary?.missing_report_agents?.includes("offline-fail-agent"), "room checklist did not mark missing REPORT on failed agent");
+  assert(failedChecklist?.summary?.missing_done_agents?.includes("offline-fail-agent"), "room checklist did not mark missing DONE on failed agent");
+  assert(failedChecklistAgent?.status === "failed", "room checklist did not record failed agent status");
+  assert(failedChecklistAgent?.has_report === false, "room checklist incorrectly marked failed agent as having REPORT");
+  assert(failedChecklistAgent?.has_done === false, "room checklist incorrectly marked failed agent as having DONE");
+  assert(/502 Upstream/.test(failedChecklistAgent?.error || ""), "room checklist did not capture failed agent error text");
+  await runCliJson(["room", "pause", failedFinalRoom.id, "--reason", "offline smoke failed room checked", "--gateway", base, "--token", token]);
 
   if (!edge.killed) edge.kill("SIGTERM");
   await waitForExit(edge);
@@ -255,11 +306,16 @@ async function main() {
     ping_status: agent.ping_status,
     room_id: finalRoom.id,
     room_status: finalRoom.status,
+    failed_room_id: failedFinalRoom.id,
+    failed_room_status: failedFinalRoom.status,
     paused_room_id: pausedRoom.id,
     paused_cancelled_runs: pausedRoom.pause?.cancelled_queued_runs?.length || 0,
     run_id: run.id,
+    failed_run_id: failedRun.id,
     reports: finalRoom.reports?.length || 0,
     blackboard_notes: finalRoom.blackboard?.notes?.length || 0,
+    checklist_completed_agents: checklist?.summary?.completed_agents || 0,
+    checklist_failed_agents: failedChecklist?.summary?.failed_agents || 0,
     event_count: eventBundle.events?.length || 0,
     export_bytes: Buffer.byteLength(cliExport)
   };
@@ -430,6 +486,17 @@ async function waitForRoomComplete(base, token, roomId, timeoutMs = 20000) {
     await delay(250);
   }
   throw new Error(`Timed out waiting for room ${roomId}`);
+}
+
+async function waitForRoomRunTerminal(base, token, roomId, agentId, timeoutMs = 20000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const room = await requestJson(`${base}/rooms/${roomId}`, { headers: authHeaders(token) });
+    const run = (room.runs || []).find((item) => item.agent_id === agentId && ["completed", "failed", "error"].includes(item.status));
+    if (run) return room;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for terminal run from ${agentId} in room ${roomId}`);
 }
 
 async function waitForJson(url, timeoutMs = 10000) {

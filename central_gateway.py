@@ -527,6 +527,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(pause_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "recover":
                     return self.json(recover_room(self.config, parts[1], body))
+                if len(parts) == 3 and parts[2] in ("supervisor", "supervise"):
+                    return self.json(supervise_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "reminders":
                     return self.json(add_room_reminder(self.config, parts[1], body), 201)
             return self.json({"error": "not_found"}, 404)
@@ -875,6 +877,13 @@ def central_health():
 
 STATUS_ACTIVE_ROOM_STATUSES = {"active", "running", "finishing"}
 STATUS_QUEUED_RUN_STALE_SECONDS = 21600
+STATUS_RUN_HEARTBEAT_STALE_SECONDS = max(
+    1,
+    int_env(
+        "AGENT_BUS_STATUS_RUN_HEARTBEAT_STALE_SECONDS",
+        int_env("AGENT_BUS_RUNNING_RUN_STALE_SECONDS", 90),
+    ),
+)
 
 
 def public_status(config):
@@ -2130,6 +2139,368 @@ def recover_room(config, room_id, body):
     result["cancelled_queued_runs"] = (recovered.get("pause") or {}).get("cancelled_queued_runs") or []
     result["inspection_after"] = inspect_room_recovery(recovered, queued_run_stale_seconds)
     return result
+
+
+def supervise_room(config, room_id, body):
+    room = get_room(config, room_id)
+    queued_run_stale_seconds = max(1, int(body.get("queued_run_stale_seconds") or body.get("queuedRunStaleSeconds") or STATUS_QUEUED_RUN_STALE_SECONDS))
+    node_stale_seconds = max(1, int(body.get("node_stale_seconds") or body.get("nodeStaleSeconds") or NODE_STALE_SECONDS))
+    run_heartbeat_stale_seconds = max(
+        1,
+        int(
+            body.get("run_heartbeat_stale_seconds")
+            or body.get("runHeartbeatStaleSeconds")
+            or body.get("running_run_stale_seconds")
+            or body.get("runningRunStaleSeconds")
+            or STATUS_RUN_HEARTBEAT_STALE_SECONDS
+        ),
+    )
+    dry_run = body_bool(body, "dry_run", "dryRun", default=True)
+    confirm = body_bool(body, "confirm", "yes", default=False)
+    reason = (body.get("reason") or "Conservative room supervisor recovery.").strip() or "Conservative room supervisor recovery."
+    inspection = inspect_room_supervisor(
+        room,
+        queued_run_stale_seconds=queued_run_stale_seconds,
+        node_stale_seconds=node_stale_seconds,
+        run_heartbeat_stale_seconds=run_heartbeat_stale_seconds,
+    )
+    actions = supervisor_actions(room, inspection, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds)
+    executable_actions = [action for action in actions if action.get("executable")]
+    result = {
+        "ok": True,
+        "dry_run": dry_run,
+        "executed": False,
+        "room_id": room_id,
+        "action": "room_supervisor_tick",
+        "mode": "conservative",
+        "reason": reason,
+        "requires_confirmation": True,
+        "inspection": inspection,
+        "plan": {
+            "summary": ((inspection.get("analysis") or {}).get("summary") or "unknown"),
+            "actions": actions,
+            "safe_executable_actions": executable_actions,
+            "will_execute_on_confirm": bool(executable_actions),
+        },
+    }
+    if dry_run:
+        return result
+    if not confirm:
+        err = Exception("room supervisor execution requires confirm=true or yes=true")
+        err.status_code = 409
+        raise err
+    if not executable_actions:
+        result["executed"] = False
+        result["requires_operator_inspection"] = True
+        result["refusal_reason"] = "Conservative supervisor has no safe executable action for this room state."
+        return result
+    recover_result = recover_room(config, room_id, {
+        "queued_run_stale_seconds": queued_run_stale_seconds,
+        "dry_run": False,
+        "confirm": True,
+        "yes": True,
+        "force": False,
+        "reason": reason,
+    })
+    recovered_room = recover_result.get("room") or get_room(config, room_id)
+    result["executed"] = True
+    result["executed_action"] = executable_actions[0]
+    result["recover_result"] = recover_result
+    result["room"] = recovered_room
+    result["cancelled_queued_runs"] = recover_result.get("cancelled_queued_runs") or []
+    result["inspection_after"] = inspect_room_supervisor(
+        recovered_room,
+        queued_run_stale_seconds=queued_run_stale_seconds,
+        node_stale_seconds=node_stale_seconds,
+        run_heartbeat_stale_seconds=run_heartbeat_stale_seconds,
+    )
+    return result
+
+
+def inspect_room_supervisor(room, queued_run_stale_seconds=STATUS_QUEUED_RUN_STALE_SECONDS, node_stale_seconds=NODE_STALE_SECONDS, run_heartbeat_stale_seconds=STATUS_RUN_HEARTBEAT_STALE_SECONDS):
+    node_by_id = {node_id: node for node_id, node in STATE["nodes"].items() if node_id}
+    heartbeat_interval_by_agent = supervisor_heartbeat_interval_by_agent(node_by_id.values())
+    node_lookup_available = bool(node_by_id)
+    terminal_runs = []
+    live_running_runs = []
+    live_queued_runs = []
+    stale_queued_runs = []
+    stale_running_runs = []
+    orphaned_running_runs = []
+    other_non_terminal_runs = []
+    for raw_run in room.get("runs") or []:
+        record = supervisor_run_record(
+            room,
+            raw_run,
+            node_by_id=node_by_id,
+            node_lookup_available=node_lookup_available,
+            node_stale_seconds=node_stale_seconds,
+            heartbeat_interval_by_agent=heartbeat_interval_by_agent,
+        )
+        status = str(record.get("status") or "queued").lower()
+        if run_is_terminal(raw_run) or run_is_replaced(raw_run) or run_is_late_complete_ignored(raw_run):
+            terminal_runs.append(record)
+            continue
+        if status == "queued":
+            if is_stale_queued_run_for_recovery(record, queued_run_stale_seconds):
+                stale_queued_runs.append(record)
+            else:
+                live_queued_runs.append(record)
+            continue
+        if status == "running":
+            if supervisor_run_is_orphaned(record, node_lookup_available):
+                orphaned_running_runs.append(record)
+            elif supervisor_run_is_stale_running(record, run_heartbeat_stale_seconds):
+                stale_running_runs.append(record)
+            else:
+                live_running_runs.append(record)
+            continue
+        other_non_terminal_runs.append(record)
+    summary = supervisor_room_summary(
+        room,
+        live_running_runs,
+        live_queued_runs,
+        stale_queued_runs,
+        stale_running_runs,
+        orphaned_running_runs,
+        other_non_terminal_runs,
+    )
+    non_terminal_runs = (
+        live_running_runs
+        + live_queued_runs
+        + stale_running_runs
+        + orphaned_running_runs
+        + other_non_terminal_runs
+    )
+    recommendation = supervisor_room_recommendation(
+        summary,
+        non_terminal_runs,
+        stale_queued_runs,
+        room.get("status"),
+    )
+    counts = {
+        "total_runs": len(room.get("runs") or []),
+        "non_terminal_runs": len(non_terminal_runs) + len(stale_queued_runs),
+        "terminal_runs": len(terminal_runs),
+        "live_running_runs": len(live_running_runs),
+        "live_queued_runs": len(live_queued_runs),
+        "stale_queued_runs": len(stale_queued_runs),
+        "stale_running_runs": len(stale_running_runs),
+        "orphaned_running_runs": len(orphaned_running_runs),
+        "other_non_terminal_runs": len(other_non_terminal_runs),
+    }
+    thresholds = {
+        "queued_run_stale_seconds": queued_run_stale_seconds,
+        "node_stale_seconds": node_stale_seconds,
+        "run_heartbeat_stale_seconds": run_heartbeat_stale_seconds,
+    }
+    return {
+        "room": {
+            "id": room.get("id") or "",
+            "title": room.get("title") or "",
+            "trace_id": room.get("trace_id") or "",
+            "status": room.get("status") or "unknown",
+            "updated_at": room.get("updated_at"),
+            "created_at": room.get("created_at"),
+            "agents": room.get("agents") or [],
+        },
+        "analysis": {
+            "summary": summary,
+            "thresholds": thresholds,
+            "counts": counts,
+            "node_inventory_available": node_lookup_available,
+            "live_running_runs": live_running_runs,
+            "live_queued_runs": live_queued_runs,
+            "stale_queued_runs": stale_queued_runs,
+            "stale_running_runs": stale_running_runs,
+            "orphaned_running_runs": orphaned_running_runs,
+            "other_non_terminal_runs": other_non_terminal_runs,
+        },
+        "thresholds": thresholds,
+        "counts": {
+            "runs": counts["total_runs"],
+            "active_runs": len(non_terminal_runs),
+            "stale_queued_runs": len(stale_queued_runs),
+            "stale_running_runs": len(stale_running_runs),
+            "orphaned_running_runs": len(orphaned_running_runs),
+        },
+        "active_runs": non_terminal_runs,
+        "stale_queued_runs": stale_queued_runs,
+        "stale_running_runs": stale_running_runs,
+        "orphaned_running_runs": orphaned_running_runs,
+        "recommendation": recommendation,
+    }
+
+
+def supervisor_actions(room, inspection, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds):
+    room_id = room.get("id") or "ROOM_ID"
+    summary = ((inspection.get("analysis") or {}).get("summary") or "unknown")
+    actions = []
+    threshold_flag = "" if queued_run_stale_seconds == STATUS_QUEUED_RUN_STALE_SECONDS else f" --queued-run-stale-seconds {queued_run_stale_seconds}"
+    node_stale_flag = "" if node_stale_seconds == NODE_STALE_SECONDS else f" --node-stale-seconds {node_stale_seconds}"
+    heartbeat_flag = "" if run_heartbeat_stale_seconds == STATUS_RUN_HEARTBEAT_STALE_SECONDS else f" --run-heartbeat-stale-seconds {run_heartbeat_stale_seconds}"
+    if summary == "stale_queued_recovery_candidate":
+        actions.append({
+            "kind": "recover_stale_queued_room",
+            "level": "warn",
+            "executable": True,
+            "message": "Only stale queued runs remain. Confirmed supervisor execution can pause the room and cancel those queued runs.",
+            "command": f"agent-bus room supervisor {room_id} --yes{threshold_flag}{node_stale_flag}{heartbeat_flag}",
+            "fallback_command": f"agent-bus room recover {room_id} --yes{threshold_flag}",
+        })
+        return actions
+    if summary in ("orphaned_running_candidate", "mixed_orphaned_running_and_stale_queued"):
+        actions.append({
+            "kind": "inspect_orphaned_running",
+            "level": "warn",
+            "executable": False,
+            "message": "A running room task is attached to a stale or missing node. Inspect the edge service or agent process before pausing or replacing it.",
+            "command": f"agent-bus room inspect {room_id}{node_stale_flag}{heartbeat_flag}{threshold_flag}",
+        })
+        return actions
+    if summary in ("stale_running_candidate", "mixed_live_and_stale_running", "mixed_stale_running_and_stale_queued"):
+        actions.append({
+            "kind": "inspect_stale_running",
+            "level": "warn",
+            "executable": False,
+            "message": "A running task has not reported a run heartbeat within the threshold. This supervisor tick will not replace running work automatically.",
+            "command": f"agent-bus room inspect {room_id}{node_stale_flag}{heartbeat_flag}{threshold_flag}",
+        })
+        return actions
+    if summary == "mixed_live_and_stale_queued":
+        actions.append({
+            "kind": "wait_for_live_work",
+            "level": "info",
+            "executable": False,
+            "message": "Live work and stale queued history both exist. Wait for live work or inspect the room before recovering queued leftovers.",
+            "command": f"agent-bus room inspect {room_id}{node_stale_flag}{heartbeat_flag}{threshold_flag}",
+        })
+        return actions
+    if summary == "active_without_live_runs":
+        actions.append({
+            "kind": "operator_wake_available",
+            "level": "info",
+            "executable": False,
+            "message": "Room is active with no live run. A manual wake is available after the operator verifies the desired next agent.",
+            "command": f"agent-bus room wake {room_id} --reason \"operator recovery wake\"",
+        })
+        return actions
+    actions.append({
+        "kind": "no_action",
+        "level": "info",
+        "executable": False,
+        "message": "No conservative supervisor action is needed for this room state.",
+    })
+    return actions
+
+
+def supervisor_heartbeat_interval_by_agent(nodes):
+    by_agent = {}
+    for node in nodes:
+        for agent in node.get("agents") or []:
+            agent_id = str(agent.get("id") or "").strip()
+            try:
+                interval_ms = int(agent.get("run_heartbeat_interval_ms") or agent.get("runHeartbeatIntervalMs") or 0)
+            except Exception:
+                interval_ms = 0
+            if agent_id and interval_ms > 0:
+                by_agent[agent_id] = interval_ms
+    return by_agent
+
+
+def supervisor_run_record(room, run, node_by_id, node_lookup_available, node_stale_seconds, heartbeat_interval_by_agent):
+    node_id = str(run.get("node_id") or "").strip()
+    agent_id = str(run.get("agent_id") or "").strip()
+    node = node_by_id.get(node_id)
+    last_heartbeat_at = run.get("last_heartbeat_at") or run.get("started_at")
+    item = {
+        "id": run.get("id"),
+        "room_id": run.get("room_id") or room.get("id"),
+        "agent_id": agent_id,
+        "node_id": node_id,
+        "status": run.get("status") or "queued",
+        "created_at": run.get("created_at"),
+        "started_at": run.get("started_at"),
+        "completed_at": run.get("completed_at"),
+        "last_heartbeat_at": last_heartbeat_at,
+        "run_heartbeat_interval_ms": heartbeat_interval_by_agent.get(agent_id),
+        "node_status": node.get("status") if node else None,
+        "node_last_seen_at": node.get("last_seen_at") if node else None,
+        "node_freshness": supervisor_node_freshness(node, node_stale_seconds) if node else ("unknown" if node_lookup_available else "unchecked"),
+        "age_seconds": run_age_seconds(run),
+        "heartbeat_age_seconds": seconds_since_timestamp(last_heartbeat_at),
+    }
+    return item
+
+
+def supervisor_node_freshness(node, node_stale_seconds):
+    status = node.get("status") or "unknown"
+    if status != "online":
+        return status
+    last_seen = status_timestamp(node.get("last_seen_at"))
+    if last_seen is None:
+        return "online/unknown"
+    age_seconds = max(0, int(round(time.time() - last_seen)))
+    if age_seconds > node_stale_seconds:
+        return f"stale ({age_seconds}s ago)"
+    return f"online/fresh ({age_seconds}s ago)"
+
+
+def supervisor_run_is_orphaned(run, node_lookup_available):
+    if str(run.get("status") or "").lower() != "running":
+        return False
+    freshness = str(run.get("node_freshness") or "")
+    return freshness.startswith("stale") or (node_lookup_available and freshness == "unknown")
+
+
+def supervisor_run_is_stale_running(run, run_heartbeat_stale_seconds):
+    if str(run.get("status") or "").lower() != "running":
+        return False
+    age = run.get("heartbeat_age_seconds")
+    if not isinstance(age, (int, float)):
+        return False
+    return age > run_heartbeat_stale_seconds
+
+
+def supervisor_room_summary(room, live_running_runs, live_queued_runs, stale_queued_runs, stale_running_runs, orphaned_running_runs, other_non_terminal_runs):
+    status = str(room.get("status") or "unknown").lower()
+    if status == "completed":
+        return "completed"
+    if status == "paused":
+        return "paused"
+    if orphaned_running_runs:
+        return "mixed_orphaned_running_and_stale_queued" if stale_queued_runs else "orphaned_running_candidate"
+    if stale_running_runs:
+        if stale_queued_runs and not live_running_runs and not live_queued_runs and not other_non_terminal_runs:
+            return "mixed_stale_running_and_stale_queued"
+        return "mixed_live_and_stale_running" if (live_running_runs or live_queued_runs or other_non_terminal_runs) else "stale_running_candidate"
+    if stale_queued_runs and not live_running_runs and not live_queued_runs and not other_non_terminal_runs:
+        return "stale_queued_recovery_candidate"
+    if live_running_runs or live_queued_runs or other_non_terminal_runs:
+        return "mixed_live_and_stale_queued" if stale_queued_runs else "live"
+    if status == "active":
+        return "active_without_live_runs"
+    return status or "unknown"
+
+
+def supervisor_room_recommendation(summary, active_runs, stale_queued_runs, room_status):
+    if stale_queued_runs and not active_runs:
+        return "pause_recover_orphan_queued_runs"
+    if active_runs:
+        return "wait_or_inspect_running_agents"
+    status = str(room_status or "").lower()
+    if summary == "paused" or status == "paused":
+        return "room_paused"
+    if summary == "completed" or status == "completed":
+        return "room_completed"
+    return "no_active_run_recovery_needed"
+
+
+def seconds_since_timestamp(value):
+    parsed = status_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int(round(time.time() - parsed)))
 
 
 def inspect_room_recovery(room, queued_run_stale_seconds=STATUS_QUEUED_RUN_STALE_SECONDS):

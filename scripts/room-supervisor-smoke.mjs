@@ -310,6 +310,30 @@ async function main() {
   assert(staleAfterDry.runs?.find((run) => run.id === staleRunId)?.status === "queued", "dry-run recover changed the queued run");
   assert(healthAfterDryRun.queued === healthBeforeDryRun.queued, "dry-run recover changed gateway queue length");
 
+  const supervisorDryRun = await runCliJson([
+    "room",
+    "supervisor",
+    staleRoom.id,
+    "--json",
+    "--gateway",
+    gateway,
+    "--token",
+    token,
+    "--queued-run-stale-seconds",
+    "1"
+  ]);
+  assert(supervisorDryRun.dry_run === true, "CLI room supervisor did not default to server-side dry-run");
+  assert(supervisorDryRun.executed === false, "dry-run supervisor unexpectedly executed");
+  assert(supervisorDryRun.plan?.summary === "stale_queued_recovery_candidate", `dry-run supervisor reported unexpected summary: ${supervisorDryRun.plan?.summary}`);
+  assert(supervisorDryRun.plan?.safe_executable_actions?.some((action) => action.kind === "recover_stale_queued_room"), "dry-run supervisor did not plan safe queued recovery");
+  const staleAfterSupervisorDry = await requestJson(`${gateway}/rooms/${encodeURIComponent(staleRoom.id)}`, {
+    headers: authHeaders(token)
+  });
+  const healthAfterSupervisorDry = await requestJson(`${gateway}/health`);
+  assert(staleAfterSupervisorDry.status === staleBefore.status, "dry-run supervisor changed room status");
+  assert(staleAfterSupervisorDry.runs?.find((run) => run.id === staleRunId)?.status === "queued", "dry-run supervisor changed the queued run");
+  assert(healthAfterSupervisorDry.queued === healthBeforeDryRun.queued, "dry-run supervisor changed gateway queue length");
+
   const noConfirm = await fetch(`${gateway}/rooms/${encodeURIComponent(staleRoom.id)}/recover`, {
     method: "POST",
     headers: authJsonHeaders(token),
@@ -321,6 +345,18 @@ async function main() {
   });
   const noConfirmText = await noConfirm.text();
   assert(noConfirm.status === 409, `unconfirmed server recover returned ${noConfirm.status}: ${noConfirmText}`);
+
+  const supervisorNoConfirm = await fetch(`${gateway}/rooms/${encodeURIComponent(staleRoom.id)}/supervisor`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      dry_run: false,
+      queued_run_stale_seconds: 1,
+      reason: "unconfirmed smoke supervisor"
+    })
+  });
+  const supervisorNoConfirmText = await supervisorNoConfirm.text();
+  assert(supervisorNoConfirm.status === 409, `unconfirmed server supervisor returned ${supervisorNoConfirm.status}: ${supervisorNoConfirmText}`);
 
   const recoverExecuted = await runCliJson([
     "room",
@@ -351,6 +387,75 @@ async function main() {
   });
   assert(queueAfterRecover.type === "idle", `confirmed recover left the cancelled run queued: ${JSON.stringify(queueAfterRecover)}`);
 
+  step("Verifying supervisor reports but does not replace orphaned running work");
+  const orphanRoom = await requestJson(`${gateway}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Room supervisor PR-3 orphaned running smoke",
+      goal: "Verify conservative supervisor reports orphaned running work without replacing it.",
+      agents: roomAgentIds,
+      wakeAgents: ["old-runner"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const orphanRunId = orphanRoom.runs?.[0]?.id;
+  assert(orphanRunId, "orphan running room did not create a queued run");
+  await pollTask(gateway, token, orphanRunId);
+  await requestJson(`${gateway}/edge/events`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "room-supervisor-edge",
+      run_id: orphanRunId,
+      trace_id: orphanRoom.trace_id,
+      event: { type: "run.started", agent_id: "old-runner" }
+    })
+  });
+  await delay(2200);
+  const orphanDryRun = await runCliJson([
+    "room",
+    "supervisor",
+    orphanRoom.id,
+    "--json",
+    "--gateway",
+    gateway,
+    "--token",
+    token,
+    "--node-stale-seconds",
+    "1",
+    "--run-heartbeat-stale-seconds",
+    "86400"
+  ]);
+  assert(orphanDryRun.plan?.summary === "orphaned_running_candidate", `supervisor did not report orphaned running candidate: ${orphanDryRun.plan?.summary}`);
+  assert(orphanDryRun.plan?.safe_executable_actions?.length === 0, "supervisor planned an executable action for orphaned running work");
+  assert(orphanDryRun.inspection?.orphaned_running_runs?.some((run) => run.id === orphanRunId), "supervisor did not list the orphaned running run");
+
+  const orphanConfirmed = await runCliJson([
+    "room",
+    "supervisor",
+    orphanRoom.id,
+    "--yes",
+    "--json",
+    "--gateway",
+    gateway,
+    "--token",
+    token,
+    "--node-stale-seconds",
+    "1",
+    "--run-heartbeat-stale-seconds",
+    "86400"
+  ]);
+  assert(orphanConfirmed.dry_run === false, "confirmed orphan supervisor did not disable dry-run");
+  assert(orphanConfirmed.executed === false, "confirmed orphan supervisor unexpectedly executed a destructive action");
+  assert(orphanConfirmed.requires_operator_inspection === true, "confirmed orphan supervisor did not require operator inspection");
+  const orphanAfterSupervisor = await requestJson(`${gateway}/rooms/${encodeURIComponent(orphanRoom.id)}`, {
+    headers: authHeaders(token)
+  });
+  assert(orphanAfterSupervisor.status === "active", "supervisor changed orphaned running room status");
+  assert(orphanAfterSupervisor.runs?.find((run) => run.id === orphanRunId)?.status === "running", "supervisor changed orphaned running run status");
+
   const result = {
     ok: true,
     quota: "no_model_calls",
@@ -362,7 +467,9 @@ async function main() {
     duplicate_complete_idempotent: true,
     recover_room_id: staleRoom.id,
     server_recover_dry_run: true,
-    server_recover_confirmed: true
+    server_recover_confirmed: true,
+    supervisor_dry_run: true,
+    supervisor_orphan_no_auto_replace: true
   };
   if (jsonOut) {
     console.log(JSON.stringify(result, null, 2));

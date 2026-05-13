@@ -231,6 +231,7 @@ Usage:
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
   agent-bus room recover room_xxx --yes --reason "stale queued run recovery"
+  agent-bus room supervisor room_xxx [--yes] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus room recover room_xxx --yes --force --reason "operator-confirmed pause"
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -2625,6 +2626,33 @@ async function room(args) {
     process.stdout.write(formatRoomRecoveryResult(result, { roomId, queuedRunStaleSeconds, reason }));
     return;
   }
+  if (action === "supervisor" || action === "supervise" || action === "tick") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
+    const staleSeconds = positiveIntegerOption(optionValue(args, "--node-stale-seconds") || optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
+    const runHeartbeatStaleSeconds = positiveIntegerOption(runHeartbeatStaleOption(args), DEFAULT_RUN_HEARTBEAT_STALE_SECONDS, 86400);
+    const yes = args.includes("--yes");
+    const reason = optionValue(args, "--reason") || optionValue(args, "--message") || "Conservative room supervisor recovery.";
+    const body = {
+      queued_run_stale_seconds: queuedRunStaleSeconds,
+      node_stale_seconds: staleSeconds,
+      run_heartbeat_stale_seconds: runHeartbeatStaleSeconds,
+      dry_run: !yes,
+      confirm: yes,
+      yes,
+      reason
+    };
+    const result = await gatewayJson(`/rooms/${pathPart(roomId)}/supervisor`, { auth: true, args, method: "POST", body });
+    if (args.includes("--json")) return printJson(result);
+    process.stdout.write(formatRoomSupervisorResult(result, {
+      roomId,
+      queuedRunStaleSeconds,
+      staleSeconds,
+      runHeartbeatStaleSeconds,
+      reason
+    }));
+    return;
+  }
   if (action === "message" || action === "say") {
     const roomId = requiredPositional(args, 1, "room id");
     const message = optionValue(args, "--message") || optionValue(args, "-m") || "";
@@ -2640,7 +2668,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|memory|expand|inspect|export|replay|create|wake|pause|recover|message [options]");
+  throw new Error("Usage: agent-bus room list|show|memory|expand|inspect|export|replay|create|wake|pause|recover|supervisor|message [options]");
 }
 
 function formatRoomMemory(value, options = {}) {
@@ -2819,6 +2847,50 @@ function formatRoomRecoveryResult(result, { roomId, queuedRunStaleSeconds = 2160
   }
   const count = Array.isArray(result?.cancelled_queued_runs) ? result.cancelled_queued_runs.length : 0;
   lines.push(`Recovered room ${roomId}: paused and cancelled ${count} queued run${count === 1 ? "" : "s"}. Use room export before creating a follow-up room if work should continue.`);
+  return `${lines.join("\n").trimStart()}\n`;
+}
+
+function formatRoomSupervisorResult(result, {
+  roomId,
+  queuedRunStaleSeconds = 21600,
+  staleSeconds = 180,
+  runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS,
+  reason = "Conservative room supervisor recovery."
+} = {}) {
+  const lines = [];
+  const inspection = result?.inspection_after || result?.inspection;
+  if (inspection) lines.push(formatRoomStateInspection(inspection).trimEnd());
+  const actions = Array.isArray(result?.plan?.actions) ? result.plan.actions : [];
+  if (actions.length) {
+    lines.push("", "Supervisor plan:");
+    for (const action of actions) {
+      const marker = action.executable ? "can execute" : "manual";
+      lines.push(`- ${action.kind || "action"} (${marker}): ${action.message || ""}`.trimEnd());
+      if (action.command) lines.push(`  ${action.command}`);
+      if (action.fallback_command) lines.push(`  fallback: ${action.fallback_command}`);
+    }
+  }
+  if (result?.dry_run !== false) {
+    const thresholdFlag = queuedRunStaleThresholdFlag(queuedRunStaleSeconds);
+    const heartbeatFlag = runHeartbeatStaleThresholdFlag(runHeartbeatStaleSeconds);
+    const staleFlag = staleThresholdFlag(staleSeconds);
+    const canExecute = Array.isArray(result?.plan?.safe_executable_actions) && result.plan.safe_executable_actions.length > 0;
+    lines.push("");
+    lines.push("Dry run. Server-side supervisor did not modify the room.");
+    if (canExecute) {
+      lines.push(`To execute the safe queued-run recovery: agent-bus room supervisor ${roomId} --yes${thresholdFlag}${staleFlag}${heartbeatFlag} --reason ${JSON.stringify(reason)}`);
+    } else {
+      lines.push("No safe automatic action is available; inspect the listed room state before pausing, waking, or replacing work.");
+    }
+    return `${lines.join("\n")}\n`;
+  }
+  if (result?.executed) {
+    const count = Array.isArray(result?.cancelled_queued_runs) ? result.cancelled_queued_runs.length : 0;
+    lines.push(`Supervisor executed conservative recovery for ${roomId}: paused the room and cancelled ${count} queued run${count === 1 ? "" : "s"}.`);
+  } else {
+    lines.push(`Supervisor did not execute a room change for ${roomId}.`);
+    if (result?.refusal_reason) lines.push(result.refusal_reason);
+  }
   return `${lines.join("\n").trimStart()}\n`;
 }
 

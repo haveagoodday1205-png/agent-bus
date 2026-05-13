@@ -60,6 +60,7 @@ async function main() {
     "await new Promise((resolve) => setTimeout(resolve, 4500));",
     'console.log("REPORT: python edge heartbeat kept the node fresh during a long run.");',
     'console.log("BLACKBOARD: python edge now emits run heartbeats during long tasks.");',
+    'console.log("BLACKBOARD: wake reason " + (process.env.AGENT_WAKE_REASON || ""));',
     'console.log("DONE");'
   ].join("\n"));
 
@@ -139,6 +140,7 @@ async function main() {
   const completed = await waitForRoomComplete(gateway, token, room.id, 15000);
   assert(completed.status === "completed", "room did not complete after the long python edge run");
   assert(completed.reports?.some((report) => /heartbeat kept the node fresh/.test(report.content || "")), "room did not retain the python heartbeat report");
+  assert(completed.blackboard?.notes?.some((item) => /wake reason Initial room wake\./.test(item.content || "")), "python edge did not expose AGENT_WAKE_REASON to the command adapter");
 
   step("Checking duplicate completion idempotency");
   const beforeCounts = roomCounts(completed);

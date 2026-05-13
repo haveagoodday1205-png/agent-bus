@@ -222,6 +222,7 @@ Usage:
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room memory room_xxx --query "cache decision" --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room expand room_xxx 'messages[7]' --around 1 --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room health room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json]
   agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
@@ -2524,6 +2525,18 @@ async function room(args) {
     process.stdout.write(formatRoomStateInspection(inspection));
     return;
   }
+  if (action === "health" || action === "ops") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const staleSeconds = positiveIntegerOption(optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS, 180, 86400);
+    const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
+    const runHeartbeatStaleSeconds = positiveIntegerOption(runHeartbeatStaleOption(args), DEFAULT_RUN_HEARTBEAT_STALE_SECONDS, 86400);
+    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const nodes = await optionalGatewayJson("/nodes", { auth: true, args }, []);
+    const health = roomHealthSummary(roomData, { nodes, staleSeconds, queuedRunStaleSeconds, runHeartbeatStaleSeconds });
+    if (args.includes("--json")) return printJson(health);
+    process.stdout.write(formatRoomHealth(health));
+    return;
+  }
   if (action === "export" || action === "dump") {
     const roomId = requiredPositional(args, 1, "room id");
     const format = optionValue(args, "--format") || (args.includes("--json") ? "json" : "markdown");
@@ -2670,7 +2683,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|memory|expand|inspect|export|replay|create|wake|pause|recover|supervisor|message [options]");
+  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|export|replay|create|wake|pause|recover|supervisor|message [options]");
 }
 
 function formatRoomMemory(value, options = {}) {
@@ -2894,6 +2907,236 @@ function formatRoomSupervisorResult(result, {
     if (result?.refusal_reason) lines.push(result.refusal_reason);
   }
   return `${lines.join("\n").trimStart()}\n`;
+}
+
+function roomHealthSummary(room, {
+  nodes = [],
+  staleSeconds = 180,
+  queuedRunStaleSeconds = 21600,
+  runHeartbeatStaleSeconds = DEFAULT_RUN_HEARTBEAT_STALE_SECONDS
+} = {}) {
+  const inspection = inspectRoomState(room, { nodes, staleSeconds, queuedRunStaleSeconds, runHeartbeatStaleSeconds });
+  const checklist = roomAgentChecklist(room) || {};
+  const checklistAgents = checklist.agents && typeof checklist.agents === "object" ? checklist.agents : {};
+  const runBuckets = roomHealthRunBuckets(room?.runs || []);
+  const latestRunByAgent = latestRoomRunByAgent(room?.runs || []);
+  const inspectionRunsById = roomInspectionRunsById(inspection);
+  const agents = (Array.isArray(room?.agents) ? room.agents : []).map((agentId) => {
+    const run = latestRunByAgent.get(agentId) || {};
+    const checklistItem = checklistAgents[agentId] || {};
+    const inspectRun = inspectionRunsById.get(run.id || checklistItem.run_id || "") || {};
+    const contract = roomHealthContractStatus(room, run, checklistItem);
+    return {
+      agent_id: agentId,
+      status: checklistItem.status || run.status || "missing",
+      run_id: checklistItem.run_id || run.id || "",
+      node_id: run.node_id || checklistItem.node_id || inspectRun.node_id || "",
+      has_report: contract.has_report,
+      has_done: contract.has_done,
+      duration_seconds: checklistItem.duration_seconds ?? null,
+      wake_reason: checklistItem.wake_reason || run.wake_reason || "",
+      last_error: checklistItem.error || roomRunErrorSummary(run),
+      stale_state: roomHealthStaleState(inspectRun),
+      heartbeat_age_seconds: inspectRun.heartbeat_age_seconds ?? null,
+      node_freshness: inspectRun.node_freshness || "",
+      updated_at: checklistItem.updated_at || run.completed_at || run.started_at || run.created_at || null
+    };
+  });
+  const latestRun = latestRoomRun(room?.runs || []);
+  const derivedSummary = roomHealthDerivedSummary(room, agents);
+  return {
+    object: "agent_bus.room_health",
+    room: {
+      id: room?.id || "",
+      title: room?.title || "",
+      status: room?.status || "unknown",
+      trace_id: room?.trace_id || "",
+      agents: room?.agents || [],
+      steps: room?.autonomy?.steps || 0,
+      max_steps: room?.autonomy?.max_steps || 0,
+      created_at: room?.created_at || null,
+      updated_at: room?.updated_at || null
+    },
+    summary: {
+      ...derivedSummary,
+      ...(checklist.summary || {}),
+      total_runs: (room?.runs || []).length,
+      run_statuses: runBuckets,
+      last_wake_reason: latestRun?.wake_reason || "",
+      last_message_at: latestRoomMessageAt(room),
+      last_report_at: latestRoomReportAt(room)
+    },
+    thresholds: inspection.analysis?.thresholds || {},
+    agents,
+    operator_hints: inspection.operator_hints || [],
+    inspect_summary: inspection.analysis?.summary || "unknown"
+  };
+}
+
+function roomHealthContractStatus(room, run, checklistItem = {}) {
+  const reportFromChecklist = typeof checklistItem.has_report === "boolean" ? checklistItem.has_report : null;
+  const doneFromChecklist = typeof checklistItem.has_done === "boolean" ? checklistItem.has_done : null;
+  const text = roomHealthRunText(room, run);
+  const counts = roomHealthDirectiveCounts(text);
+  const runId = run?.id || checklistItem?.run_id || "";
+  const reports = [
+    ...(Array.isArray(room?.reports) ? room.reports : []),
+    ...(Array.isArray(room?.blackboard?.reports) ? room.blackboard.reports : [])
+  ];
+  const hasReportRecord = Boolean(runId && reports.some((item) => item?.run_id === runId));
+  return {
+    has_report: reportFromChecklist ?? (hasReportRecord || counts.report > 0),
+    has_done: doneFromChecklist ?? (counts.done > 0)
+  };
+}
+
+function roomHealthRunText(room, run) {
+  const runId = run?.id || "";
+  const message = runId
+    ? (Array.isArray(room?.messages) ? room.messages : []).find((item) => item?.run_id === runId)
+    : null;
+  return String(run?.stdout || run?.summary || run?.stderr || message?.content || "");
+}
+
+function roomHealthDirectiveCounts(content) {
+  const counts = { report: 0, done: 0 };
+  for (const rawLine of String(content || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (/^REPORT\s*:/i.test(line)) counts.report += 1;
+    if (/^DONE\b/i.test(line)) counts.done += 1;
+  }
+  return counts;
+}
+
+function roomHealthDerivedSummary(room, agents) {
+  const expectedAgents = Array.isArray(room?.agents) ? room.agents.filter(Boolean) : [];
+  const failedStatuses = new Set(["failed", "error", "cancelled", "canceled", "skipped", "replaced", "superseded"]);
+  const terminalAgents = agents.filter((item) => roomHealthTerminalStatus(item.status));
+  return {
+    expected_agents: expectedAgents.length,
+    agents_with_runs: agents.filter((item) => item.run_id).length,
+    replied_agents: terminalAgents.length,
+    completed_agents: agents.filter((item) => String(item.status || "").toLowerCase() === "completed").length,
+    failed_agents: agents.filter((item) => failedStatuses.has(String(item.status || "").toLowerCase())).length,
+    missing_agents: agents.filter((item) => !item.run_id).map((item) => item.agent_id),
+    running_agents: agents.filter((item) => String(item.status || "").toLowerCase() === "running").map((item) => item.agent_id),
+    queued_agents: agents.filter((item) => String(item.status || "").toLowerCase() === "queued").map((item) => item.agent_id),
+    missing_report_agents: terminalAgents.filter((item) => !item.has_report).map((item) => item.agent_id),
+    missing_done_agents: terminalAgents.filter((item) => !item.has_done).map((item) => item.agent_id)
+  };
+}
+
+function roomHealthTerminalStatus(status) {
+  return ["completed", "failed", "error", "cancelled", "canceled", "skipped", "replaced", "superseded"].includes(String(status || "").toLowerCase());
+}
+
+function roomHealthRunBuckets(runs = []) {
+  const buckets = {};
+  for (const run of Array.isArray(runs) ? runs : []) {
+    const status = String(run?.status || "unknown").toLowerCase();
+    buckets[status] = (buckets[status] || 0) + 1;
+  }
+  return buckets;
+}
+
+function latestRoomRunByAgent(runs = []) {
+  const byAgent = new Map();
+  for (const run of Array.isArray(runs) ? runs : []) {
+    const agentId = run?.agent_id || "";
+    if (!agentId) continue;
+    const existing = byAgent.get(agentId);
+    if (!existing || roomRunSortTime(run) >= roomRunSortTime(existing)) byAgent.set(agentId, run);
+  }
+  return byAgent;
+}
+
+function latestRoomRun(runs = []) {
+  return (Array.isArray(runs) ? runs : []).reduce((latest, run) => {
+    if (!latest) return run;
+    return roomRunSortTime(run) >= roomRunSortTime(latest) ? run : latest;
+  }, null);
+}
+
+function roomRunSortTime(run) {
+  const parsed = Date.parse(run?.completed_at || run?.started_at || run?.created_at || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function roomInspectionRunsById(inspection) {
+  const map = new Map();
+  const analysis = inspection?.analysis || {};
+  const states = {
+    live_running_runs: "live_running",
+    live_queued_runs: "live_queued",
+    stale_queued_runs: "stale_queued",
+    stale_running_runs: "stale_running",
+    orphaned_running_runs: "orphaned_running",
+    other_non_terminal_runs: "other_non_terminal"
+  };
+  for (const [key, state] of Object.entries(states)) {
+    for (const run of Array.isArray(analysis[key]) ? analysis[key] : []) {
+      if (run?.id) map.set(run.id, { ...run, _health_state: state });
+    }
+  }
+  return map;
+}
+
+function roomHealthStaleState(run) {
+  if (!run || !run.id) return "";
+  if (run._health_state) return run._health_state;
+  return "";
+}
+
+function roomRunErrorSummary(run) {
+  if (!run || !isTerminalRunStatus(run.status) || String(run.status || "").toLowerCase() === "completed") return "";
+  return oneLine(run.stderr || run.summary || run.stdout || `run ${run.status}`, 500);
+}
+
+function latestRoomMessageAt(room) {
+  const messages = Array.isArray(room?.messages) ? room.messages : [];
+  return messages.length ? messages[messages.length - 1]?.at || null : null;
+}
+
+function latestRoomReportAt(room) {
+  const reports = Array.isArray(room?.reports) ? room.reports : [];
+  return reports.length ? reports[reports.length - 1]?.at || null : null;
+}
+
+function formatRoomHealth(health) {
+  const room = health?.room || {};
+  const summary = health?.summary || {};
+  const runStatuses = summary.run_statuses || {};
+  const lines = [];
+  lines.push(`Agent Bus room health: ${room.id || "-"}`);
+  lines.push(`Status: ${room.status || "unknown"} (${health?.inspect_summary || "unknown"})`);
+  lines.push(`Agents: ${Array.isArray(room.agents) && room.agents.length ? room.agents.join(", ") : "-"}`);
+  lines.push(`Steps: ${room.steps || 0}/${room.max_steps || 0}`);
+  lines.push(`Runs: queued=${runStatuses.queued || 0} running=${runStatuses.running || 0} completed=${runStatuses.completed || 0} failed=${(runStatuses.failed || 0) + (runStatuses.error || 0)} total=${summary.total_runs || 0}`);
+  lines.push(`Contract: replied=${summary.replied_agents ?? 0}/${summary.expected_agents ?? 0} completed=${summary.completed_agents ?? 0} failed=${summary.failed_agents ?? 0}`);
+  lines.push(`Missing REPORT: ${formatInlineList(summary.missing_report_agents || [])}`);
+  lines.push(`Missing DONE: ${formatInlineList(summary.missing_done_agents || [])}`);
+  if (summary.last_wake_reason) lines.push(`Last wake: ${oneLine(summary.last_wake_reason, 180)}`);
+  lines.push(`Updated: ${room.updated_at || "-"}`);
+  if (Array.isArray(health.agents) && health.agents.length) {
+    lines.push("", "Agents:");
+    for (const agent of health.agents) {
+      const report = agent.has_report ? "REPORT" : "no-REPORT";
+      const done = agent.has_done ? "DONE" : "no-DONE";
+      const duration = Number.isFinite(agent.duration_seconds) ? ` duration=${formatAgeSeconds(agent.duration_seconds)}` : "";
+      const stale = agent.stale_state ? ` ${agent.stale_state}` : "";
+      const wake = agent.wake_reason ? ` wake=${JSON.stringify(oneLine(agent.wake_reason, 100))}` : "";
+      lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${wake}`);
+      if (agent.last_error) lines.push(`  error: ${oneLine(agent.last_error, 180)}`);
+    }
+  }
+  if (Array.isArray(health.operator_hints) && health.operator_hints.length) {
+    lines.push("", "Operator hints:");
+    for (const hint of health.operator_hints) {
+      lines.push(`- ${hint.level || "info"}: ${hint.message || ""}`.trimEnd());
+      if (hint.command) lines.push(`  ${hint.command}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function inspectRoomState(room, {

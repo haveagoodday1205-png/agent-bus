@@ -354,6 +354,7 @@ function agentRuntimeEnv(config, agent, task, messageFile = "") {
   const traceId = String(task.trace_id || "");
   const cacheScope = String(task.cache_scope || "");
   const message = String(task.message || "");
+  const wakeReason = String(task.wake_reason || "");
   const cacheKey = agentCacheKey(agent, task, cacheScope || roomId || threadId || task.run_id || "");
   return {
     AGENT_MESSAGE: envSafeMessage(message),
@@ -363,6 +364,7 @@ function agentRuntimeEnv(config, agent, task, messageFile = "") {
     AGENT_THREAD_ID: threadId,
     AGENT_ROOM_ID: roomId,
     AGENT_TRACE_ID: traceId,
+    AGENT_WAKE_REASON: wakeReason,
     AGENT_CACHE_SCOPE: cacheScope,
     AGENT_CACHE_KEY: cacheKey,
     AGENT_SESSION_ID: cacheKey,

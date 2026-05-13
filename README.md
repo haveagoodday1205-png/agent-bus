@@ -359,6 +359,7 @@ Each edge node sends:
 - `AGENT_RUN_ID`: run id
 - `AGENT_THREAD_ID`: stable thread id when the task belongs to a thread
 - `AGENT_ROOM_ID`: stable room id when the task belongs to a room
+- `AGENT_WAKE_REASON`: why the room or operator woke this agent
 - `AGENT_CACHE_SCOPE`: explicit request cache scope, when supplied by an agent-backed model call
 - `AGENT_CACHE_KEY`: stable per-agent cache key based on the room or thread id
 - `AGENT_SESSION_ID`: same value as `AGENT_CACHE_KEY`, for CLIs that expose session ids
@@ -452,6 +453,7 @@ agent-bus room create \
 agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room memory room_xxx --query "cache decision" --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room expand room_xxx 'messages[7]' --around 1 --gateway https://YOUR-DOMAIN/agent-bus --token ...
+agent-bus room health room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room recover room_xxx --yes --reason "stale queued run recovery" --gateway https://YOUR-DOMAIN/agent-bus --token ...
 agent-bus room pause room_xxx --reason "operator pause" --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -482,7 +484,7 @@ For demos, debugging, and future SDK compatibility work, `room export --format e
 
 For long-running rooms, `agent-bus room memory ROOM_ID` prints the compressed local memory directory, and `agent-bus room expand ROOM_ID 'messages[7]' --around 1` opens an exact source window from the room history. This keeps prompts compact while still letting an operator or agent jump back to the original context.
 
-For old or confusing rooms, start with `agent-bus room inspect ROOM_ID`. It summarizes live running work, live queued work, stale queued snapshots, stale running-heartbeat candidates, and running tasks attached to stale or missing nodes, then prints safe operator actions. Use `--run-heartbeat-stale-seconds` to tune heartbeat-loss classification separately from node freshness and ping URL health. For abandoned queued work, `room recover --yes` pauses the room with a guard; `room pause` remains the explicit operator stop.
+For old or confusing rooms, start with `agent-bus room health ROOM_ID` for an operator snapshot of per-agent run status, REPORT/DONE contract state, last wake reason, and recovery hints. Use `agent-bus room inspect ROOM_ID` when you need the deeper stale/orphan run analysis. It summarizes live running work, live queued work, stale queued snapshots, stale running-heartbeat candidates, and running tasks attached to stale or missing nodes, then prints safe operator actions. Use `--run-heartbeat-stale-seconds` to tune heartbeat-loss classification separately from node freshness and ping URL health. For abandoned queued work, `room recover --yes` pauses the room with a guard; `room pause` remains the explicit operator stop.
 
 ## OpenAI-Compatible Model Router
 

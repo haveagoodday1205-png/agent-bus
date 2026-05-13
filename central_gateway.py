@@ -2701,7 +2701,7 @@ def wake_room_agents(config, room, agent_ids, reason, trace_id=None):
             room.setdefault("reports", []).append({"at": now(), "speaker": "system", "content": "Agent offline or unknown: " + agent_id})
             continue
         message = autonomous_prompt(room, agent, reason)
-        run = create_room_run(config, room, agent, message, trace_id)
+        run = create_room_run(config, room, agent, message, trace_id, reason)
         autonomy["steps"] = steps + 1
         if agent_id in (room.get("agents") or []):
             autonomy["next_index"] = (room.get("agents") or []).index(agent_id) + 1
@@ -2778,6 +2778,7 @@ def compact_room_agent_checklist(checklist):
                 "has_report": item.get("has_report"),
                 "has_done": item.get("has_done"),
                 "duration_seconds": item.get("duration_seconds"),
+                "wake_reason": item.get("wake_reason"),
                 "error": item.get("error"),
             }.items()
             if value not in (None, "", [])
@@ -3219,7 +3220,7 @@ def autonomous_prompt(room, agent, reason):
     return "\n".join(lines)
 
 
-def create_room_run(config, room, agent, message, trace_id=None):
+def create_room_run(config, room, agent, message, trace_id=None, wake_reason=None):
     trace_id = trace_id or room.get("trace_id") or new_trace_id()
     run = {
         "id": "run_" + str(uuid.uuid4()),
@@ -3235,6 +3236,7 @@ def create_room_run(config, room, agent, message, trace_id=None):
         "started_at": None,
         "completed_at": None,
         "message": message,
+        "wake_reason": str(wake_reason or "").strip(),
         "stdout": "",
         "stderr": "",
         "events": [],
@@ -3252,6 +3254,7 @@ def create_room_run(config, room, agent, message, trace_id=None):
         "trace_id": trace_id,
         "agent_id": agent["id"],
         "message": message,
+        "wake_reason": run.get("wake_reason"),
         "created_at": run["created_at"],
     })
     return run
@@ -3765,6 +3768,7 @@ def update_room_agent_checklist(room, run, content=None, actions=None):
         "completed_at": run.get("completed_at"),
         "last_heartbeat_at": run.get("last_heartbeat_at"),
         "duration_seconds": room_run_duration_seconds(run),
+        "wake_reason": run.get("wake_reason"),
         "has_report": counts["report"] > 0,
         "has_done": counts["done"] > 0,
         "report_count": counts["report"],
@@ -3784,7 +3788,7 @@ def update_room_agent_checklist(room, run, content=None, actions=None):
         "run_id", "node_id", "status", "created_at", "started_at", "completed_at",
         "last_heartbeat_at", "duration_seconds", "has_report", "has_done",
         "report_count", "blackboard_count", "done_count", "wake_count",
-        "reminder_count", "summary", "error",
+        "reminder_count", "wake_reason", "summary", "error",
     ):
         agent.pop(key, None)
     agent.update(clean_record)

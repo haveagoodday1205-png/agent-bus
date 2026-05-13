@@ -288,7 +288,19 @@ async function main() {
   assert(failedHealth.agents?.some((item) => item.agent_id === "offline-fail-agent" && item.status === "failed" && /502 Upstream/.test(item.last_error || "")), "CLI room health did not expose failed agent error");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "request_report" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest requesting REPORT from a failed agent");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "recover_failed_agents" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest failed-agent recovery");
-  await runCliJson(["room", "pause", failedFinalRoom.id, "--reason", "offline smoke failed room checked", "--gateway", base, "--token", token]);
+  assert(failedHealth.recovery_actions?.some((item) => item.kind === "recover_failed_agents" && /retry-failed/.test(item.command || "")), "CLI room health did not suggest the guarded failed-agent retry command");
+  const failedRetryDryRun = await runCliJson(["room", "retry-failed", failedFinalRoom.id, "--json", "--gateway", base, "--token", token]);
+  assert(failedRetryDryRun.dry_run === true, "CLI room retry-failed did not default to dry-run");
+  assert(failedRetryDryRun.inspection?.retryable_agents?.includes("offline-fail-agent"), "CLI room retry-failed did not identify the failed agent as retryable");
+  const failedRetry = await runCliJson(["room", "retry-failed", failedFinalRoom.id, "--yes", "--json", "--reason", "offline smoke retry failed agent", "--gateway", base, "--token", token]);
+  assert(failedRetry.executed === true, "CLI room retry-failed --yes did not execute");
+  assert(failedRetry.created_run_ids?.length === 1, "CLI room retry-failed --yes did not create one retry run");
+  const failedRetryRun = await waitForRunTerminal(base, token, failedRetry.created_run_ids[0]);
+  assert(failedRetryRun.status === "failed", "retry failed-agent run did not reach failed terminal status");
+  const failedAfterRetry = await requestJson(`${base}/rooms/${failedFinalRoom.id}`, { headers: authHeaders(token) });
+  assert(failedAfterRetry.runs?.filter((item) => item.agent_id === "offline-fail-agent" && item.status === "failed").length === 2, "failed-agent retry did not preserve both failed attempts");
+  assert(failedAfterRetry.blackboard?.agent_checklist?.agents?.["offline-fail-agent"]?.run_count === 2, "failed-agent retry did not update checklist run count");
+  await runCliJson(["room", "pause", failedAfterRetry.id, "--reason", "offline smoke failed room checked", "--gateway", base, "--token", token]);
 
   if (!edge.killed) edge.kill("SIGTERM");
   await waitForExit(edge);
@@ -575,6 +587,16 @@ async function waitForRoomRunTerminal(base, token, roomId, agentId, timeoutMs = 
     await delay(250);
   }
   throw new Error(`Timed out waiting for terminal run from ${agentId} in room ${roomId}`);
+}
+
+async function waitForRunTerminal(base, token, runId, timeoutMs = 20000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const run = await requestJson(`${base}/runs/${runId}`, { headers: authHeaders(token) });
+    if (["completed", "failed", "error", "cancelled", "canceled"].includes(run.status)) return run;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for terminal run ${runId}`);
 }
 
 async function waitForJson(url, timeoutMs = 10000) {

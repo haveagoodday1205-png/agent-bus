@@ -527,6 +527,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(pause_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "recover":
                     return self.json(recover_room(self.config, parts[1], body))
+                if len(parts) == 3 and parts[2] in ("retry-failed", "retry_failed", "retry"):
+                    return self.json(retry_failed_room_agents(self.config, parts[1], body, self.request_trace_id(body)))
                 if len(parts) == 3 and parts[2] in ("resolve-duplicates", "dedupe", "deduplicate"):
                     return self.json(resolve_duplicate_room_runs(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] in ("supervisor", "supervise"):
@@ -1318,6 +1320,7 @@ def agent_bus_manifest(config):
             "room_memory_expand": "GET /rooms/{room_id}/memory/expand?ref=messages[7]&around=1",
             "room_message": "POST /rooms/{room_id}/messages",
             "room_wake": "POST /rooms/{room_id}/wake",
+            "room_retry_failed": "POST /rooms/{room_id}/retry-failed",
             "room_resolve_duplicates": "POST /rooms/{room_id}/resolve-duplicates",
             "trace": "GET /traces/{trace_id}",
             "models": "GET /v1/models",
@@ -2246,6 +2249,77 @@ def recover_room(config, room_id, body):
     return result
 
 
+def retry_failed_room_agents(config, room_id, body, trace_id=None):
+    room = get_room(config, room_id)
+    dry_run = body_bool(body, "dry_run", "dryRun", default=True)
+    confirm = body_bool(body, "confirm", "yes", default=False)
+    reason = (body.get("reason") or "Retry failed room agents.").strip() or "Retry failed room agents."
+    requested_agents = room_retry_requested_agents(body)
+    inspection = inspect_room_failed_agent_retries(room, requested_agents)
+    result = {
+        "ok": True,
+        "dry_run": dry_run,
+        "executed": False,
+        "room_id": room_id,
+        "action": "retry_failed_room_agents",
+        "reason": reason,
+        "requires_confirmation": True,
+        "inspection": inspection,
+    }
+    if dry_run:
+        return result
+    if not confirm:
+        err = Exception("room retry-failed execution requires confirm=true or yes=true")
+        err.status_code = 409
+        raise err
+    retry_agents = inspection.get("retryable_agents") or []
+    if not retry_agents:
+        result["refusal_reason"] = "No failed room agents are safe to retry."
+        result["requires_operator_inspection"] = True
+        return result
+    retry_at = now()
+    autonomy = room.setdefault("autonomy", {})
+    steps = int(autonomy.get("steps") or 0)
+    max_steps = int(autonomy.get("max_steps") or 0)
+    if max_steps > 0 and steps + len(retry_agents) > max_steps:
+        autonomy["max_steps"] = steps + len(retry_agents)
+    room["status"] = "active"
+    room.setdefault("messages", []).append({
+        "speaker": "system",
+        "role": "system",
+        "content": room_failed_retry_message(reason, inspection),
+        "trace_id": trace_id or room.get("trace_id") or new_trace_id(),
+        "at": retry_at,
+    })
+    retry_reason = room_failed_retry_reason(reason, inspection)
+    created_runs = wake_room_agents(config, room, retry_agents, retry_reason, trace_id or room.get("trace_id"))
+    room.setdefault("operations", {}).setdefault("failed_retries", []).append({
+        "at": retry_at,
+        "reason": reason,
+        "agents": retry_agents,
+        "created_run_ids": [run.get("id") for run in created_runs if run.get("id")],
+        "source_failed_run_ids": inspection.get("failed_run_ids") or [],
+    })
+    room.setdefault("reports", []).append({
+        "at": retry_at,
+        "speaker": "system",
+        "content": "Retrying failed room agents: " + ", ".join(retry_agents),
+        "agents": retry_agents,
+        "created_run_ids": [run.get("id") for run in created_runs if run.get("id")],
+    })
+    write_room(config, room)
+    result["dry_run"] = False
+    result["executed"] = bool(created_runs)
+    result["created_runs"] = [room_recovery_run_record(room, run) for run in created_runs]
+    result["created_run_ids"] = [run.get("id") for run in created_runs if run.get("id")]
+    result["room"] = room
+    result["inspection_after"] = inspect_room_failed_agent_retries(room, requested_agents)
+    if not created_runs:
+        result["requires_operator_inspection"] = True
+        result["refusal_reason"] = "Retry was confirmed, but no retry run was created."
+    return result
+
+
 def resolve_duplicate_room_runs(config, room_id, body):
     room = get_room(config, room_id)
     dry_run = body_bool(body, "dry_run", "dryRun", default=True)
@@ -2778,6 +2852,129 @@ def room_recovery_run_record(room, run):
     item["room_id"] = run.get("room_id") or room.get("id")
     item["age_seconds"] = run_age_seconds(run)
     return item
+
+
+def inspect_room_failed_agent_retries(room, requested_agents=None):
+    requested_agents = [agent_id for agent_id in (requested_agents or []) if agent_id]
+    expected_agents = [agent_id for agent_id in (room.get("agents") or []) if agent_id]
+    scope_agents = requested_agents or expected_agents
+    active_by_agent = {}
+    latest_by_agent = {}
+    for index, run in enumerate(room.get("runs") or []):
+        agent_id = run.get("agent_id")
+        if not agent_id:
+            continue
+        if run_is_active_for_room(run):
+            active_by_agent.setdefault(agent_id, []).append(run)
+        current = latest_by_agent.get(agent_id)
+        if current is None or room_run_order_key(room, run, index) > room_run_order_key(room, current):
+            latest_by_agent[agent_id] = run
+    agent_registry = {agent.get("id"): agent for agent in public_agents() if agent.get("id")}
+    failed_statuses = {"failed", "error"}
+    retryable = []
+    failed_run_ids = []
+    groups = []
+    blocked_active = []
+    unavailable = []
+    not_failed = []
+    unknown = []
+    for agent_id in scope_agents:
+        latest = latest_by_agent.get(agent_id)
+        active = active_by_agent.get(agent_id) or []
+        registered = agent_registry.get(agent_id)
+        latest_status = run_status(latest)
+        item = {
+            "agent_id": agent_id,
+            "latest_run_id": latest.get("id") if latest else "",
+            "latest_status": latest_status or "missing",
+            "latest_error": room_run_contract_error(latest or {}, latest.get("stderr") or latest.get("summary") if latest else ""),
+            "active_run_ids": [run.get("id") for run in active if run.get("id")],
+            "agent_status": registered.get("status") if registered else "unknown",
+            "node_id": registered.get("node_id") if registered else "",
+        }
+        if agent_id not in expected_agents:
+            unknown.append(agent_id)
+            item["retryable"] = False
+            item["blocked_reason"] = "agent_not_in_room"
+        elif not latest:
+            not_failed.append(agent_id)
+            item["retryable"] = False
+            item["blocked_reason"] = "no_room_run"
+        elif active:
+            blocked_active.append(agent_id)
+            item["retryable"] = False
+            item["blocked_reason"] = "agent_has_active_run"
+        elif latest_status not in failed_statuses:
+            not_failed.append(agent_id)
+            item["retryable"] = False
+            item["blocked_reason"] = "latest_run_not_failed"
+        elif not registered or registered.get("status") != "online":
+            unavailable.append(agent_id)
+            item["retryable"] = False
+            item["blocked_reason"] = "agent_not_online"
+            failed_run_ids.append(latest.get("id"))
+        else:
+            retryable.append(agent_id)
+            failed_run_ids.append(latest.get("id"))
+            item["retryable"] = True
+        groups.append(item)
+    failed_agents = [
+        agent_id
+        for agent_id, run in latest_by_agent.items()
+        if agent_id in expected_agents and run_status(run) in failed_statuses
+    ]
+    return {
+        "object": "agent_bus.room_failed_agent_retries",
+        "room_id": room.get("id"),
+        "room_status": room.get("status"),
+        "requested_agents": requested_agents,
+        "failed_agents": failed_agents,
+        "retryable_agents": retryable,
+        "failed_run_ids": [run_id for run_id in failed_run_ids if run_id],
+        "blocked_active_agents": blocked_active,
+        "unavailable_agents": unavailable,
+        "not_failed_agents": not_failed,
+        "unknown_agents": unknown,
+        "groups": groups,
+        "recommendation": "retry_failed_agents" if retryable else "inspect_failed_agents" if failed_agents else "none",
+    }
+
+
+def room_retry_requested_agents(body):
+    agents = body.get("agents")
+    if agents is None and body.get("agent"):
+        agents = [body.get("agent")]
+    if isinstance(agents, str):
+        agents = [item.strip() for item in agents.split(",")]
+    if not isinstance(agents, list):
+        return []
+    return [str(agent_id).strip() for agent_id in agents if str(agent_id).strip()]
+
+
+def room_failed_retry_message(reason, inspection):
+    lines = ["Retry failed room agents: " + reason]
+    for group in inspection.get("groups") or []:
+        if not group.get("retryable"):
+            continue
+        detail = f"- {group.get('agent_id')}: retrying failed run {group.get('latest_run_id') or '-'}"
+        if group.get("latest_error"):
+            detail += f" ({group.get('latest_error')})"
+        lines.append(detail)
+    return "\n".join(lines)
+
+
+def room_failed_retry_reason(reason, inspection):
+    details = []
+    for group in inspection.get("groups") or []:
+        if not group.get("retryable"):
+            continue
+        detail = f"{group.get('agent_id')} failed run {group.get('latest_run_id') or '-'}"
+        if group.get("latest_error"):
+            detail += f": {group.get('latest_error')}"
+        details.append(detail)
+    if not details:
+        return reason
+    return reason + "\nPrevious failure context:\n" + "\n".join("- " + detail for detail in details)
 
 
 def inspect_room_duplicate_active_runs(room):

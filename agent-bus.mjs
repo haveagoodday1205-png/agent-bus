@@ -231,6 +231,7 @@ Usage:
   agent-bus room replay --in room-events.json --format markdown [--strict]
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
+  agent-bus room retry-failed room_xxx [--yes] --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room recover room_xxx --yes --reason "stale queued run recovery"
   agent-bus room resolve-duplicates room_xxx [--yes] --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room supervisor room_xxx [--yes] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
@@ -2617,6 +2618,25 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/pause`, { auth: true, args, method: "POST", body }));
   }
+  if (action === "retry-failed" || action === "retry_failed" || action === "retry") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const agents = csvOption(args, "--agents");
+    const singleAgent = optionValue(args, "--agent");
+    const yes = args.includes("--yes");
+    const reason = optionValue(args, "--reason") || optionValue(args, "--message") || "Retry failed room agents.";
+    const body = {
+      dry_run: !yes,
+      confirm: yes,
+      yes,
+      reason,
+      ...(agents.length ? { agents } : {}),
+      ...(singleAgent ? { agent: singleAgent } : {})
+    };
+    const result = await gatewayJson(`/rooms/${pathPart(roomId)}/retry-failed`, { auth: true, args, method: "POST", body });
+    if (args.includes("--json")) return printJson(result);
+    process.stdout.write(formatRoomFailedRetryResult(result, { roomId, reason }));
+    return;
+  }
   if (action === "recover") {
     const roomId = requiredPositional(args, 1, "room id");
     const queuedRunStaleSeconds = positiveIntegerOption(optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS, 21600, 604800);
@@ -2699,7 +2719,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|export|replay|create|wake|pause|recover|resolve-duplicates|supervisor|message [options]");
+  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
 }
 
 function formatRoomMemory(value, options = {}) {
@@ -2878,6 +2898,41 @@ function formatRoomRecoveryResult(result, { roomId, queuedRunStaleSeconds = 2160
   }
   const count = Array.isArray(result?.cancelled_queued_runs) ? result.cancelled_queued_runs.length : 0;
   lines.push(`Recovered room ${roomId}: paused and cancelled ${count} queued run${count === 1 ? "" : "s"}. Use room export before creating a follow-up room if work should continue.`);
+  return `${lines.join("\n").trimStart()}\n`;
+}
+
+function formatRoomFailedRetryResult(result, { roomId, reason = "Retry failed room agents." } = {}) {
+  const inspection = result?.inspection || {};
+  const lines = [];
+  lines.push(`Room failed-agent retry: ${roomId}`);
+  lines.push(`Recommendation: ${inspection.recommendation || "unknown"}`);
+  lines.push(`Failed agents: ${formatInlineList(inspection.failed_agents || [])}`);
+  lines.push(`Retryable agents: ${formatInlineList(inspection.retryable_agents || [])}`);
+  if (Array.isArray(inspection.groups) && inspection.groups.length) {
+    lines.push("", "Agents:");
+    for (const group of inspection.groups) {
+      const state = group.retryable ? "retryable" : (group.blocked_reason || "blocked");
+      const error = group.latest_error ? ` error=${oneLine(group.latest_error, 100)}` : "";
+      lines.push(`- ${group.agent_id || "-"}: ${state} latest=${group.latest_run_id || "-"} status=${group.latest_status || "unknown"}${error}`);
+    }
+  }
+  if (result?.dry_run !== false) {
+    lines.push("");
+    lines.push("Dry run. Server-side retry did not create new room runs.");
+    if (Array.isArray(inspection.retryable_agents) && inspection.retryable_agents.length) {
+      lines.push(`To retry failed agents: agent-bus room retry-failed ${roomId} --yes --reason ${JSON.stringify(reason)}`);
+    } else {
+      lines.push("No failed online agent is safe to retry automatically.");
+    }
+    return `${lines.join("\n")}\n`;
+  }
+  if (result?.executed) {
+    const count = Array.isArray(result?.created_run_ids) ? result.created_run_ids.length : 0;
+    lines.push(`Retried failed agents: created ${count} room run${count === 1 ? "" : "s"}.`);
+  } else {
+    lines.push("Failed-agent retry did not execute a room change.");
+    if (result?.refusal_reason) lines.push(result.refusal_reason);
+  }
   return `${lines.join("\n").trimStart()}\n`;
 }
 
@@ -3156,8 +3211,8 @@ function roomHealthRecoveryActions(room, agents, inspection) {
       kind: "recover_failed_agents",
       level: "warn",
       agents: failedAgents,
-      message: "One or more agents failed. Inspect the trace or wake only the failed agents with the latest failure context.",
-      command: `agent-bus room wake ${roomId} --agents ${failedAgents.join(",")} --reason ${JSON.stringify("Recover from your failed run. Start with a short REPORT explaining the failure, then continue only if recovery is safe.")}`
+      message: "One or more agents failed. Use the guarded retry command to re-open the room and wake only failed online agents with the latest failure context.",
+      command: `agent-bus room retry-failed ${roomId} --agents ${failedAgents.join(",")}`
     });
   }
   if (staleAgents.length) {

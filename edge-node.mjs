@@ -70,6 +70,7 @@ function loadConfig(file) {
   config.completeRetryAttempts ||= 5;
   config.completeRetryBaseDelayMs ||= 2000;
   config.agents ||= [];
+  config.edgeSessionId = process.env.AGENT_BUS_EDGE_SESSION_ID || `edge_session_${Date.now().toString(36)}_${crypto.randomUUID()}`;
   config._agentHealth = {};
   config._nextHealthProbeAt = 0;
   return config;
@@ -122,6 +123,7 @@ async function connectLoop(config, options = {}) {
       await refreshAgentHealth(config);
       const payload = await postJson(config, "/edge/poll", {
         node_id: config.nodeId,
+        edge_session_id: config.edgeSessionId,
         timeout_ms: config.pollTimeoutMs,
         agents: publicAgents(config)
       });
@@ -151,6 +153,7 @@ async function register(config) {
   await refreshAgentHealth(config, { force: true });
   return postJson(config, "/edge/register", {
     node_id: config.nodeId,
+    edge_session_id: config.edgeSessionId,
     hostname: os.hostname(),
     version: "0.1.0",
     agents: publicAgents(config)
@@ -369,7 +372,8 @@ function agentRuntimeEnv(config, agent, task, messageFile = "") {
     AGENT_CACHE_KEY: cacheKey,
     AGENT_SESSION_ID: cacheKey,
     AGENT_ID: agent.id,
-    EDGE_NODE_ID: config.nodeId
+    EDGE_NODE_ID: config.nodeId,
+    EDGE_SESSION_ID: config.edgeSessionId
   };
 }
 
@@ -518,6 +522,7 @@ function spawnCommand(config, agent, task, commandText, options = {}) {
 async function event(config, task, payload) {
   return postJson(config, "/edge/events", {
     node_id: config.nodeId,
+    edge_session_id: config.edgeSessionId,
     run_id: task.run_id,
     trace_id: task.trace_id || "",
     event: payload
@@ -527,6 +532,7 @@ async function event(config, task, payload) {
 async function complete(config, task, result) {
   const body = {
     node_id: config.nodeId,
+    edge_session_id: config.edgeSessionId,
     run_id: task.run_id,
     trace_id: task.trace_id || "",
     result

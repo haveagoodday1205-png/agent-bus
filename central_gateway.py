@@ -740,15 +740,29 @@ def register_node(config, body):
         raise err
     agents = normalize_agents(node_id, body.get("agents") or [])
     old = STATE["nodes"].get(node_id, {})
+    now_text = now()
+    edge_session_id = normalize_edge_session_id(body.get("edge_session_id") or body.get("edgeSessionId") or old.get("edge_session_id"))
+    previous_edge_session_id = normalize_edge_session_id(old.get("edge_session_id"))
+    session_changed = bool(old and edge_session_id and previous_edge_session_id and edge_session_id != previous_edge_session_id)
     node = {
         "node_id": node_id,
         "hostname": body.get("hostname"),
         "version": body.get("version"),
         "status": "online",
-        "registered_at": old.get("registered_at") or now(),
-        "last_seen_at": now(),
+        "registered_at": old.get("registered_at") or now_text,
+        "last_seen_at": now_text,
         "agents": agents,
     }
+    if edge_session_id:
+        node["edge_session_id"] = edge_session_id
+    if session_changed:
+        node["previous_edge_session_id"] = previous_edge_session_id
+        node["reconnected_at"] = now_text
+        node["restart_count"] = int(old.get("restart_count") or 0) + 1
+    else:
+        for key in ("previous_edge_session_id", "reconnected_at", "restart_count"):
+            if old.get(key) not in (None, "", []):
+                node[key] = old.get(key)
     STATE["nodes"][node_id] = node
     STATE["queues"].setdefault(node_id, [])
     STATE["conditions"].setdefault(node_id, threading.Condition())
@@ -759,8 +773,16 @@ def register_node(config, body):
         "agents": [agent.get("id") for agent in agents],
         "agent_count": len(agents),
         "was_registered": bool(old),
+        "edge_session_changed": session_changed,
     })
     return node
+
+
+def normalize_edge_session_id(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"[^A-Za-z0-9_.:-]+", "_", text)[:160]
 
 
 def normalize_agents(node_id, agents):
@@ -799,13 +821,17 @@ def public_registered_nodes():
 
 
 def public_node(node):
-    return {
+    item = {
         "node_id": node.get("node_id"),
         "hostname": node.get("hostname"),
         "status": node.get("status"),
         "last_seen_at": node.get("last_seen_at"),
         "agents": [public_node_agent(agent) for agent in node.get("agents", [])],
     }
+    for key in ("edge_session_id", "previous_edge_session_id", "reconnected_at", "restart_count"):
+        if node.get(key) not in (None, "", []):
+            item[key] = node.get(key)
+    return item
 
 
 def public_node_agent(agent):
@@ -2494,6 +2520,8 @@ def supervisor_run_record(room, run, node_by_id, node_lookup_available, node_sta
         "room_id": run.get("room_id") or room.get("id"),
         "agent_id": agent_id,
         "node_id": node_id,
+        "edge_session_id": run.get("edge_session_id") or (run.get("lease") or {}).get("edge_session_id"),
+        "lease_state": (run.get("lease") or {}).get("state"),
         "status": run.get("status") or "queued",
         "created_at": run.get("created_at"),
         "started_at": run.get("started_at"),
@@ -3440,6 +3468,8 @@ def poll_node(config, body, timeout_ms):
     node = STATE["nodes"][node_id]
     node["last_seen_at"] = now()
     node["status"] = "online"
+    if update_node_edge_session(node, body.get("edge_session_id") or body.get("edgeSessionId")):
+        append_jsonl(config, "nodes.jsonl", node)
     if "agents" in body:
         node["agents"] = merge_agent_updates(node_id, node.get("agents") or [], body.get("agents") or [])
     queue = STATE["queues"].setdefault(node_id, [])
@@ -3453,12 +3483,28 @@ def poll_node(config, body, timeout_ms):
     return {"type": "idle"}
 
 
-def touch_node_seen(node_id):
+def update_node_edge_session(node, edge_session_id):
+    edge_session_id = normalize_edge_session_id(edge_session_id)
+    if not node or not edge_session_id:
+        return False
+    old_session_id = normalize_edge_session_id(node.get("edge_session_id"))
+    if old_session_id == edge_session_id:
+        return False
+    if old_session_id:
+        node["previous_edge_session_id"] = old_session_id
+        node["reconnected_at"] = now()
+        node["restart_count"] = int(node.get("restart_count") or 0) + 1
+    node["edge_session_id"] = edge_session_id
+    return True
+
+
+def touch_node_seen(node_id, edge_session_id=None):
     node = STATE["nodes"].get(node_id)
     if not node:
-        return
+        return False
     node["last_seen_at"] = now()
     node["status"] = "online"
+    return update_node_edge_session(node, edge_session_id)
 
 
 def merge_agent_updates(node_id, current, updates):
@@ -3470,12 +3516,39 @@ def merge_agent_updates(node_id, current, updates):
     return list(by_id.values())
 
 
+def update_run_lease(run, event, state):
+    if not isinstance(run, dict):
+        return
+    edge_session_id = normalize_edge_session_id(event.get("edge_session_id") or run.get("edge_session_id"))
+    if edge_session_id:
+        run["edge_session_id"] = edge_session_id
+    lease = dict(run.get("lease") or {})
+    lease["state"] = state
+    lease["node_id"] = event.get("node_id") or run.get("node_id") or lease.get("node_id")
+    if edge_session_id:
+        lease["edge_session_id"] = edge_session_id
+    if state == "acquired":
+        lease["acquired_at"] = lease.get("acquired_at") or event.get("at")
+    if state in ("acquired", "heartbeat"):
+        lease["last_heartbeat_at"] = event.get("at") or lease.get("last_heartbeat_at")
+    if state == "released":
+        lease["released_at"] = event.get("at") or now()
+        lease["terminal_status"] = run.get("status")
+    run["lease"] = {key: value for key, value in lease.items() if value not in (None, "", [])}
+
+
 def record_event(config, body):
     run = STATE["runs"].get(body.get("run_id")) or read_snapshot(config, "runs", body.get("run_id"))
     if not run:
         return
-    touch_node_seen(body.get("node_id") or run.get("node_id"))
+    edge_session_id = normalize_edge_session_id(body.get("edge_session_id") or body.get("edgeSessionId"))
+    if touch_node_seen(body.get("node_id") or run.get("node_id"), edge_session_id):
+        node = STATE["nodes"].get(body.get("node_id") or run.get("node_id"))
+        if node:
+            append_jsonl(config, "nodes.jsonl", node)
     event = {"at": now(), "node_id": body.get("node_id") or run.get("node_id"), **(body.get("event") or {})}
+    if edge_session_id:
+        event["edge_session_id"] = edge_session_id
     event["trace_id"] = sanitize_trace_id(body.get("trace_id") or event.get("trace_id") or run.get("trace_id"))
     if event["trace_id"] and not run.get("trace_id"):
         run["trace_id"] = event["trace_id"]
@@ -3492,8 +3565,10 @@ def record_event(config, body):
         run["status"] = "running"
         run["started_at"] = run.get("started_at") or event["at"]
         run["last_heartbeat_at"] = run.get("last_heartbeat_at") or event["at"]
+        update_run_lease(run, event, "acquired")
     if event.get("type") in ("run.heartbeat", "run.progress") or event.get("stream") in ("stdout", "stderr"):
         run["last_heartbeat_at"] = event["at"]
+        update_run_lease(run, event, "heartbeat")
     if event.get("stream") == "stdout" and event.get("text"):
         run["stdout"] = run.get("stdout", "") + event["text"]
     if event.get("stream") == "stderr" and event.get("text"):
@@ -3535,7 +3610,11 @@ def complete_run(config, body):
             err = Exception("unknown run_id")
             err.status_code = 404
             raise err
-        touch_node_seen(body.get("node_id") or run.get("node_id"))
+        edge_session_id = normalize_edge_session_id(body.get("edge_session_id") or body.get("edgeSessionId"))
+        if touch_node_seen(body.get("node_id") or run.get("node_id"), edge_session_id):
+            node = STATE["nodes"].get(body.get("node_id") or run.get("node_id"))
+            if node:
+                append_jsonl(config, "nodes.jsonl", node)
         STATE["runs"][run["id"]] = run
         if run_is_terminal(run):
             if stored_completion_state(run) == requested_completion_state(run, body):
@@ -3556,6 +3635,13 @@ def complete_run(config, body):
         run["stdout"] = completion["stdout"]
         run["stderr"] = completion["stderr"]
         run["summary"] = completion["summary"]
+        if edge_session_id and not run.get("edge_session_id"):
+            run["edge_session_id"] = edge_session_id
+        update_run_lease(run, {
+            "at": run["completed_at"],
+            "node_id": body.get("node_id") or run.get("node_id"),
+            "edge_session_id": edge_session_id or run.get("edge_session_id"),
+        }, "released")
         update_agent_run_health(run)
         STATE["runs"][run["id"]] = run
         write_snapshot(config, "runs", run["id"], run)

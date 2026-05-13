@@ -57,7 +57,7 @@ async function main() {
     }
   }, null, 2)}\n`);
 
-  fs.writeFileSync(agentScript, `const room = process.env.AGENT_ROOM_ID || "";\nconst cache = process.env.AGENT_CACHE_KEY || "";\nconst wake = process.env.AGENT_WAKE_REASON || "";\nconsole.log("REPORT: offline smoke run completed for " + room);\nconsole.log("BLACKBOARD: cache key " + cache);\nconsole.log("BLACKBOARD: wake reason " + wake);\nconsole.log("BLACKBOARD: fake token=sk-test-secret-000000000000000000");\nconsole.log("DONE");\n`);
+  fs.writeFileSync(agentScript, `const room = process.env.AGENT_ROOM_ID || "";\nconst cache = process.env.AGENT_CACHE_KEY || "";\nconst wake = process.env.AGENT_WAKE_REASON || "";\nconst edgeSession = process.env.EDGE_SESSION_ID || "";\nconsole.log("REPORT: offline smoke run completed for " + room);\nconsole.log("BLACKBOARD: cache key " + cache);\nconsole.log("BLACKBOARD: wake reason " + wake);\nconsole.log("BLACKBOARD: edge session " + edgeSession);\nconsole.log("BLACKBOARD: fake token=sk-test-secret-000000000000000000");\nconsole.log("DONE");\n`);
   fs.writeFileSync(failAgentScript, `console.error("API Error: 502 Upstream request failed in offline smoke");\nprocess.exit(1);\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
@@ -151,10 +151,14 @@ async function main() {
   const run = finalRoom.runs?.find((item) => item.agent_id === "offline-agent");
   assert(run?.status === "completed", "offline room run did not complete");
   assert(run?.wake_reason === "Initial room wake.", "offline room run did not persist the wake reason");
+  assert(/^edge_session_/.test(run?.edge_session_id || ""), "offline room run did not persist edge_session_id");
+  assert(run?.lease?.state === "released", "offline room run did not release its run lease");
+  assert(run?.lease?.edge_session_id === run?.edge_session_id, "offline room lease did not track the edge session");
   assert(finalRoom.status === "completed", "offline room did not complete after DONE");
   assert(finalRoom.reports?.some((item) => /offline smoke run completed/.test(item.content || "")), "REPORT directive was not captured");
   assert(finalRoom.blackboard?.notes?.some((item) => /cache key agent-bus-offline-agent/.test(item.content || "")), "BLACKBOARD directive was not captured");
   assert(finalRoom.blackboard?.notes?.some((item) => /wake reason Initial room wake\./.test(item.content || "")), "AGENT_WAKE_REASON was not exposed to the command adapter");
+  assert(finalRoom.blackboard?.notes?.some((item) => /edge session edge_session_/.test(item.content || "")), "EDGE_SESSION_ID was not exposed to the command adapter");
   assert((run.stdout || "").includes("DONE"), "agent stdout did not include DONE");
   const checklist = finalRoom.blackboard?.agent_checklist;
   const checklistAgent = checklist?.agents?.["offline-agent"];
@@ -175,7 +179,7 @@ async function main() {
   assert(cliRoomHealth.room?.id === finalRoom.id, "CLI room health returned the wrong room");
   assert(cliRoomHealth.summary?.completed_agents === 1, "CLI room health did not include completed agent count");
   assert(cliRoomHealth.summary?.last_wake_reason === "Initial room wake.", "CLI room health did not expose the last wake reason");
-  assert(cliRoomHealth.agents?.some((item) => item.agent_id === "offline-agent" && item.has_report === true && item.has_done === true && item.wake_reason === "Initial room wake."), "CLI room health did not expose agent contract status");
+  assert(cliRoomHealth.agents?.some((item) => item.agent_id === "offline-agent" && item.has_report === true && item.has_done === true && item.wake_reason === "Initial room wake." && /^edge_session_/.test(item.edge_session_id || "") && item.lease_state === "released"), "CLI room health did not expose agent contract and lease status");
   assert(cliRoomHealth.recovery_actions?.some((item) => item.kind === "archive_completed_room"), "CLI room health did not suggest archiving a completed room");
   const cliRoomHealthText = await runCliText(["room", "health", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliRoomHealthText.includes("Agent Bus room health:"), "CLI room health text did not render a title");
@@ -186,6 +190,7 @@ async function main() {
   assert(Array.isArray(cliRooms) && cliRooms.some((item) => item.id === finalRoom.id), "CLI room list did not include the smoke room");
   const cliNodes = await runCliJson(["nodes", "--gateway", base, "--token", token]);
   assert(Array.isArray(cliNodes) && cliNodes.some((item) => item.node_id === "offline-smoke-node"), "CLI nodes did not include the smoke node");
+  assert(cliNodes.some((item) => item.node_id === "offline-smoke-node" && /^edge_session_/.test(item.edge_session_id || "")), "CLI nodes did not expose edge_session_id");
   const cliStatus = await runCliJson(["status", "--json", "--gateway", base, "--token", token]);
   assert(cliStatus.ok === true, "CLI status did not report ok=true");
   assert(cliStatus.summary?.online_agents === 2, "CLI status did not count both online smoke agents");
@@ -316,6 +321,15 @@ async function main() {
   const pausedAfterWake = await runCliJson(["room", "wake", pauseRoom.id, "--agent", "offline-agent", "--gateway", base, "--token", token]);
   assert(pausedAfterWake.status === "paused", "CLI room wake should leave a paused room paused");
   assert((pausedAfterWake.runs || []).length === 1, "CLI room wake should not create a new run for a paused room");
+
+  const restartedEdge = start(process.execPath, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
+    AGENT_BUS_CONFIG: edgeConfig
+  });
+  const reconnectedNode = await waitForNodeReconnect(base, token, "offline-smoke-node");
+  assert((reconnectedNode?.restart_count || 0) >= 1, "edge reconnect did not increment restart_count");
+  assert(/^edge_session_/.test(reconnectedNode?.previous_edge_session_id || ""), "edge reconnect did not preserve previous_edge_session_id");
+  assert(/^edge_session_/.test(reconnectedNode?.edge_session_id || ""), "edge reconnect did not expose the current edge_session_id");
+  if (!restartedEdge.killed) restartedEdge.kill("SIGTERM");
 
   const result = {
     ok: true,
@@ -495,6 +509,17 @@ async function waitForAgent(base, token, agentId, timeoutMs = 10000) {
     await delay(250);
   }
   throw new Error(`Timed out waiting for agent ${agentId}`);
+}
+
+async function waitForNodeReconnect(base, token, nodeId, timeoutMs = 10000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const nodes = await requestJson(`${base}/nodes`, { headers: authHeaders(token) });
+    const node = nodes.find((item) => item.node_id === nodeId);
+    if ((node?.restart_count || 0) >= 1 && node?.previous_edge_session_id && node?.edge_session_id) return node;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for node reconnect ${nodeId}`);
 }
 
 async function waitForRoomComplete(base, token, roomId, timeoutMs = 20000) {

@@ -2931,6 +2931,8 @@ function roomHealthSummary(room, {
       status: checklistItem.status || run.status || "missing",
       run_id: checklistItem.run_id || run.id || "",
       node_id: run.node_id || checklistItem.node_id || inspectRun.node_id || "",
+      edge_session_id: run.edge_session_id || run.lease?.edge_session_id || inspectRun.edge_session_id || "",
+      lease_state: run.lease?.state || inspectRun.lease_state || "",
       has_report: contract.has_report,
       has_done: contract.has_done,
       duration_seconds: checklistItem.duration_seconds ?? null,
@@ -3212,8 +3214,10 @@ function formatRoomHealth(health) {
       const done = agent.has_done ? "DONE" : "no-DONE";
       const duration = Number.isFinite(agent.duration_seconds) ? ` duration=${formatAgeSeconds(agent.duration_seconds)}` : "";
       const stale = agent.stale_state ? ` ${agent.stale_state}` : "";
+      const lease = agent.lease_state ? ` lease=${agent.lease_state}` : "";
+      const edgeSession = agent.edge_session_id ? ` edge_session=${oneLine(agent.edge_session_id, 36)}` : "";
       const wake = agent.wake_reason ? ` wake=${JSON.stringify(oneLine(agent.wake_reason, 100))}` : "";
-      lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${wake}`);
+      lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${lease}${edgeSession}${wake}`);
       if (agent.last_error) lines.push(`  error: ${oneLine(agent.last_error, 180)}`);
     }
   }
@@ -3383,6 +3387,8 @@ function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailabl
     room_id: rawRun?.room_id || rawRun?.thread_id || "",
     agent_id: agentId,
     node_id: nodeId,
+    edge_session_id: rawRun?.edge_session_id || rawRun?.lease?.edge_session_id || "",
+    lease_state: rawRun?.lease?.state || "",
     status: rawRun?.status || "queued",
     created_at: rawRun?.created_at || null,
     started_at: rawRun?.started_at || null,
@@ -3663,10 +3669,12 @@ function appendRoomInspectionRuns(lines, label, runs) {
     const heartbeatEvery = positiveHeartbeatIntervalMs(run.run_heartbeat_interval_ms)
       ? ` heartbeat_every=${formatHeartbeatCadence(run.run_heartbeat_interval_ms)}`
       : "";
+    const lease = run.lease_state ? ` lease=${run.lease_state}` : "";
+    const edgeSession = run.edge_session_id ? ` edge_session=${oneLine(run.edge_session_id, 36)}` : "";
     const nodeNote = run.node_freshness && run.node_freshness !== "unchecked"
       ? ` node=${run.node_id || "-"} (${run.node_freshness})`
       : ` node=${run.node_id || "-"}`;
-    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age}${heartbeat}${heartbeatAt}${heartbeatEvery} created=${run.created_at || "-"}`);
+    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age}${heartbeat}${heartbeatAt}${heartbeatEvery}${lease}${edgeSession} created=${run.created_at || "-"}`);
   }
 }
 
@@ -5184,6 +5192,8 @@ function statusRunRecord(rawRun, roomId, {
     room_id: rawRun?.room_id || roomId,
     agent_id: agentId,
     node_id: nodeId,
+    edge_session_id: rawRun?.edge_session_id || rawRun?.lease?.edge_session_id || "",
+    lease_state: rawRun?.lease?.state || "",
     status: rawRun?.status || "queued",
     created_at: rawRun?.created_at || null,
     started_at: rawRun?.started_at || null,

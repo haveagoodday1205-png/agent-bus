@@ -51,6 +51,7 @@ def load_config(config_path):
     config["completeRetryAttempts"] = int(config.get("completeRetryAttempts", 5))
     config["completeRetryBaseDelayMs"] = int(config.get("completeRetryBaseDelayMs", 2000))
     config.setdefault("agents", [])
+    config["edgeSessionId"] = os.environ.get("AGENT_BUS_EDGE_SESSION_ID") or f"edge_session_{int(time.time() * 1000):x}_{uuid.uuid4()}"
     config["_agentHealth"] = {}
     config["_nextHealthProbeAt"] = 0
     return config
@@ -98,6 +99,7 @@ def connect(config, once=False):
             refresh_agent_health(config)
             payload = post(config, "/edge/poll", {
                 "node_id": config["nodeId"],
+                "edge_session_id": config["edgeSessionId"],
                 "timeout_ms": config["pollTimeoutMs"],
                 "agents": public_agents(config),
             })
@@ -134,6 +136,7 @@ def register(config):
     refresh_agent_health(config, force=True)
     return post(config, "/edge/register", {
         "node_id": config["nodeId"],
+        "edge_session_id": config["edgeSessionId"],
         "hostname": socket.gethostname(),
         "version": "0.1.0-py",
         "agents": public_agents(config),
@@ -335,6 +338,7 @@ def agent_runtime_env(config, agent, task, message_file=""):
         "AGENT_SESSION_ID": cache_key,
         "AGENT_ID": agent["id"],
         "EDGE_NODE_ID": config["nodeId"],
+        "EDGE_SESSION_ID": config["edgeSessionId"],
     }
 
 
@@ -427,11 +431,11 @@ def run_command(config, agent, task, command, emit=True):
 
 
 def event(config, task, payload):
-    return post(config, "/edge/events", {"node_id": config["nodeId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "event": payload})
+    return post(config, "/edge/events", {"node_id": config["nodeId"], "edge_session_id": config["edgeSessionId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "event": payload})
 
 
 def complete(config, task, result):
-    body = {"node_id": config["nodeId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "result": result}
+    body = {"node_id": config["nodeId"], "edge_session_id": config["edgeSessionId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "result": result}
     attempts = max(1, int(config.get("completeRetryAttempts", 5) or 5))
     base_delay = max(100, int(config.get("completeRetryBaseDelayMs", 2000) or 2000))
     last_exc = None

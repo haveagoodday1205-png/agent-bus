@@ -61,6 +61,7 @@ async function main() {
     'console.log("REPORT: python edge heartbeat kept the node fresh during a long run.");',
     'console.log("BLACKBOARD: python edge now emits run heartbeats during long tasks.");',
     'console.log("BLACKBOARD: wake reason " + (process.env.AGENT_WAKE_REASON || ""));',
+    'console.log("BLACKBOARD: edge session " + (process.env.EDGE_SESSION_ID || ""));',
     'console.log("DONE");'
   ].join("\n"));
 
@@ -139,12 +140,15 @@ async function main() {
   step("Waiting for completion");
   const completed = await waitForRoomComplete(gateway, token, room.id, 15000);
   assert(completed.status === "completed", "room did not complete after the long python edge run");
+  const completedRun = completed.runs?.find((run) => run.id === runId);
+  assert(/^edge_session_/.test(completedRun?.edge_session_id || ""), "python edge run did not persist edge_session_id");
+  assert(completedRun?.lease?.state === "released", "python edge run did not release its run lease");
   assert(completed.reports?.some((report) => /heartbeat kept the node fresh/.test(report.content || "")), "room did not retain the python heartbeat report");
   assert(completed.blackboard?.notes?.some((item) => /wake reason Initial room wake\./.test(item.content || "")), "python edge did not expose AGENT_WAKE_REASON to the command adapter");
+  assert(completed.blackboard?.notes?.some((item) => /edge session edge_session_/.test(item.content || "")), "python edge did not expose EDGE_SESSION_ID to the command adapter");
 
   step("Checking duplicate completion idempotency");
   const beforeCounts = roomCounts(completed);
-  const completedRun = completed.runs?.find((run) => run.id === runId);
   assert(completedRun, "completed room did not retain the run snapshot");
   await requestJson(`${gateway}/edge/complete`, {
     method: "POST",

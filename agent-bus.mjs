@@ -2944,6 +2944,7 @@ function roomHealthSummary(room, {
   });
   const latestRun = latestRoomRun(room?.runs || []);
   const derivedSummary = roomHealthDerivedSummary(room, agents);
+  const recoveryActions = roomHealthRecoveryActions(room, agents, inspection);
   return {
     object: "agent_bus.room_health",
     room: {
@@ -2968,6 +2969,7 @@ function roomHealthSummary(room, {
     },
     thresholds: inspection.analysis?.thresholds || {},
     agents,
+    recovery_actions: recoveryActions,
     operator_hints: inspection.operator_hints || [],
     inspect_summary: inspection.analysis?.summary || "unknown"
   };
@@ -3028,6 +3030,92 @@ function roomHealthDerivedSummary(room, agents) {
 
 function roomHealthTerminalStatus(status) {
   return ["completed", "failed", "error", "cancelled", "canceled", "skipped", "replaced", "superseded"].includes(String(status || "").toLowerCase());
+}
+
+function roomHealthRecoveryActions(room, agents, inspection) {
+  const roomId = room?.id || "ROOM_ID";
+  const actions = [];
+  const missingReport = agents
+    .filter((item) => roomHealthTerminalStatus(item.status) && !item.has_report)
+    .map((item) => item.agent_id)
+    .filter(Boolean);
+  const missingDone = agents
+    .filter((item) => roomHealthTerminalStatus(item.status) && !item.has_done)
+    .map((item) => item.agent_id)
+    .filter(Boolean);
+  const failedAgents = agents
+    .filter((item) => ["failed", "error", "cancelled", "canceled", "skipped"].includes(String(item.status || "").toLowerCase()))
+    .map((item) => item.agent_id)
+    .filter(Boolean);
+  const staleAgents = agents
+    .filter((item) => item.stale_state && !roomHealthTerminalStatus(item.status))
+    .map((item) => item.agent_id)
+    .filter(Boolean);
+  if (missingReport.length) {
+    actions.push({
+      kind: "request_report",
+      level: "warn",
+      agents: missingReport,
+      message: "Terminal agents are missing REPORT. Wake them only to publish a concise operator report before continuing or archiving.",
+      command: `agent-bus room wake ${roomId} --agents ${missingReport.join(",")} --reason ${JSON.stringify("Please provide a concise REPORT for your last run, then DONE if your work is complete.")}`
+    });
+  }
+  if (missingDone.length) {
+    actions.push({
+      kind: "request_done",
+      level: "info",
+      agents: missingDone,
+      message: "Terminal agents are missing DONE. Ask them to finalize the room contract if no work remains.",
+      command: `agent-bus room wake ${roomId} --agents ${missingDone.join(",")} --reason ${JSON.stringify("Please finalize your room turn. Emit DONE if your assigned work is complete, or REPORT the remaining blocker.")}`
+    });
+  }
+  if (failedAgents.length) {
+    actions.push({
+      kind: "recover_failed_agents",
+      level: "warn",
+      agents: failedAgents,
+      message: "One or more agents failed. Inspect the trace or wake only the failed agents with the latest failure context.",
+      command: `agent-bus room wake ${roomId} --agents ${failedAgents.join(",")} --reason ${JSON.stringify("Recover from your failed run. Start with a short REPORT explaining the failure, then continue only if recovery is safe.")}`
+    });
+  }
+  if (staleAgents.length) {
+    actions.push({
+      kind: "inspect_stale_agents",
+      level: "warn",
+      agents: staleAgents,
+      message: "Some non-terminal agent runs look stale or orphaned. Inspect before creating duplicate work.",
+      command: `agent-bus room inspect ${roomId}`
+    });
+  }
+  const staleQueued = Array.isArray(inspection?.analysis?.stale_queued_runs) ? inspection.analysis.stale_queued_runs : [];
+  if (staleQueued.length) {
+    actions.push({
+      kind: "recover_stale_queued",
+      level: "warn",
+      agents: Array.from(new Set(staleQueued.map((run) => run.agent_id).filter(Boolean))),
+      message: "Stale queued runs can wake unexpectedly later. Use guarded recovery when you have confirmed they are abandoned.",
+      command: `agent-bus room recover ${roomId} --yes`
+    });
+  }
+  if (!actions.length && String(room?.status || "").toLowerCase() === "completed") {
+    actions.push({
+      kind: "archive_completed_room",
+      level: "info",
+      agents: [],
+      message: "Room is complete and contracts are satisfied. Export a reports-only summary for handoff or public discussion.",
+      command: `agent-bus room export ${roomId} --reports-only --out room-summary.md`
+    });
+  }
+  if (!actions.length) {
+    actions.push({
+      kind: "inspect_room",
+      level: "info",
+      agents: [],
+      message: "No contract-specific recovery action is needed from the health snapshot. Use inspect for deeper stale/orphan analysis.",
+      command: `agent-bus room inspect ${roomId}`
+    });
+  }
+  return actions;
 }
 
 function roomHealthRunBuckets(runs = []) {
@@ -3127,6 +3215,14 @@ function formatRoomHealth(health) {
       const wake = agent.wake_reason ? ` wake=${JSON.stringify(oneLine(agent.wake_reason, 100))}` : "";
       lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${wake}`);
       if (agent.last_error) lines.push(`  error: ${oneLine(agent.last_error, 180)}`);
+    }
+  }
+  if (Array.isArray(health.recovery_actions) && health.recovery_actions.length) {
+    lines.push("", "Recovery actions:");
+    for (const action of health.recovery_actions) {
+      const agents = Array.isArray(action.agents) && action.agents.length ? ` agents=${action.agents.join(",")}` : "";
+      lines.push(`- ${action.level || "info"} ${action.kind || "action"}${agents}: ${action.message || ""}`.trimEnd());
+      if (action.command) lines.push(`  ${action.command}`);
     }
   }
   if (Array.isArray(health.operator_hints) && health.operator_hints.length) {

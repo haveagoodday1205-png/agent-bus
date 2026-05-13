@@ -176,10 +176,12 @@ async function main() {
   assert(cliRoomHealth.summary?.completed_agents === 1, "CLI room health did not include completed agent count");
   assert(cliRoomHealth.summary?.last_wake_reason === "Initial room wake.", "CLI room health did not expose the last wake reason");
   assert(cliRoomHealth.agents?.some((item) => item.agent_id === "offline-agent" && item.has_report === true && item.has_done === true && item.wake_reason === "Initial room wake."), "CLI room health did not expose agent contract status");
+  assert(cliRoomHealth.recovery_actions?.some((item) => item.kind === "archive_completed_room"), "CLI room health did not suggest archiving a completed room");
   const cliRoomHealthText = await runCliText(["room", "health", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliRoomHealthText.includes("Agent Bus room health:"), "CLI room health text did not render a title");
   assert(cliRoomHealthText.includes("Missing REPORT: -"), "CLI room health text did not render missing REPORT status");
   assert(cliRoomHealthText.includes("Last wake: Initial room wake."), "CLI room health text did not render the last wake reason");
+  assert(cliRoomHealthText.includes("Recovery actions:"), "CLI room health text did not render recovery actions");
   const cliRooms = await runCliJson(["room", "list", "--gateway", base, "--token", token]);
   assert(Array.isArray(cliRooms) && cliRooms.some((item) => item.id === finalRoom.id), "CLI room list did not include the smoke room");
   const cliNodes = await runCliJson(["nodes", "--gateway", base, "--token", token]);
@@ -279,6 +281,8 @@ async function main() {
   assert(failedHealth.summary?.failed_agents === 1, "CLI room health did not count failed agents");
   assert(failedHealth.summary?.missing_report_agents?.includes("offline-fail-agent"), "CLI room health did not expose missing REPORT agents");
   assert(failedHealth.agents?.some((item) => item.agent_id === "offline-fail-agent" && item.status === "failed" && /502 Upstream/.test(item.last_error || "")), "CLI room health did not expose failed agent error");
+  assert(failedHealth.recovery_actions?.some((item) => item.kind === "request_report" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest requesting REPORT from a failed agent");
+  assert(failedHealth.recovery_actions?.some((item) => item.kind === "recover_failed_agents" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest failed-agent recovery");
   await runCliJson(["room", "pause", failedFinalRoom.id, "--reason", "offline smoke failed room checked", "--gateway", base, "--token", token]);
 
   if (!edge.killed) edge.kill("SIGTERM");

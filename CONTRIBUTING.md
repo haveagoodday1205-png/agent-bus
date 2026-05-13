@@ -30,6 +30,8 @@ The project is especially ready for help in these areas:
 
 ## Contributor Workflow
 
+For multi-agent development rooms, start with `docs/agent-room-ops-checklist.md` so agents agree on ownership, blackboard state, reports, and checks before editing shared files.
+
 1. Pick a focused change: docs, adapter preset, packaging script, smoke coverage, or one gateway/edge behavior.
 2. Keep the core path offline and model-free unless the change explicitly requires a live provider. Prefer fake command agents and `agent-bus smoke --offline` for room work.
 3. Run the local checks before opening a PR:

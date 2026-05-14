@@ -3036,6 +3036,7 @@ function roomHealthSummary(room, {
   const inspectionRunsById = roomInspectionRunsById(inspection);
   const agents = (Array.isArray(room?.agents) ? room.agents : []).map((agentId) => {
     const run = latestRunByAgent.get(agentId) || {};
+    const attempt = runAttemptRecord(run);
     const checklistItem = checklistAgents[agentId] || {};
     const inspectRun = inspectionRunsById.get(run.id || checklistItem.run_id || "") || {};
     const contract = roomHealthContractStatus(room, run, checklistItem);
@@ -3049,6 +3050,14 @@ function roomHealthSummary(room, {
       node_id: run.node_id || checklistItem.node_id || inspectRun.node_id || "",
       edge_session_id: run.edge_session_id || run.lease?.edge_session_id || inspectRun.edge_session_id || "",
       lease_state: run.lease?.state || inspectRun.lease_state || "",
+      attempt_no: attempt.attempt_no || run.attempt_no || null,
+      failure_class: attempt.failure_class || "",
+      retryable: typeof attempt.retryable === "boolean" ? attempt.retryable : null,
+      retry_reason: attempt.retry_reason || "",
+      retry_request_reason: attempt.retry_request_reason || run.retry_request_reason || "",
+      last_error_excerpt: attempt.last_error_excerpt || "",
+      retry_of_run_id: attempt.retry_of_run_id || run.retry_of_run_id || "",
+      source_failure_class: attempt.source_failure_class || "",
       has_report: contract.has_report,
       has_done: contract.has_done,
       duration_seconds: checklistItem.duration_seconds ?? null,
@@ -3341,6 +3350,13 @@ function roomRunErrorSummary(run) {
   return oneLine(run.stderr || run.summary || run.stdout || `run ${run.status}`, 500);
 }
 
+function runAttemptRecord(run) {
+  if (!run || typeof run !== "object") return {};
+  const attempts = Array.isArray(run.attempts) ? run.attempts.filter((item) => item && typeof item === "object") : [];
+  if (attempts.length) return attempts[attempts.length - 1];
+  return run.attempt && typeof run.attempt === "object" ? run.attempt : {};
+}
+
 function latestRoomMessageAt(room) {
   const messages = Array.isArray(room?.messages) ? room.messages : [];
   return messages.length ? messages[messages.length - 1]?.at || null : null;
@@ -3375,11 +3391,18 @@ function formatRoomHealth(health) {
       const duration = Number.isFinite(agent.duration_seconds) ? ` duration=${formatAgeSeconds(agent.duration_seconds)}` : "";
       const stale = agent.stale_state ? ` ${agent.stale_state}` : "";
       const lease = agent.lease_state ? ` lease=${agent.lease_state}` : "";
+      const attempt = agent.attempt_no ? ` attempt=${agent.attempt_no}` : "";
+      const failure = agent.failure_class
+        ? ` failure=${agent.failure_class}${agent.retryable === true ? "/retryable" : agent.retryable === false ? "/not-retryable" : ""}`
+        : "";
       const edgeSession = agent.edge_session_id ? ` edge_session=${oneLine(agent.edge_session_id, 36)}` : "";
       const activeRuns = Number(agent.active_run_count || 0) > 1 ? ` active_runs=${agent.active_run_ids.join(",")}` : "";
       const wake = agent.wake_reason ? ` wake=${JSON.stringify(oneLine(agent.wake_reason, 100))}` : "";
-      lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${lease}${edgeSession}${activeRuns}${wake}`);
-      if (agent.last_error) lines.push(`  error: ${oneLine(agent.last_error, 180)}`);
+      lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${lease}${attempt}${failure}${edgeSession}${activeRuns}${wake}`);
+      if (agent.retry_reason) lines.push(`  retry_reason: ${oneLine(agent.retry_reason, 180)}`);
+      if (agent.retry_request_reason) lines.push(`  retry_request: ${oneLine(agent.retry_request_reason, 180)}`);
+      if (agent.retry_of_run_id) lines.push(`  retry_of: ${agent.retry_of_run_id}`);
+      if (agent.last_error || agent.last_error_excerpt) lines.push(`  error: ${oneLine(agent.last_error || agent.last_error_excerpt, 180)}`);
     }
   }
   if (Array.isArray(health.recovery_actions) && health.recovery_actions.length) {
@@ -3543,6 +3566,7 @@ function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailabl
   const node = nodeById.get(nodeId);
   const seenAt = node?.last_seen_at || null;
   const lastHeartbeatAt = rawRun?.last_heartbeat_at || rawRun?.started_at || null;
+  const attempt = runAttemptRecord(rawRun);
   return {
     id: rawRun?.id || "",
     room_id: rawRun?.room_id || rawRun?.thread_id || "",
@@ -3555,6 +3579,15 @@ function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailabl
     started_at: rawRun?.started_at || null,
     completed_at: rawRun?.completed_at || null,
     last_heartbeat_at: lastHeartbeatAt,
+    attempt_no: attempt.attempt_no || rawRun?.attempt_no || null,
+    failure_class: attempt.failure_class || "",
+    retryable: typeof attempt.retryable === "boolean" ? attempt.retryable : null,
+    retry_reason: attempt.retry_reason || "",
+    retry_request_reason: attempt.retry_request_reason || rawRun?.retry_request_reason || "",
+    last_error_excerpt: attempt.last_error_excerpt || "",
+    retry_of_run_id: attempt.retry_of_run_id || rawRun?.retry_of_run_id || "",
+    source_failure_class: attempt.source_failure_class || "",
+    attempt,
     run_heartbeat_interval_ms: heartbeatIntervalByAgentId.get(agentId) || null,
     node_status: node?.status || null,
     node_last_seen_at: seenAt,
@@ -3837,10 +3870,18 @@ function appendRoomInspectionRuns(lines, label, runs) {
       : "";
     const lease = run.lease_state ? ` lease=${run.lease_state}` : "";
     const edgeSession = run.edge_session_id ? ` edge_session=${oneLine(run.edge_session_id, 36)}` : "";
+    const attempt = run.attempt_no ? ` attempt=${run.attempt_no}` : "";
+    const failure = run.failure_class
+      ? ` failure=${run.failure_class}${run.retryable === true ? "/retryable" : run.retryable === false ? "/not-retryable" : ""}`
+      : "";
+    const retry = run.retry_reason ? ` retry_reason=${JSON.stringify(oneLine(run.retry_reason, 80))}` : "";
+    const retryRequest = run.retry_request_reason ? ` retry_request=${JSON.stringify(oneLine(run.retry_request_reason, 80))}` : "";
     const nodeNote = run.node_freshness && run.node_freshness !== "unchecked"
       ? ` node=${run.node_id || "-"} (${run.node_freshness})`
       : ` node=${run.node_id || "-"}`;
-    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age}${heartbeat}${heartbeatAt}${heartbeatEvery}${lease}${edgeSession} created=${run.created_at || "-"}`);
+    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age}${heartbeat}${heartbeatAt}${heartbeatEvery}${lease}${edgeSession}${attempt}${failure}${retry}${retryRequest} created=${run.created_at || "-"}`);
+    if (run.retry_of_run_id) lines.push(`  retry_of: ${run.retry_of_run_id}`);
+    if (run.last_error_excerpt) lines.push(`  error: ${oneLine(run.last_error_excerpt, 180)}`);
   }
 }
 
@@ -5353,6 +5394,7 @@ function statusRunRecord(rawRun, roomId, {
   const node = nodeById.get(nodeId);
   const seenAt = node?.last_seen_at || null;
   const lastHeartbeatAt = rawRun?.last_heartbeat_at || rawRun?.started_at || null;
+  const attempt = runAttemptRecord(rawRun);
   return {
     id: rawRun?.id || "",
     room_id: rawRun?.room_id || roomId,
@@ -5363,7 +5405,15 @@ function statusRunRecord(rawRun, roomId, {
     status: rawRun?.status || "queued",
     created_at: rawRun?.created_at || null,
     started_at: rawRun?.started_at || null,
+    completed_at: rawRun?.completed_at || null,
     last_heartbeat_at: lastHeartbeatAt,
+    attempt_no: attempt.attempt_no || rawRun?.attempt_no || null,
+    failure_class: attempt.failure_class || "",
+    retryable: typeof attempt.retryable === "boolean" ? attempt.retryable : null,
+    retry_reason: attempt.retry_reason || "",
+    retry_request_reason: attempt.retry_request_reason || rawRun?.retry_request_reason || "",
+    last_error_excerpt: attempt.last_error_excerpt || "",
+    retry_of_run_id: attempt.retry_of_run_id || rawRun?.retry_of_run_id || "",
     run_heartbeat_interval_ms: heartbeatIntervalByAgentId.get(agentId) || null,
     heartbeat_age_seconds: elapsedSeconds(lastHeartbeatAt),
     node_status: node?.status || null,

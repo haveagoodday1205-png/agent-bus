@@ -2188,11 +2188,22 @@ def pause_room(config, room_id, body):
         run["status"] = "cancelled"
         run["completed_at"] = paused_at
         run["summary"] = "Cancelled by room pause."
+        update_run_attempt(
+            run,
+            "cancelled",
+            at=paused_at,
+            failure_class="cancelled",
+            retryable=False,
+            retry_reason="operator_cancelled",
+            completed_at=paused_at,
+            last_error_excerpt=run.get("summary"),
+        )
         cancelled_run_ids.append(run.get("id"))
         update_room_agent_checklist(room, run)
         if run.get("id"):
             STATE["runs"][run["id"]] = run
             write_snapshot(config, "runs", run["id"], run)
+            append_run_attempt_event(config, run, "cancelled")
     remove_queued_tasks(cancelled_run_ids)
     room["status"] = "paused"
     room["updated_at"] = paused_at
@@ -2292,7 +2303,17 @@ def retry_failed_room_agents(config, room_id, body, trace_id=None):
         "at": retry_at,
     })
     retry_reason = room_failed_retry_reason(reason, inspection)
-    created_runs = wake_room_agents(config, room, retry_agents, retry_reason, trace_id or room.get("trace_id"))
+    retry_meta_by_agent = {
+        group.get("agent_id"): {
+            "retry_of_run_id": group.get("latest_run_id"),
+            "retry_reason": reason,
+            "source_failure_class": group.get("failure_class"),
+            "source_error_excerpt": group.get("latest_error"),
+        }
+        for group in inspection.get("groups") or []
+        if group.get("retryable") and group.get("agent_id")
+    }
+    created_runs = wake_room_agents(config, room, retry_agents, retry_reason, trace_id or room.get("trace_id"), retry_meta_by_agent)
     room.setdefault("operations", {}).setdefault("failed_retries", []).append({
         "at": retry_at,
         "reason": reason,
@@ -2360,11 +2381,22 @@ def resolve_duplicate_room_runs(config, room_id, body):
             "at": resolved_at,
             "reason": reason,
         }
+        update_run_attempt(
+            run,
+            "cancelled",
+            at=resolved_at,
+            failure_class="cancelled",
+            retryable=False,
+            retry_reason="duplicate_queued_cancelled",
+            completed_at=resolved_at,
+            last_error_excerpt=run.get("summary"),
+        )
         cancelled_ids.append(run.get("id"))
         update_room_agent_checklist(room, run)
         if run.get("id"):
             STATE["runs"][run["id"]] = run
             write_snapshot(config, "runs", run["id"], run)
+            append_run_attempt_event(config, run, "cancelled")
     remove_queued_tasks(cancelled_ids)
     room["updated_at"] = resolved_at
     room.setdefault("operations", {}).setdefault("duplicate_resolutions", []).append({
@@ -2883,14 +2915,24 @@ def inspect_room_failed_agent_retries(room, requested_agents=None):
         active = active_by_agent.get(agent_id) or []
         registered = agent_registry.get(agent_id)
         latest_status = run_status(latest)
+        latest_attempt = latest_run_attempt(latest) if latest else {}
+        latest_error = room_run_contract_error(latest or {}, latest.get("stderr") or latest.get("summary") if latest else "")
+        if not latest_error:
+            latest_error = latest_attempt.get("last_error_excerpt") or latest_attempt.get("source_error_excerpt") or ""
+        failure_retryable = latest_attempt.get("retryable")
         item = {
             "agent_id": agent_id,
             "latest_run_id": latest.get("id") if latest else "",
             "latest_status": latest_status or "missing",
-            "latest_error": room_run_contract_error(latest or {}, latest.get("stderr") or latest.get("summary") if latest else ""),
+            "latest_error": latest_error,
             "active_run_ids": [run.get("id") for run in active if run.get("id")],
             "agent_status": registered.get("status") if registered else "unknown",
             "node_id": registered.get("node_id") if registered else "",
+            "attempt_no": (latest_attempt.get("attempt_no") or latest.get("attempt_no")) if latest else None,
+            "failure_class": latest_attempt.get("failure_class") or "",
+            "failure_retryable": failure_retryable if isinstance(failure_retryable, bool) else None,
+            "retry_reason": latest_attempt.get("retry_reason") or "",
+            "attempt": latest_attempt,
         }
         if agent_id not in expected_agents:
             unknown.append(agent_id)
@@ -3085,9 +3127,10 @@ def remove_queued_tasks(run_ids):
             STATE["queues"][node_id] = kept
     return removed
 
-def wake_room_agents(config, room, agent_ids, reason, trace_id=None):
+def wake_room_agents(config, room, agent_ids, reason, trace_id=None, attempt_meta_by_agent=None):
     if isinstance(agent_ids, str):
         agent_ids = [agent_ids]
+    attempt_meta_by_agent = attempt_meta_by_agent if isinstance(attempt_meta_by_agent, dict) else {}
     trace_id = trace_id or room.get("trace_id") or new_trace_id()
     online_agents = public_agents()
     raise_if_agent_ids_ambiguous(agent_ids, online_agents)
@@ -3109,7 +3152,7 @@ def wake_room_agents(config, room, agent_ids, reason, trace_id=None):
             room.setdefault("reports", []).append({"at": now(), "speaker": "system", "content": "Agent offline or unknown: " + agent_id})
             continue
         message = autonomous_prompt(room, agent, reason)
-        run = create_room_run(config, room, agent, message, trace_id, reason)
+        run = create_room_run(config, room, agent, message, trace_id, reason, attempt_meta_by_agent.get(agent_id))
         autonomy["steps"] = steps + 1
         if agent_id in (room.get("agents") or []):
             autonomy["next_index"] = (room.get("agents") or []).index(agent_id) + 1
@@ -3628,8 +3671,9 @@ def autonomous_prompt(room, agent, reason):
     return "\n".join(lines)
 
 
-def create_room_run(config, room, agent, message, trace_id=None, wake_reason=None):
+def create_room_run(config, room, agent, message, trace_id=None, wake_reason=None, attempt_meta=None):
     trace_id = trace_id or room.get("trace_id") or new_trace_id()
+    attempt_no = next_run_attempt_no(room.get("runs") or [], agent["id"])
     run = {
         "id": "run_" + str(uuid.uuid4()),
         "thread_id": room["id"],
@@ -3649,6 +3693,7 @@ def create_room_run(config, room, agent, message, trace_id=None, wake_reason=Non
         "stderr": "",
         "events": [],
     }
+    initialize_run_attempt(run, attempt_no, attempt_meta)
     room.setdefault("runs", []).append(run)
     update_room_agent_checklist(room, run)
     STATE["runs"][run["id"]] = run
@@ -3794,6 +3839,7 @@ def group_prompt(thread, agent_id, turn_index):
 
 def create_run(config, thread, agent, message, turn_index=None, trace_id=None):
     trace_id = trace_id or thread.get("trace_id") or new_trace_id()
+    attempt_no = next_run_attempt_no(thread.get("runs") or [], agent["id"])
     run = {
         "id": "run_" + str(uuid.uuid4()),
         "thread_id": thread["id"],
@@ -3811,6 +3857,7 @@ def create_run(config, thread, agent, message, turn_index=None, trace_id=None):
         "stderr": "",
         "events": [],
     }
+    initialize_run_attempt(run, attempt_no)
     if thread.get("cache_scope"):
         run["cache_scope"] = thread["cache_scope"]
     if turn_index is not None:
@@ -3854,12 +3901,16 @@ def poll_node(config, body, timeout_ms):
         node["agents"] = merge_agent_updates(node_id, node.get("agents") or [], body.get("agents") or [])
     queue = STATE["queues"].setdefault(node_id, [])
     if queue:
-        return {"type": "task", "task": queue.pop(0)}
+        task = queue.pop(0)
+        mark_task_dispatched(config, task, node_id, body)
+        return {"type": "task", "task": task}
     cond = STATE["conditions"].setdefault(node_id, threading.Condition())
     with cond:
         cond.wait(timeout=max(1, min(timeout_ms, 60000)) / 1000)
     if queue:
-        return {"type": "task", "task": queue.pop(0)}
+        task = queue.pop(0)
+        mark_task_dispatched(config, task, node_id, body)
+        return {"type": "task", "task": task}
     return {"type": "idle"}
 
 
@@ -3894,6 +3945,172 @@ def merge_agent_updates(node_id, current, updates):
         existing.update(update)
         by_id[update["id"]] = existing
     return list(by_id.values())
+
+
+def next_run_attempt_no(existing_runs, agent_id):
+    attempt_numbers = []
+    for run in existing_runs or []:
+        if run.get("agent_id") != agent_id:
+            continue
+        attempt = latest_run_attempt(run)
+        try:
+            attempt_numbers.append(int(attempt.get("attempt_no") or run.get("attempt_no") or 0))
+        except Exception:
+            attempt_numbers.append(0)
+    return max(attempt_numbers or [0]) + 1
+
+
+def initialize_run_attempt(run, attempt_no=1, attempt_meta=None):
+    attempt_meta = attempt_meta if isinstance(attempt_meta, dict) else {}
+    attempt = {
+        "object": "agent_bus.run_attempt",
+        "attempt_id": f"{run.get('id')}:attempt:{attempt_no}",
+        "attempt_no": attempt_no,
+        "run_id": run.get("id"),
+        "thread_id": run.get("thread_id"),
+        "room_id": run.get("room_id"),
+        "trace_id": run.get("trace_id"),
+        "agent_id": run.get("agent_id"),
+        "node_id": run.get("node_id"),
+        "kind": run.get("kind"),
+        "role": run.get("role"),
+        "status": run.get("status") or "queued",
+        "queued_at": run.get("created_at") or now(),
+        "created_at": run.get("created_at") or now(),
+        "wake_reason": run.get("wake_reason") or "",
+        "retry_of_run_id": attempt_meta.get("retry_of_run_id") or "",
+        "retry_request_reason": attempt_meta.get("retry_reason") or "",
+        "source_failure_class": attempt_meta.get("source_failure_class") or "",
+        "source_error_excerpt": trim_one_line(attempt_meta.get("source_error_excerpt") or "", 500),
+    }
+    attempt = {key: value for key, value in attempt.items() if value not in (None, "", [])}
+    run["attempt_no"] = attempt_no
+    if attempt.get("retry_of_run_id"):
+        run["retry_of_run_id"] = attempt["retry_of_run_id"]
+    if attempt.get("retry_request_reason"):
+        run["retry_request_reason"] = attempt["retry_request_reason"]
+    run["attempts"] = [attempt]
+    run["attempt"] = dict(attempt)
+    return attempt
+
+
+def latest_run_attempt(run):
+    if not isinstance(run, dict):
+        return {}
+    attempts = run.get("attempts")
+    if isinstance(attempts, list) and attempts:
+        latest = attempts[-1]
+        if isinstance(latest, dict):
+            return latest
+    attempt = run.get("attempt")
+    if isinstance(attempt, dict) and attempt:
+        return attempt
+    created_at = run.get("created_at") or now()
+    return {
+        "object": "agent_bus.run_attempt",
+        "attempt_id": f"{run.get('id')}:attempt:{run.get('attempt_no') or 1}",
+        "attempt_no": run.get("attempt_no") or 1,
+        "run_id": run.get("id"),
+        "thread_id": run.get("thread_id"),
+        "room_id": run.get("room_id"),
+        "trace_id": run.get("trace_id"),
+        "agent_id": run.get("agent_id"),
+        "node_id": run.get("node_id"),
+        "status": run.get("status") or "queued",
+        "queued_at": created_at,
+        "created_at": created_at,
+    }
+
+
+def update_run_attempt(run, status=None, at=None, **fields):
+    if not isinstance(run, dict):
+        return {}
+    at = at or now()
+    attempts = run.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        attempts = [latest_run_attempt(run)]
+    attempt = attempts[-1] if isinstance(attempts[-1], dict) else {}
+    if not attempt:
+        attempt = latest_run_attempt(run)
+        attempts[-1] = attempt
+    if status:
+        attempt["status"] = status
+    if status in ("dispatched", "running"):
+        key = "dispatched_at" if status == "dispatched" else "started_at"
+        attempt[key] = attempt.get(key) or at
+    if status in TERMINAL_RUN_STATUSES | REPLACED_RUN_STATUSES:
+        attempt["completed_at"] = attempt.get("completed_at") or at
+    if fields.get("last_heartbeat_at"):
+        attempt["last_heartbeat_at"] = fields.pop("last_heartbeat_at")
+    elif status == "running":
+        attempt["last_heartbeat_at"] = at
+    for key, value in fields.items():
+        if value not in (None, "", []):
+            attempt[key] = value
+    attempt = {key: value for key, value in attempt.items() if value not in (None, "", [])}
+    attempts[-1] = attempt
+    run["attempts"] = attempts
+    run["attempt"] = dict(attempt)
+    run["attempt_no"] = attempt.get("attempt_no") or run.get("attempt_no") or 1
+    return attempt
+
+
+def classify_run_attempt(status, exit_code=None, stdout="", stderr="", summary=""):
+    normalized = str(status or "").lower()
+    if normalized == "completed":
+        return {"failure_class": "", "retryable": False, "retry_reason": ""}
+    if normalized in {"cancelled", "canceled"}:
+        return {"failure_class": "cancelled", "retryable": False, "retry_reason": "operator_cancelled"}
+    if normalized in {"replaced", "superseded"}:
+        return {"failure_class": "superseded", "retryable": False, "retry_reason": "superseded"}
+    text = " ".join(str(value or "") for value in (stdout, stderr, summary)).lower()
+    if re.search(r"\b(429|rate limit|too many requests)\b", text):
+        return {"failure_class": "rate_limited", "retryable": True, "retry_reason": "provider_rate_limited"}
+    if re.search(r"\b(502|503|504|5xx|upstream|server-side issue|bad gateway|service unavailable|gateway timeout)\b", text):
+        return {"failure_class": "upstream_transient", "retryable": True, "retry_reason": "provider_transient_error"}
+    if re.search(r"\b(timeout|timed out|deadline|etimedout)\b", text):
+        return {"failure_class": "timeout", "retryable": True, "retry_reason": "timeout"}
+    if re.search(r"\b(401|403|unauthorized|forbidden|api key|apikey|auth|credential|permission denied)\b", text):
+        return {"failure_class": "auth_config", "retryable": False, "retry_reason": "configuration_or_auth_failure"}
+    if re.search(r"\b(protocol|missing report|missing done|invalid json|parse error|schema)\b", text):
+        return {"failure_class": "protocol_violation", "retryable": False, "retry_reason": "protocol_violation"}
+    if exit_code not in (None, "", 0):
+        return {"failure_class": "local_runtime", "retryable": False, "retry_reason": "nonzero_exit"}
+    if normalized in {"failed", "error"}:
+        return {"failure_class": "run_failed", "retryable": False, "retry_reason": "unclassified_failure"}
+    return {"failure_class": normalized or "unknown", "retryable": False, "retry_reason": "unknown"}
+
+
+def append_run_attempt_event(config, run, phase):
+    attempt = latest_run_attempt(run)
+    append_jsonl(config, "run_attempts.jsonl", {
+        "at": now(),
+        "phase": phase,
+        "run_id": run.get("id"),
+        "room_id": run.get("room_id"),
+        "thread_id": run.get("thread_id"),
+        "agent_id": run.get("agent_id"),
+        "attempt": attempt,
+    })
+
+
+def mark_task_dispatched(config, task, node_id, body):
+    run_id = task.get("run_id") if isinstance(task, dict) else None
+    if not run_id:
+        return task
+    run = STATE["runs"].get(run_id) or read_snapshot(config, "runs", run_id)
+    if not run or run_is_terminal(run) or run_is_replaced(run) or run_is_late_complete_ignored(run):
+        return task
+    edge_session_id = normalize_edge_session_id(body.get("edge_session_id") or body.get("edgeSessionId"))
+    dispatched_at = now()
+    run["dispatched_at"] = run.get("dispatched_at") or dispatched_at
+    update_run_attempt(run, "dispatched", at=dispatched_at, node_id=node_id, edge_session_id=edge_session_id)
+    STATE["runs"][run["id"]] = run
+    write_snapshot(config, "runs", run["id"], run)
+    update_thread_run(config, run)
+    update_room_run(config, run)
+    append_run_attempt_event(config, run, "dispatched")
+    return task
 
 
 def update_run_lease(run, event, state):
@@ -3940,15 +4157,35 @@ def record_event(config, body):
         write_snapshot(config, "runs", run["id"], run)
         update_room_run(config, run)
         append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
+        append_run_attempt_event(config, run, "ignored_event")
         return
+    attempt_phase = None
     if event.get("type") == "run.started":
         run["status"] = "running"
         run["started_at"] = run.get("started_at") or event["at"]
         run["last_heartbeat_at"] = run.get("last_heartbeat_at") or event["at"]
         update_run_lease(run, event, "acquired")
+        update_run_attempt(
+            run,
+            "running",
+            at=event["at"],
+            node_id=event.get("node_id") or run.get("node_id"),
+            edge_session_id=edge_session_id or run.get("edge_session_id"),
+            started_at=run.get("started_at"),
+            last_heartbeat_at=run.get("last_heartbeat_at"),
+        )
+        attempt_phase = "started"
     if event.get("type") in ("run.heartbeat", "run.progress") or event.get("stream") in ("stdout", "stderr"):
         run["last_heartbeat_at"] = event["at"]
         update_run_lease(run, event, "heartbeat")
+        update_run_attempt(
+            run,
+            "running" if not run_is_terminal(run) else None,
+            at=event["at"],
+            node_id=event.get("node_id") or run.get("node_id"),
+            edge_session_id=edge_session_id or run.get("edge_session_id"),
+            last_heartbeat_at=event["at"],
+        )
     if event.get("stream") == "stdout" and event.get("text"):
         run["stdout"] = run.get("stdout", "") + event["text"]
     if event.get("stream") == "stderr" and event.get("text"):
@@ -3959,6 +4196,8 @@ def record_event(config, body):
     update_thread_run(config, run)
     update_room_run(config, run)
     append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
+    if attempt_phase:
+        append_run_attempt_event(config, run, attempt_phase)
 
 
 def requested_completion_state(run, body):
@@ -4017,6 +4256,29 @@ def complete_run(config, body):
         run["summary"] = completion["summary"]
         if edge_session_id and not run.get("edge_session_id"):
             run["edge_session_id"] = edge_session_id
+        attempt_classification = classify_run_attempt(
+            run.get("status"),
+            exit_code=run.get("exit_code"),
+            stdout=run.get("stdout"),
+            stderr=run.get("stderr"),
+            summary=run.get("summary"),
+        )
+        last_error_excerpt = ""
+        if run.get("status") != "completed":
+            last_error_excerpt = trim_one_line(run.get("stderr") or run.get("summary") or run.get("stdout") or f"run {run.get('status')}", 500)
+        update_run_attempt(
+            run,
+            run.get("status"),
+            at=run["completed_at"],
+            node_id=body.get("node_id") or run.get("node_id"),
+            edge_session_id=edge_session_id or run.get("edge_session_id"),
+            exit_code=run.get("exit_code"),
+            failure_class=attempt_classification.get("failure_class"),
+            retryable=attempt_classification.get("retryable"),
+            retry_reason=attempt_classification.get("retry_reason"),
+            last_error_excerpt=last_error_excerpt,
+            completed_at=run.get("completed_at"),
+        )
         update_run_lease(run, {
             "at": run["completed_at"],
             "node_id": body.get("node_id") or run.get("node_id"),
@@ -4029,6 +4291,7 @@ def complete_run(config, body):
         continue_group_thread(config, run)
         continue_room_run(config, run)
         append_jsonl(config, "runs.jsonl", run)
+        append_run_attempt_event(config, run, "completed" if run.get("status") == "completed" else "failed")
         if not notify_telegram_conversation_result(config, run):
             notify_plugin(config, "run.completed" if run.get("status") == "completed" else "run.failed", {
                 "run_id": run.get("id"),
@@ -4058,6 +4321,17 @@ def mark_run_late_complete_ignored(config, run, body):
     }
     if run_is_replaced(run):
         run["status"] = "replaced"
+    update_run_attempt(
+        run,
+        "replaced",
+        at=ignored_at,
+        node_id=body.get("node_id") or run.get("node_id"),
+        failure_class="superseded",
+        retryable=False,
+        retry_reason="superseded",
+        completed_at=ignored_at,
+        last_error_excerpt="Late completion ignored because this run was replaced.",
+    )
     event = {
         "at": ignored_at,
         "type": "run.late_complete_ignored",
@@ -4072,6 +4346,7 @@ def mark_run_late_complete_ignored(config, run, body):
     update_thread_run(config, run)
     update_room_run(config, run)
     append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
+    append_run_attempt_event(config, run, "replaced")
     return run
 
 

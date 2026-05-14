@@ -275,6 +275,9 @@ async function main() {
   const failedChecklist = failedFinalRoom.blackboard?.agent_checklist;
   const failedChecklistAgent = failedChecklist?.agents?.["offline-fail-agent"];
   assert(failedRun?.status === "failed", "offline failed room run did not fail");
+  assert(failedRun?.attempt?.attempt_no === 1, "failed room run did not record attempt_no=1");
+  assert(failedRun?.attempt?.failure_class === "upstream_transient", `failed room run classified as ${failedRun?.attempt?.failure_class || "missing"} instead of upstream_transient`);
+  assert(failedRun?.attempt?.retryable === true, "failed room upstream transient attempt was not marked retryable");
   assert(failedChecklist?.summary?.failed_agents === 1, "room checklist did not count failed agents");
   assert(failedChecklist?.summary?.missing_report_agents?.includes("offline-fail-agent"), "room checklist did not mark missing REPORT on failed agent");
   assert(failedChecklist?.summary?.missing_done_agents?.includes("offline-fail-agent"), "room checklist did not mark missing DONE on failed agent");
@@ -286,6 +289,7 @@ async function main() {
   assert(failedHealth.summary?.failed_agents === 1, "CLI room health did not count failed agents");
   assert(failedHealth.summary?.missing_report_agents?.includes("offline-fail-agent"), "CLI room health did not expose missing REPORT agents");
   assert(failedHealth.agents?.some((item) => item.agent_id === "offline-fail-agent" && item.status === "failed" && /502 Upstream/.test(item.last_error || "")), "CLI room health did not expose failed agent error");
+  assert(failedHealth.agents?.some((item) => item.agent_id === "offline-fail-agent" && item.attempt_no === 1 && item.failure_class === "upstream_transient" && item.retryable === true), "CLI room health did not expose attempt failure taxonomy");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "request_report" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest requesting REPORT from a failed agent");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "recover_failed_agents" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest failed-agent recovery");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "recover_failed_agents" && /retry-failed/.test(item.command || "")), "CLI room health did not suggest the guarded failed-agent retry command");
@@ -297,6 +301,9 @@ async function main() {
   assert(failedRetry.created_run_ids?.length === 1, "CLI room retry-failed --yes did not create one retry run");
   const failedRetryRun = await waitForRunTerminal(base, token, failedRetry.created_run_ids[0]);
   assert(failedRetryRun.status === "failed", "retry failed-agent run did not reach failed terminal status");
+  assert(failedRetryRun.attempt?.attempt_no === 2, "retry failed-agent run did not record attempt_no=2");
+  assert(failedRetryRun.attempt?.retry_of_run_id === failedRun.id, "retry failed-agent run did not record retry_of_run_id");
+  assert(failedRetryRun.attempt?.failure_class === "upstream_transient", "retry failed-agent run did not preserve upstream transient classification");
   const failedAfterRetry = await requestJson(`${base}/rooms/${failedFinalRoom.id}`, { headers: authHeaders(token) });
   assert(failedAfterRetry.runs?.filter((item) => item.agent_id === "offline-fail-agent" && item.status === "failed").length === 2, "failed-agent retry did not preserve both failed attempts");
   assert(failedAfterRetry.blackboard?.agent_checklist?.agents?.["offline-fail-agent"]?.run_count === 2, "failed-agent retry did not update checklist run count");

@@ -326,6 +326,19 @@ async function main() {
   const contractGapHealth = await runCliJson(["room", "health", contractGapFinalRoom.id, "--json", "--gateway", base, "--token", token]);
   assert(contractGapHealth.recovery_actions?.some((item) => item.kind === "request_report" && /room create/.test(item.command || "")), "contract gap health did not suggest a follow-up room instead of waking a completed room");
   assert(contractGapHealth.recovery_actions?.some((item) => item.kind === "request_report" && /follow-up room/i.test(item.message || "")), "contract gap health did not explain follow-up-room recovery");
+  const contractGapFollowPreview = await runCliJson(["room", "follow-up", contractGapFinalRoom.id, "--dry-run", "--gateway", base, "--token", token]);
+  assert(contractGapFollowPreview.object === "agent_bus.room_followup_preview", "room follow-up dry run did not return a preview object");
+  assert(contractGapFollowPreview.contract_gap_agents?.includes("offline-no-report-agent"), "room follow-up did not infer contract gap agents");
+  assert(contractGapFollowPreview.request?.agents?.includes("offline-no-report-agent"), "room follow-up did not select the contract gap agent");
+  assert(contractGapFollowPreview.request?.wakeAgents?.includes("offline-no-report-agent"), "room follow-up did not wake the selected agent by default");
+  assert(/missing REPORT=offline-no-report-agent/.test(contractGapFollowPreview.request?.goal || ""), "room follow-up goal did not explain the contract gap");
+  const contractGapFollow = await runCliJson(["room", "follow-up", contractGapFinalRoom.id, "--agents", "offline-agent", "--wake-agents", "offline-agent", "--max-steps", "1", "--gateway", base, "--token", token]);
+  assert(contractGapFollow.object === "agent_bus.room_followup", "room follow-up did not return a follow-up object");
+  assert(contractGapFollow.source_room?.id === contractGapFinalRoom.id, "room follow-up did not preserve the source room id");
+  assert(contractGapFollow.room?.agents?.includes("offline-agent"), "room follow-up did not create a room with overridden agents");
+  const contractGapFollowFinal = await waitForRoomComplete(base, token, contractGapFollow.room.id);
+  assert(contractGapFollowFinal.status === "completed", "room follow-up created room did not complete");
+  assert(contractGapFollowFinal.reports?.some((item) => /offline smoke run completed/.test(item.content || "")), "room follow-up created room did not capture REPORT");
 
   const failedRoom = await requestJson(`${base}/rooms`, {
     method: "POST",
@@ -449,6 +462,7 @@ async function main() {
   assert(duplicateHealth.summary?.duplicate_active_agents?.includes("offline-agent"), "CLI room health did not expose duplicate active agent ids");
   assert(duplicateHealth.agents?.some((item) => item.agent_id === "offline-agent" && item.active_run_count === 2 && item.active_run_ids?.length === 2), "CLI room health did not expose duplicate active run ids");
   assert(duplicateHealth.recovery_actions?.some((item) => item.kind === "resolve_duplicate_active_runs" && item.agents?.includes("offline-agent")), "CLI room health did not suggest resolving duplicate active runs");
+  assert(!duplicateHealth.recovery_actions?.some((item) => item.kind === "inspect_stale_agents"), "CLI room health incorrectly treated live queued runs as stale recovery");
   const duplicateHealthText = await runCliText(["room", "health", duplicateActiveRoom.id, "--gateway", base, "--token", token]);
   assert(duplicateHealthText.includes("Duplicate active agents: `offline-agent`"), "CLI room health text did not render duplicate active agents");
   const duplicateDryRun = await runCliJson(["room", "resolve-duplicates", duplicateActiveRoom.id, "--json", "--gateway", base, "--token", token]);

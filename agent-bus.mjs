@@ -225,6 +225,7 @@ Usage:
   agent-bus room health room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json]
   agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus room doctor room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json]
+  agent-bus room follow-up room_xxx [--agents a,b] [--dry-run] --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
@@ -2555,6 +2556,53 @@ async function room(args) {
     process.stdout.write(formatRoomDoctor(result));
     return;
   }
+  if (action === "follow-up" || action === "followup" || action === "continue") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const doctor = await optionalGatewayJson(`/rooms/${pathPart(roomId)}/doctor`, { auth: true, args }, null);
+    const selectedAgents = csvOption(args, "--agents");
+    const contractAgents = Array.isArray(doctor?.contract?.contract_gap_agents) ? doctor.contract.contract_gap_agents.filter(Boolean) : [];
+    const blockingAgents = Array.isArray(doctor?.blocking_agents) ? doctor.blocking_agents.filter(Boolean) : [];
+    const roomAgents = Array.isArray(roomData?.agents) ? roomData.agents.filter(Boolean) : [];
+    const agents = uniqueStrings(selectedAgents.length ? selectedAgents : contractAgents.length ? contractAgents : blockingAgents.length ? blockingAgents : roomAgents);
+    if (!agents.length) throw new Error("room follow-up could not infer agents; pass --agents a,b.");
+    const wakeOverride = csvOption(args, "--wake-agents");
+    const wakeAgents = args.includes("--no-wake") || args.includes("--no-wake-agents")
+      ? []
+      : uniqueStrings(wakeOverride.length ? wakeOverride : agents);
+    const reason = optionValue(args, "--reason") || optionValue(args, "--message") || "";
+    const body = {
+      title: optionValue(args, "--title") || roomFollowUpDefaultTitle(roomData),
+      trace_id: optionValue(args, "--trace-id") || optionValue(args, "--trace") || undefined,
+      goal: optionValue(args, "--goal") || roomFollowUpDefaultGoal(roomData, doctor, reason),
+      agents,
+      ...(wakeAgents.length ? { wakeAgents } : {}),
+    };
+    const maxSteps = positiveIntegerOption(optionValue(args, "--max-steps") || optionValue(args, "--maxSteps"), 0, 1000);
+    const autoRotate = booleanOption(args, "--auto-rotate", "--no-auto-rotate");
+    if (maxSteps > 0) body.maxSteps = maxSteps;
+    if (autoRotate !== undefined) body.autoRotate = autoRotate;
+    const preview = {
+      object: "agent_bus.room_followup_preview",
+      source_room: {
+        id: roomData?.id || roomId,
+        title: roomData?.title || "",
+        status: roomData?.status || "unknown",
+      },
+      doctor_summary: doctor?.summary || "",
+      contract_gap_agents: contractAgents,
+      request: body,
+    };
+    if (args.includes("--dry-run") || args.includes("--preview")) return printJson(preview);
+    const created = await gatewayJson("/rooms", { auth: true, args, method: "POST", body });
+    return printJson({
+      object: "agent_bus.room_followup",
+      source_room: preview.source_room,
+      doctor_summary: preview.doctor_summary,
+      contract_gap_agents: contractAgents,
+      room: created,
+    });
+  }
   if (action === "export" || action === "dump") {
     const roomId = requiredPositional(args, 1, "room id");
     const format = optionValue(args, "--format") || (args.includes("--json") ? "json" : "markdown");
@@ -2737,7 +2785,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|doctor|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
+  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|doctor|follow-up|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
 }
 
 function formatRoomMemory(value, options = {}) {
@@ -3216,7 +3264,7 @@ function roomHealthRecoveryActions(room, agents, inspection) {
     .map((item) => item.agent_id)
     .filter(Boolean);
   const staleAgents = agents
-    .filter((item) => item.stale_state && !roomHealthTerminalStatus(item.status))
+    .filter((item) => roomHealthRecoveryStaleState(item.stale_state) && !roomHealthTerminalStatus(item.status))
     .map((item) => item.agent_id)
     .filter(Boolean);
   if (duplicateActiveAgents.length) {
@@ -3312,6 +3360,44 @@ function roomHealthContractCommand(room, agents, reason) {
 
 function roomHealthTerminalRoom(room) {
   return ["completed", "paused"].includes(String(room?.status || "").toLowerCase());
+}
+
+function roomHealthRecoveryStaleState(state) {
+  return ["stale_queued", "stale_running", "orphaned_running"].includes(String(state || "").toLowerCase());
+}
+
+function roomFollowUpDefaultTitle(room) {
+  const roomId = room?.id || "ROOM_ID";
+  const title = String(room?.title || "").trim();
+  return title ? `Follow-up: ${title}` : `Follow-up for ${roomId}`;
+}
+
+function roomFollowUpDefaultGoal(room, doctor, reason = "") {
+  const roomId = room?.id || "ROOM_ID";
+  const roomStatus = room?.status || "unknown";
+  const title = String(room?.title || "").trim();
+  const contractText = roomFollowUpContractText(doctor?.contract);
+  const reasonText = String(reason || "").trim();
+  const task = reasonText || (contractText
+    ? `Resolve missing room contract items: ${contractText}.`
+    : "Continue the unresolved work from the source room.");
+  const titleText = title ? ` Source title: ${title}.` : "";
+  return `Follow up on Agent Bus room ${roomId} (${roomStatus}).${titleText} ${task} Work from the latest available room context, provide concise REPORT lines, and emit DONE when complete.`;
+}
+
+function roomFollowUpContractText(contract = {}) {
+  const parts = [];
+  const missingAgents = Array.isArray(contract?.missing_agents) ? contract.missing_agents.filter(Boolean) : [];
+  const missingReport = Array.isArray(contract?.missing_report_agents) ? contract.missing_report_agents.filter(Boolean) : [];
+  const missingDone = Array.isArray(contract?.missing_done_agents) ? contract.missing_done_agents.filter(Boolean) : [];
+  if (missingAgents.length) parts.push(`missing agents=${missingAgents.join(",")}`);
+  if (missingReport.length) parts.push(`missing REPORT=${missingReport.join(",")}`);
+  if (missingDone.length) parts.push(`missing DONE=${missingDone.join(",")}`);
+  return parts.join("; ");
+}
+
+function uniqueStrings(items = []) {
+  return Array.from(new Set((Array.isArray(items) ? items : []).map((item) => String(item || "").trim()).filter(Boolean)));
 }
 
 function roomHealthRunBuckets(runs = []) {

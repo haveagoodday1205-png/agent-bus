@@ -6,6 +6,7 @@
   "pollTimeoutMs": 25000,
   "idleDelayMs": 1000,
   "defaultTimeoutMs": 600000,
+  "dataDir": "./data/edge",
   "agents": [
     {
       "id": "local-echo",

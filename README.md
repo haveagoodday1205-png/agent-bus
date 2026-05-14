@@ -383,7 +383,7 @@ Then use `OPENCLAW_AGENT_ID=agent-bus ./scripts/openclaw-agent-bus.sh` as the Op
 
 For Codex nodes on Linux, prefer `CODEX_COMMAND=codex bash ./scripts/codex-agent-bus.sh`; it reads `AGENT_MESSAGE_FILE` and keeps long room turns from arriving as an empty prompt after `AGENT_MESSAGE` is intentionally cleared.
 
-The edge node streams stdout/stderr events back to the gateway, then posts a final run result.
+The edge node streams stdout/stderr events back to the gateway, then posts a final run result. Node edge completions are written to a local outbox under `dataDir/edge-completions` before `/edge/complete`; if Central is temporarily unavailable, the edge replays those pending completions on reconnect and deletes them only after Central accepts the result.
 
 ### Gateway API
 

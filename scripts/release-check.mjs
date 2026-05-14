@@ -13,7 +13,8 @@ const HERMETIC_AGENT_BUS_ENV = [
   "AGENT_BUS_CONFIG",
   "AGENT_BUS_HOST",
   "AGENT_BUS_PORT",
-  "AGENT_BUS_DATA_DIR"
+  "AGENT_BUS_DATA_DIR",
+  "AGENT_BUS_COMPLETION_OUTBOX_DIR"
 ];
 
 const jsFiles = [
@@ -39,6 +40,7 @@ const jsFiles = [
   "scripts/adapter-preset-smoke.mjs",
   "scripts/setup-join-smoke.mjs",
   "scripts/edge-token-api-smoke.mjs",
+  "scripts/edge-completion-outbox-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
   "scripts/duplicate-complete-smoke.mjs",
@@ -88,6 +90,7 @@ try {
   step("adapter preset smoke", process.execPath, ["scripts/adapter-preset-smoke.mjs", "--json"]);
   step("setup join smoke", process.execPath, ["scripts/setup-join-smoke.mjs", "--json"]);
   step("edge token API smoke", process.execPath, ["scripts/edge-token-api-smoke.mjs", "--json"]);
+  step("edge completion outbox smoke", process.execPath, ["scripts/edge-completion-outbox-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
   step("duplicate complete smoke", process.execPath, ["scripts/duplicate-complete-smoke.mjs", "--json"]);

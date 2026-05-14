@@ -69,6 +69,8 @@ function loadConfig(file) {
   config.runHeartbeatIntervalMs ||= 30000;
   config.completeRetryAttempts ||= 5;
   config.completeRetryBaseDelayMs ||= 2000;
+  config.dataDir = process.env.AGENT_BUS_DATA_DIR || config.dataDir || path.join(path.dirname(path.resolve(file)), ".agent-bus");
+  config.completionOutboxDir = process.env.AGENT_BUS_COMPLETION_OUTBOX_DIR || config.completionOutboxDir || path.join(config.dataDir, "edge-completions");
   config.agents ||= [];
   config.edgeSessionId = process.env.AGENT_BUS_EDGE_SESSION_ID || `edge_session_${Date.now().toString(36)}_${crypto.randomUUID()}`;
   config._agentHealth = {};
@@ -120,6 +122,7 @@ async function connectLoop(config, options = {}) {
         console.log(`edge-node ${config.nodeId} connected to ${config.gatewayUrl}`);
       }
 
+      await drainPendingCompletions(config);
       await refreshAgentHealth(config);
       const payload = await postJson(config, "/edge/poll", {
         node_id: config.nodeId,
@@ -537,6 +540,20 @@ async function complete(config, task, result) {
     trace_id: task.trace_id || "",
     result
   };
+  const pending = writePendingCompletion(config, body);
+  try {
+    const response = await submitCompletionWithRetry(config, body);
+    deletePendingCompletion(pending.file);
+    return response;
+  } catch (err) {
+    if (isPermanentClientError(err) && !isAuthError(err)) {
+      movePendingCompletionToFailed(config, pending.file, err);
+    }
+    throw err;
+  }
+}
+
+async function submitCompletionWithRetry(config, body) {
   const maxAttempts = Math.max(1, Number(config.completeRetryAttempts || 5));
   const baseDelayMs = Math.max(100, Number(config.completeRetryBaseDelayMs || 2000));
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -545,7 +562,7 @@ async function complete(config, task, result) {
     } catch (err) {
       if (isPermanentClientError(err)) throw err;
       if (attempt === maxAttempts) {
-        console.error(`edge-node: failed to submit result for run ${task.run_id} after ${maxAttempts} attempts: ${err.message}`);
+        console.error(`edge-node: failed to submit result for run ${body.run_id} after ${maxAttempts} attempts: ${err.message}`);
         throw err;
       }
       const delayMs = Math.min(30000, baseDelayMs * (2 ** Math.min(attempt - 1, 5)));
@@ -553,6 +570,118 @@ async function complete(config, task, result) {
       await delay(delayMs);
     }
   }
+}
+
+async function drainPendingCompletions(config) {
+  const files = listPendingCompletionFiles(config);
+  if (!files.length) return;
+  console.log(`edge-node: replaying ${files.length} pending completion${files.length === 1 ? "" : "s"}`);
+  for (const file of files) {
+    let record;
+    try {
+      record = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (err) {
+      movePendingCompletionToFailed(config, file, err, { corrupt: true });
+      continue;
+    }
+    const body = record?.body && typeof record.body === "object" ? record.body : record;
+    if (!body?.run_id || !body?.result) {
+      movePendingCompletionToFailed(config, file, new Error("pending completion is missing run_id or result"), { corrupt: true });
+      continue;
+    }
+    try {
+      touchPendingCompletion(file, record, "");
+      await submitCompletionWithRetry(config, body);
+      deletePendingCompletion(file);
+      console.log(`edge-node: replayed pending completion for run ${body.run_id}`);
+    } catch (err) {
+      touchPendingCompletion(file, record, err.message || String(err));
+      if (isPermanentClientError(err) && !isAuthError(err)) {
+        movePendingCompletionToFailed(config, file, err);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+function writePendingCompletion(config, body) {
+  const dir = completionOutboxDir(config);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${safeFileName(body.run_id)}.json`);
+  const record = {
+    object: "agent_bus.edge_completion",
+    version: 1,
+    node_id: body.node_id,
+    run_id: body.run_id,
+    trace_id: body.trace_id || "",
+    created_at: new Date().toISOString(),
+    attempts: 0,
+    body
+  };
+  writeJsonAtomic(file, record);
+  return { file, record };
+}
+
+function touchPendingCompletion(file, record, lastError) {
+  const next = {
+    ...(record && typeof record === "object" ? record : {}),
+    attempts: Number(record?.attempts || 0) + 1,
+    last_attempt_at: new Date().toISOString(),
+    ...(lastError ? { last_error: lastError } : {})
+  };
+  writeJsonAtomic(file, next);
+}
+
+function listPendingCompletionFiles(config) {
+  const dir = completionOutboxDir(config);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => path.join(dir, name))
+    .sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs);
+}
+
+function deletePendingCompletion(file) {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {}
+}
+
+function movePendingCompletionToFailed(config, file, err, options = {}) {
+  const failedDir = path.join(completionOutboxDir(config), "failed");
+  fs.mkdirSync(failedDir, { recursive: true });
+  const target = path.join(failedDir, `${path.basename(file, ".json")}.${Date.now()}.json`);
+  try {
+    const record = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+    writeJsonAtomic(target, {
+      ...(record && typeof record === "object" ? record : {}),
+      failed_at: new Date().toISOString(),
+      failed_reason: options.corrupt ? "corrupt_pending_completion" : "permanent_completion_error",
+      last_error: err?.message || String(err)
+    });
+    fs.rmSync(file, { force: true });
+  } catch {
+    try {
+      fs.renameSync(file, target);
+    } catch {}
+  }
+  console.error(`edge-node: moved pending completion ${path.basename(file)} to failed outbox: ${err?.message || err}`);
+}
+
+function completionOutboxDir(config) {
+  return path.resolve(config.completionOutboxDir || path.join(config.dataDir || ".agent-bus", "edge-completions"));
+}
+
+function writeJsonAtomic(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(tmp, file);
+}
+
+function safeFileName(value) {
+  return String(value || "unknown").replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 180) || "unknown";
 }
 
 async function postJson(config, pathname, body) {

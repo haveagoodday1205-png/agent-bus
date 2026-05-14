@@ -49,6 +49,7 @@
     "adapter:preset:smoke": "node scripts/adapter-preset-smoke.mjs",
     "setup:join:smoke": "node scripts/setup-join-smoke.mjs",
     "edge-token:smoke": "node scripts/edge-token-api-smoke.mjs",
+    "edge-completion:smoke": "node scripts/edge-completion-outbox-smoke.mjs",
     "trace:smoke": "node scripts/trace-smoke.mjs",
     "smoke:central-restart": "node scripts/central-restart-smoke.mjs",
     "smoke:duplicate-complete": "node scripts/duplicate-complete-smoke.mjs",

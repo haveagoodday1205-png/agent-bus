@@ -83,6 +83,8 @@ Start the edge:
 agent-bus connect --config edge.config.json
 ```
 
+Keep `dataDir` on persistent local storage. The Node edge writes finished run results to `dataDir/edge-completions` before posting `/edge/complete`, then replays that outbox after reconnects so completed local work is not lost during a short Central outage.
+
 ## 5. Check Presence And Activity
 
 From the central/admin machine:

@@ -959,6 +959,48 @@ STATUS_RUN_HEARTBEAT_STALE_SECONDS = max(
     ),
 )
 ROOM_AUTO_RETRY_FAILURE_CLASSES = {"rate_limited", "timeout", "upstream_transient"}
+RUN_FAILURE_GUIDANCE = {
+    "rate_limited": {
+        "failure_category": "rate_limit",
+        "recommended_action": "retry_after_backoff",
+    },
+    "upstream_transient": {
+        "failure_category": "model_gateway",
+        "recommended_action": "retry_failed_agents",
+    },
+    "timeout": {
+        "failure_category": "transient",
+        "recommended_action": "retry_failed_agents",
+    },
+    "auth_config": {
+        "failure_category": "auth_config",
+        "recommended_action": "fix_auth_or_model_config",
+    },
+    "protocol_violation": {
+        "failure_category": "contract",
+        "recommended_action": "inspect_agent_contract",
+    },
+    "local_runtime": {
+        "failure_category": "tool_runtime",
+        "recommended_action": "inspect_edge_runtime",
+    },
+    "run_failed": {
+        "failure_category": "unknown",
+        "recommended_action": "inspect_failure",
+    },
+    "cancelled": {
+        "failure_category": "operator_cancelled",
+        "recommended_action": "do_not_retry_cancelled",
+    },
+    "superseded": {
+        "failure_category": "superseded",
+        "recommended_action": "inspect_replacement_run",
+    },
+    "unknown": {
+        "failure_category": "unknown",
+        "recommended_action": "inspect_failure",
+    },
+}
 
 
 def public_status(config):
@@ -2319,6 +2361,8 @@ def retry_failed_room_agents(config, room_id, body, trace_id=None):
             "retry_of_run_id": group.get("latest_run_id"),
             "retry_reason": reason,
             "source_failure_class": group.get("failure_class"),
+            "source_failure_category": group.get("failure_category"),
+            "source_recommended_action": group.get("recommended_action"),
             "source_error_excerpt": group.get("latest_error"),
         }
         for group in inspection.get("groups") or []
@@ -2757,6 +2801,7 @@ def supervisor_run_record(room, run, node_by_id, node_lookup_available, node_sta
     agent_id = str(run.get("agent_id") or "").strip()
     node = node_by_id.get(node_id)
     last_heartbeat_at = run.get("last_heartbeat_at") or run.get("started_at")
+    attempt = latest_run_attempt(run)
     item = {
         "id": run.get("id"),
         "room_id": run.get("room_id") or room.get("id"),
@@ -2769,6 +2814,14 @@ def supervisor_run_record(room, run, node_by_id, node_lookup_available, node_sta
         "started_at": run.get("started_at"),
         "completed_at": run.get("completed_at"),
         "last_heartbeat_at": last_heartbeat_at,
+        "attempt_no": attempt.get("attempt_no") or run.get("attempt_no"),
+        "failure_class": attempt.get("failure_class") or "",
+        "failure_category": attempt.get("failure_category") or "",
+        "recommended_action": attempt.get("recommended_action") or "",
+        "retryable": attempt.get("retryable") if isinstance(attempt.get("retryable"), bool) else None,
+        "retry_reason": attempt.get("retry_reason") or "",
+        "last_error_excerpt": attempt.get("last_error_excerpt") or "",
+        "retry_of_run_id": attempt.get("retry_of_run_id") or run.get("retry_of_run_id") or "",
         "run_heartbeat_interval_ms": heartbeat_interval_by_agent.get(agent_id),
         "node_status": node.get("status") if node else None,
         "node_last_seen_at": node.get("last_seen_at") if node else None,
@@ -2902,6 +2955,27 @@ def room_failure_class_is_auto_retryable(failure_class):
     return str(failure_class or "").strip().lower() in ROOM_AUTO_RETRY_FAILURE_CLASSES
 
 
+def run_failure_guidance(failure_class):
+    normalized = str(failure_class or "").strip().lower()
+    if not normalized:
+        return {"failure_category": "", "recommended_action": ""}
+    guidance = RUN_FAILURE_GUIDANCE.get(normalized) or RUN_FAILURE_GUIDANCE["unknown"]
+    return {
+        "failure_category": guidance.get("failure_category") or "unknown",
+        "recommended_action": guidance.get("recommended_action") or "inspect_failure",
+    }
+
+
+def enrich_run_attempt_classification(classification):
+    item = dict(classification or {})
+    item.update({
+        key: value
+        for key, value in run_failure_guidance(item.get("failure_class")).items()
+        if value
+    })
+    return item
+
+
 def room_run_failure_taxonomy(run, status, latest_attempt=None):
     latest_attempt = latest_attempt if isinstance(latest_attempt, dict) else {}
     classification = {}
@@ -2919,6 +2993,8 @@ def room_run_failure_taxonomy(run, status, latest_attempt=None):
         retryable = classification.get("retryable") if isinstance(classification.get("retryable"), bool) else None
     return {
         "failure_class": failure_class,
+        "failure_category": latest_attempt.get("failure_category") or classification.get("failure_category") or run_failure_guidance(failure_class).get("failure_category") or "",
+        "recommended_action": latest_attempt.get("recommended_action") or classification.get("recommended_action") or run_failure_guidance(failure_class).get("recommended_action") or "",
         "retryable": retryable,
         "retry_reason": latest_attempt.get("retry_reason") or classification.get("retry_reason") or "",
     }
@@ -2973,6 +3049,8 @@ def inspect_room_failed_agent_retries(room, requested_agents=None, force=False):
             "node_id": registered.get("node_id") if registered else "",
             "attempt_no": (latest_attempt.get("attempt_no") or latest.get("attempt_no")) if latest else None,
             "failure_class": classification.get("failure_class") or "",
+            "failure_category": classification.get("failure_category") or "",
+            "recommended_action": classification.get("recommended_action") or "",
             "failure_retryable": failure_retryable if isinstance(failure_retryable, bool) else None,
             "taxonomy_retryable": taxonomy_retryable,
             "auto_retryable": taxonomy_retryable,
@@ -4215,6 +4293,8 @@ def initialize_run_attempt(run, attempt_no=1, attempt_meta=None):
         "retry_of_run_id": attempt_meta.get("retry_of_run_id") or "",
         "retry_request_reason": attempt_meta.get("retry_reason") or "",
         "source_failure_class": attempt_meta.get("source_failure_class") or "",
+        "source_failure_category": attempt_meta.get("source_failure_category") or run_failure_guidance(attempt_meta.get("source_failure_class")).get("failure_category") or "",
+        "source_recommended_action": attempt_meta.get("source_recommended_action") or run_failure_guidance(attempt_meta.get("source_failure_class")).get("recommended_action") or "",
         "source_error_excerpt": trim_one_line(attempt_meta.get("source_error_excerpt") or "", 500),
     }
     attempt = {key: value for key, value in attempt.items() if value not in (None, "", [])}
@@ -4278,6 +4358,11 @@ def update_run_attempt(run, status=None, at=None, **fields):
         attempt["last_heartbeat_at"] = fields.pop("last_heartbeat_at")
     elif status == "running":
         attempt["last_heartbeat_at"] = at
+    failure_class = fields.get("failure_class") or attempt.get("failure_class")
+    if failure_class:
+        guidance = run_failure_guidance(failure_class)
+        fields.setdefault("failure_category", guidance.get("failure_category"))
+        fields.setdefault("recommended_action", guidance.get("recommended_action"))
     for key, value in fields.items():
         if value not in (None, "", []):
             attempt[key] = value
@@ -4291,28 +4376,34 @@ def update_run_attempt(run, status=None, at=None, **fields):
 
 def classify_run_attempt(status, exit_code=None, stdout="", stderr="", summary=""):
     normalized = str(status or "").lower()
+    def classification(failure_class, retryable, retry_reason):
+        return enrich_run_attempt_classification({
+            "failure_class": failure_class,
+            "retryable": retryable,
+            "retry_reason": retry_reason,
+        })
     if normalized == "completed":
-        return {"failure_class": "", "retryable": False, "retry_reason": ""}
+        return classification("", False, "")
     if normalized in {"cancelled", "canceled"}:
-        return {"failure_class": "cancelled", "retryable": False, "retry_reason": "operator_cancelled"}
+        return classification("cancelled", False, "operator_cancelled")
     if normalized in {"replaced", "superseded"}:
-        return {"failure_class": "superseded", "retryable": False, "retry_reason": "superseded"}
+        return classification("superseded", False, "superseded")
     text = " ".join(str(value or "") for value in (stdout, stderr, summary)).lower()
     if re.search(r"\b(429|rate limit|too many requests)\b", text):
-        return {"failure_class": "rate_limited", "retryable": True, "retry_reason": "provider_rate_limited"}
+        return classification("rate_limited", True, "provider_rate_limited")
     if re.search(r"\b(502|503|504|5xx|upstream|server-side issue|bad gateway|service unavailable|gateway timeout)\b", text):
-        return {"failure_class": "upstream_transient", "retryable": True, "retry_reason": "provider_transient_error"}
+        return classification("upstream_transient", True, "provider_transient_error")
     if re.search(r"\b(timeout|timed out|deadline|etimedout)\b", text):
-        return {"failure_class": "timeout", "retryable": True, "retry_reason": "timeout"}
+        return classification("timeout", True, "timeout")
     if re.search(r"\b(401|403|unauthorized|forbidden|api key|apikey|auth|credential|permission denied)\b", text):
-        return {"failure_class": "auth_config", "retryable": False, "retry_reason": "configuration_or_auth_failure"}
+        return classification("auth_config", False, "configuration_or_auth_failure")
     if re.search(r"\b(protocol|missing report|missing done|invalid json|parse error|schema)\b", text):
-        return {"failure_class": "protocol_violation", "retryable": False, "retry_reason": "protocol_violation"}
+        return classification("protocol_violation", False, "protocol_violation")
     if exit_code not in (None, "", 0):
-        return {"failure_class": "local_runtime", "retryable": False, "retry_reason": "nonzero_exit"}
+        return classification("local_runtime", False, "nonzero_exit")
     if normalized in {"failed", "error"}:
-        return {"failure_class": "run_failed", "retryable": False, "retry_reason": "unclassified_failure"}
-    return {"failure_class": normalized or "unknown", "retryable": False, "retry_reason": "unknown"}
+        return classification("run_failed", False, "unclassified_failure")
+    return classification(normalized or "unknown", False, "unknown")
 
 
 def append_run_attempt_event(config, run, phase):
@@ -4534,6 +4625,8 @@ def complete_run(config, body):
             edge_session_id=edge_session_id or run.get("edge_session_id"),
             exit_code=run.get("exit_code"),
             failure_class=attempt_classification.get("failure_class"),
+            failure_category=attempt_classification.get("failure_category"),
+            recommended_action=attempt_classification.get("recommended_action"),
             retryable=attempt_classification.get("retryable"),
             retry_reason=attempt_classification.get("retry_reason"),
             last_error_excerpt=last_error_excerpt,
@@ -4758,6 +4851,7 @@ def update_room_agent_checklist(room, run, content=None, actions=None):
         wake_count = sum(1 for action in actions if action == "wake")
         reminder_count = sum(1 for action in actions if action == "reminder")
     status = run_status(run) or "unknown"
+    attempt = latest_run_attempt(run)
     updated_at = now()
     record = {
         "run_id": run_id,
@@ -4780,6 +4874,11 @@ def update_room_agent_checklist(room, run, content=None, actions=None):
         "summary": room_run_contract_summary(run, text),
         "updated_at": updated_at,
     }
+    if attempt.get("attempt_no"):
+        record["attempt_no"] = attempt.get("attempt_no")
+    for key in ("failure_class", "failure_category", "recommended_action", "retryable", "retry_reason", "last_error_excerpt"):
+        if attempt.get(key) not in (None, "", []):
+            record[key] = attempt.get(key)
     error = room_run_contract_error(run, text)
     if error:
         record["error"] = error
@@ -4789,7 +4888,9 @@ def update_room_agent_checklist(room, run, content=None, actions=None):
         "run_id", "node_id", "status", "created_at", "started_at", "completed_at",
         "last_heartbeat_at", "duration_seconds", "has_report", "has_done",
         "report_count", "blackboard_count", "done_count", "wake_count",
-        "reminder_count", "wake_reason", "summary", "error",
+        "reminder_count", "wake_reason", "summary", "error", "attempt_no",
+        "failure_class", "failure_category", "recommended_action", "retryable",
+        "retry_reason", "last_error_excerpt",
     ):
         agent.pop(key, None)
     agent.update(clean_record)

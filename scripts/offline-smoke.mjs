@@ -308,6 +308,8 @@ async function main() {
   assert(failedRun?.status === "failed", "offline failed room run did not fail");
   assert(failedRun?.attempt?.attempt_no === 1, "failed room run did not record attempt_no=1");
   assert(failedRun?.attempt?.failure_class === "upstream_transient", `failed room run classified as ${failedRun?.attempt?.failure_class || "missing"} instead of upstream_transient`);
+  assert(failedRun?.attempt?.failure_category === "model_gateway", `failed room run category was ${failedRun?.attempt?.failure_category || "missing"} instead of model_gateway`);
+  assert(failedRun?.attempt?.recommended_action === "retry_failed_agents", "failed room run did not record retry_failed_agents recommended action");
   assert(failedRun?.attempt?.retryable === true, "failed room upstream transient attempt was not marked retryable");
   assert(failedChecklist?.summary?.failed_agents === 1, "room checklist did not count failed agents");
   assert(failedChecklist?.summary?.missing_report_agents?.includes("offline-fail-agent"), "room checklist did not mark missing REPORT on failed agent");
@@ -315,12 +317,14 @@ async function main() {
   assert(failedChecklistAgent?.status === "failed", "room checklist did not record failed agent status");
   assert(failedChecklistAgent?.has_report === false, "room checklist incorrectly marked failed agent as having REPORT");
   assert(failedChecklistAgent?.has_done === false, "room checklist incorrectly marked failed agent as having DONE");
+  assert(failedChecklistAgent?.failure_category === "model_gateway", "room checklist did not record failed agent category");
+  assert(failedChecklistAgent?.recommended_action === "retry_failed_agents", "room checklist did not record failed agent recommended action");
   assert(/502 Upstream/.test(failedChecklistAgent?.error || ""), "room checklist did not capture failed agent error text");
   const failedHealth = await runCliJson(["room", "health", failedFinalRoom.id, "--json", "--gateway", base, "--token", token]);
   assert(failedHealth.summary?.failed_agents === 1, "CLI room health did not count failed agents");
   assert(failedHealth.summary?.missing_report_agents?.includes("offline-fail-agent"), "CLI room health did not expose missing REPORT agents");
   assert(failedHealth.agents?.some((item) => item.agent_id === "offline-fail-agent" && item.status === "failed" && /502 Upstream/.test(item.last_error || "")), "CLI room health did not expose failed agent error");
-  assert(failedHealth.agents?.some((item) => item.agent_id === "offline-fail-agent" && item.attempt_no === 1 && item.failure_class === "upstream_transient" && item.retryable === true), "CLI room health did not expose attempt failure taxonomy");
+  assert(failedHealth.agents?.some((item) => item.agent_id === "offline-fail-agent" && item.attempt_no === 1 && item.failure_class === "upstream_transient" && item.failure_category === "model_gateway" && item.recommended_action === "retry_failed_agents" && item.retryable === true), "CLI room health did not expose attempt failure taxonomy and recommended action");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "request_report" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest requesting REPORT from a failed agent");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "recover_failed_agents" && item.agents?.includes("offline-fail-agent")), "CLI room health did not suggest failed-agent recovery");
   assert(failedHealth.recovery_actions?.some((item) => item.kind === "recover_failed_agents" && /retry-failed/.test(item.command || "")), "CLI room health did not suggest the guarded failed-agent retry command");
@@ -328,10 +332,11 @@ async function main() {
   assert(failedRetryDryRun.dry_run === true, "CLI room retry-failed did not default to dry-run");
   assert(failedRetryDryRun.inspection?.retryable_agents?.includes("offline-fail-agent"), "CLI room retry-failed did not identify the failed agent as retryable");
   assert(failedRetryDryRun.inspection?.safe_retryable_agents?.includes("offline-fail-agent"), "CLI room retry-failed did not expose taxonomy-safe retryable agents");
-  assert(failedRetryDryRun.inspection?.groups?.some((item) => item.agent_id === "offline-fail-agent" && item.taxonomy_retryable === true), "CLI room retry-failed did not expose taxonomy_retryable=true for upstream transient failure");
+  assert(failedRetryDryRun.inspection?.groups?.some((item) => item.agent_id === "offline-fail-agent" && item.taxonomy_retryable === true && item.failure_category === "model_gateway" && item.recommended_action === "retry_failed_agents"), "CLI room retry-failed did not expose enriched taxonomy for upstream transient failure");
   const failedDoctor = await runCliJson(["room", "doctor", failedFinalRoom.id, "--json", "--gateway", base, "--token", token]);
   assert(failedDoctor.summary === "failed_agents_retryable", `failed room doctor returned ${failedDoctor.summary}`);
   assert(failedDoctor.retryable_failed_agents?.includes("offline-fail-agent"), "failed room doctor did not expose retryable failed agent");
+  assert(failedDoctor.failed_attempts?.some((item) => item.agent_id === "offline-fail-agent" && item.failure_category === "model_gateway" && item.recommended_action === "retry_failed_agents"), "failed room doctor did not expose failed attempt category/action");
   assert(failedDoctor.actions?.some((item) => item.kind === "retry_failed_agents" && /retry-failed/.test(item.command || "")), "failed room doctor did not suggest failed-agent retry");
   const failedDoctorText = await runCliText(["room", "doctor", failedFinalRoom.id, "--gateway", base, "--token", token]);
   assert(failedDoctorText.includes("Agent Bus room doctor:"), "CLI room doctor did not render human output");
@@ -343,6 +348,8 @@ async function main() {
   assert(failedRetryRun.status === "failed", "retry failed-agent run did not reach failed terminal status");
   assert(failedRetryRun.attempt?.attempt_no === 2, "retry failed-agent run did not record attempt_no=2");
   assert(failedRetryRun.attempt?.retry_of_run_id === failedRun.id, "retry failed-agent run did not record retry_of_run_id");
+  assert(failedRetryRun.attempt?.source_failure_category === "model_gateway", "retry failed-agent run did not record source failure category");
+  assert(failedRetryRun.attempt?.source_recommended_action === "retry_failed_agents", "retry failed-agent run did not record source recommended action");
   assert(failedRetryRun.attempt?.failure_class === "upstream_transient", "retry failed-agent run did not preserve upstream transient classification");
   const failedAfterRetry = await requestJson(`${base}/rooms/${failedFinalRoom.id}`, { headers: authHeaders(token) });
   assert(failedAfterRetry.runs?.filter((item) => item.agent_id === "offline-fail-agent" && item.status === "failed").length === 2, "failed-agent retry did not preserve both failed attempts");
@@ -365,17 +372,20 @@ async function main() {
   const authFailedRun = authFailedFinalRoom.runs?.find((item) => item.agent_id === "offline-auth-fail-agent");
   assert(authFailedRun?.status === "failed", "offline auth failure room run did not fail");
   assert(authFailedRun?.attempt?.failure_class === "auth_config", `auth failure classified as ${authFailedRun?.attempt?.failure_class || "missing"} instead of auth_config`);
+  assert(authFailedRun?.attempt?.failure_category === "auth_config", "auth failure did not record auth_config category");
+  assert(authFailedRun?.attempt?.recommended_action === "fix_auth_or_model_config", "auth failure did not record fix_auth_or_model_config recommended action");
   assert(authFailedRun?.attempt?.retryable === false, "auth failure was incorrectly marked retryable");
   const authRetryDryRun = await runCliJson(["room", "retry-failed", authFailedFinalRoom.id, "--json", "--gateway", base, "--token", token]);
   assert(authRetryDryRun.inspection?.retryable_agents?.length === 0, "auth failure was incorrectly retryable without --force");
   assert(authRetryDryRun.inspection?.blocked_failure_class_agents?.includes("offline-auth-fail-agent"), "auth failure was not blocked by failure class");
-  assert(authRetryDryRun.inspection?.groups?.some((item) => item.agent_id === "offline-auth-fail-agent" && item.taxonomy_retryable === false && item.blocked_reason === "failure_class_not_retryable"), "auth failure retry inspection did not expose taxonomy block reason");
+  assert(authRetryDryRun.inspection?.groups?.some((item) => item.agent_id === "offline-auth-fail-agent" && item.taxonomy_retryable === false && item.failure_category === "auth_config" && item.recommended_action === "fix_auth_or_model_config" && item.blocked_reason === "failure_class_not_retryable"), "auth failure retry inspection did not expose taxonomy block reason and recommended action");
   const authForceDryRun = await runCliJson(["room", "retry-failed", authFailedFinalRoom.id, "--force", "--json", "--gateway", base, "--token", token]);
   assert(authForceDryRun.inspection?.retryable_agents?.includes("offline-auth-fail-agent"), "auth failure was not force-retryable in dry-run");
   assert(authForceDryRun.inspection?.groups?.some((item) => item.agent_id === "offline-auth-fail-agent" && item.forced_retry === true), "force retry dry-run did not mark forced_retry=true");
   const authDoctor = await runCliJson(["room", "doctor", authFailedFinalRoom.id, "--json", "--gateway", base, "--token", token]);
   assert(authDoctor.summary === "failed_agents_blocked", `auth failed room doctor returned ${authDoctor.summary}`);
   assert(authDoctor.blocked_failed_agents?.includes("offline-auth-fail-agent"), "auth failed room doctor did not expose blocked failed agent");
+  assert(authDoctor.failed_attempts?.some((item) => item.agent_id === "offline-auth-fail-agent" && item.failure_category === "auth_config" && item.recommended_action === "fix_auth_or_model_config"), "auth failed room doctor did not expose blocked failed category/action");
   assert(authDoctor.actions?.some((item) => item.kind === "inspect_or_force_failed_agents" && /--force/.test(item.command || "")), "auth failed room doctor did not suggest explicit force retry path");
   await runCliJson(["room", "pause", authFailedFinalRoom.id, "--reason", "offline smoke auth failed room checked", "--gateway", base, "--token", token]);
 

@@ -2934,9 +2934,10 @@ function formatRoomFailedRetryResult(result, { roomId, reason = "Retry failed ro
     lines.push("", "Agents:");
     for (const group of inspection.groups) {
       const state = group.retryable ? (group.forced_retry ? "forced-retryable" : "retryable") : (group.blocked_reason || "blocked");
-      const failure = group.failure_class ? ` failure=${group.failure_class}${group.taxonomy_retryable ? "/auto" : "/manual"}` : "";
+      const failure = group.failure_class ? ` failure=${group.failure_class}${group.failure_category ? `:${group.failure_category}` : ""}${group.taxonomy_retryable ? "/auto" : "/manual"}` : "";
+      const action = group.recommended_action ? ` action=${group.recommended_action}` : "";
       const error = group.latest_error ? ` error=${oneLine(group.latest_error, 100)}` : "";
-      lines.push(`- ${group.agent_id || "-"}: ${state} latest=${group.latest_run_id || "-"} status=${group.latest_status || "unknown"}${failure}${error}`);
+      lines.push(`- ${group.agent_id || "-"}: ${state} latest=${group.latest_run_id || "-"} status=${group.latest_status || "unknown"}${failure}${action}${error}`);
     }
   }
   if (result?.dry_run !== false) {
@@ -3065,6 +3066,7 @@ function roomHealthSummary(room, {
     const run = latestRunByAgent.get(agentId) || {};
     const attempt = runAttemptRecord(run);
     const checklistItem = checklistAgents[agentId] || {};
+    const failureGuidance = runFailureGuidance(attempt.failure_class || checklistItem.failure_class);
     const inspectRun = inspectionRunsById.get(run.id || checklistItem.run_id || "") || {};
     const contract = roomHealthContractStatus(room, run, checklistItem);
     const activeRuns = activeRunsByAgent.get(agentId) || [];
@@ -3078,7 +3080,9 @@ function roomHealthSummary(room, {
       edge_session_id: run.edge_session_id || run.lease?.edge_session_id || inspectRun.edge_session_id || "",
       lease_state: run.lease?.state || inspectRun.lease_state || "",
       attempt_no: attempt.attempt_no || run.attempt_no || null,
-      failure_class: attempt.failure_class || "",
+      failure_class: attempt.failure_class || checklistItem.failure_class || "",
+      failure_category: attempt.failure_category || checklistItem.failure_category || failureGuidance.failure_category || "",
+      recommended_action: attempt.recommended_action || checklistItem.recommended_action || failureGuidance.recommended_action || "",
       retryable: typeof attempt.retryable === "boolean" ? attempt.retryable : null,
       retry_reason: attempt.retry_reason || "",
       retry_request_reason: attempt.retry_request_reason || run.retry_request_reason || "",
@@ -3384,6 +3388,32 @@ function runAttemptRecord(run) {
   return run.attempt && typeof run.attempt === "object" ? run.attempt : {};
 }
 
+function runFailureGuidance(failureClass) {
+  switch (String(failureClass || "").trim().toLowerCase()) {
+    case "rate_limited":
+      return { failure_category: "rate_limit", recommended_action: "retry_after_backoff" };
+    case "upstream_transient":
+      return { failure_category: "model_gateway", recommended_action: "retry_failed_agents" };
+    case "timeout":
+      return { failure_category: "transient", recommended_action: "retry_failed_agents" };
+    case "auth_config":
+      return { failure_category: "auth_config", recommended_action: "fix_auth_or_model_config" };
+    case "protocol_violation":
+      return { failure_category: "contract", recommended_action: "inspect_agent_contract" };
+    case "local_runtime":
+      return { failure_category: "tool_runtime", recommended_action: "inspect_edge_runtime" };
+    case "cancelled":
+      return { failure_category: "operator_cancelled", recommended_action: "do_not_retry_cancelled" };
+    case "superseded":
+      return { failure_category: "superseded", recommended_action: "inspect_replacement_run" };
+    case "run_failed":
+    case "unknown":
+      return { failure_category: "unknown", recommended_action: "inspect_failure" };
+    default:
+      return { failure_category: "", recommended_action: "" };
+  }
+}
+
 function latestRoomMessageAt(room) {
   const messages = Array.isArray(room?.messages) ? room.messages : [];
   return messages.length ? messages[messages.length - 1]?.at || null : null;
@@ -3420,12 +3450,13 @@ function formatRoomHealth(health) {
       const lease = agent.lease_state ? ` lease=${agent.lease_state}` : "";
       const attempt = agent.attempt_no ? ` attempt=${agent.attempt_no}` : "";
       const failure = agent.failure_class
-        ? ` failure=${agent.failure_class}${agent.retryable === true ? "/retryable" : agent.retryable === false ? "/not-retryable" : ""}`
+        ? ` failure=${agent.failure_class}${agent.failure_category ? `:${agent.failure_category}` : ""}${agent.retryable === true ? "/retryable" : agent.retryable === false ? "/not-retryable" : ""}`
         : "";
       const edgeSession = agent.edge_session_id ? ` edge_session=${oneLine(agent.edge_session_id, 36)}` : "";
       const activeRuns = Number(agent.active_run_count || 0) > 1 ? ` active_runs=${agent.active_run_ids.join(",")}` : "";
       const wake = agent.wake_reason ? ` wake=${JSON.stringify(oneLine(agent.wake_reason, 100))}` : "";
       lines.push(`- ${agent.agent_id || "-"}: ${agent.status || "unknown"} run=${agent.run_id || "-"} ${report}/${done}${duration}${stale}${lease}${attempt}${failure}${edgeSession}${activeRuns}${wake}`);
+      if (agent.recommended_action) lines.push(`  recommended_action: ${oneLine(agent.recommended_action, 120)}`);
       if (agent.retry_reason) lines.push(`  retry_reason: ${oneLine(agent.retry_reason, 180)}`);
       if (agent.retry_request_reason) lines.push(`  retry_request: ${oneLine(agent.retry_request_reason, 180)}`);
       if (agent.retry_of_run_id) lines.push(`  retry_of: ${agent.retry_of_run_id}`);
@@ -3469,9 +3500,10 @@ function formatRoomDoctor(result) {
     lines.push("", "Failed attempts:");
     for (const item of result.failed_attempts) {
       const state = item.retryable ? (item.forced_retry ? "forced-retryable" : "retryable") : (item.blocked_reason || "blocked");
-      const failure = item.failure_class ? ` failure=${item.failure_class}${item.taxonomy_retryable ? "/auto" : "/manual"}` : "";
+      const failure = item.failure_class ? ` failure=${item.failure_class}${item.failure_category ? `:${item.failure_category}` : ""}${item.taxonomy_retryable ? "/auto" : "/manual"}` : "";
+      const action = item.recommended_action ? ` action=${item.recommended_action}` : "";
       const error = item.latest_error ? ` error=${oneLine(item.latest_error, 120)}` : "";
-      lines.push(`- ${item.agent_id || "-"}: ${state} run=${item.latest_run_id || "-"}${failure}${error}`);
+      lines.push(`- ${item.agent_id || "-"}: ${state} run=${item.latest_run_id || "-"}${failure}${action}${error}`);
     }
   }
   if (Array.isArray(result?.actions) && result.actions.length) {
@@ -3630,6 +3662,7 @@ function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailabl
   const seenAt = node?.last_seen_at || null;
   const lastHeartbeatAt = rawRun?.last_heartbeat_at || rawRun?.started_at || null;
   const attempt = runAttemptRecord(rawRun);
+  const failureGuidance = runFailureGuidance(attempt.failure_class);
   return {
     id: rawRun?.id || "",
     room_id: rawRun?.room_id || rawRun?.thread_id || "",
@@ -3644,6 +3677,8 @@ function roomInspectRunRecord(rawRun, nodeById, staleSeconds, nodeLookupAvailabl
     last_heartbeat_at: lastHeartbeatAt,
     attempt_no: attempt.attempt_no || rawRun?.attempt_no || null,
     failure_class: attempt.failure_class || "",
+    failure_category: attempt.failure_category || failureGuidance.failure_category || "",
+    recommended_action: attempt.recommended_action || failureGuidance.recommended_action || "",
     retryable: typeof attempt.retryable === "boolean" ? attempt.retryable : null,
     retry_reason: attempt.retry_reason || "",
     retry_request_reason: attempt.retry_request_reason || rawRun?.retry_request_reason || "",
@@ -3935,14 +3970,15 @@ function appendRoomInspectionRuns(lines, label, runs) {
     const edgeSession = run.edge_session_id ? ` edge_session=${oneLine(run.edge_session_id, 36)}` : "";
     const attempt = run.attempt_no ? ` attempt=${run.attempt_no}` : "";
     const failure = run.failure_class
-      ? ` failure=${run.failure_class}${run.retryable === true ? "/retryable" : run.retryable === false ? "/not-retryable" : ""}`
+      ? ` failure=${run.failure_class}${run.failure_category ? `:${run.failure_category}` : ""}${run.retryable === true ? "/retryable" : run.retryable === false ? "/not-retryable" : ""}`
       : "";
+    const action = run.recommended_action ? ` action=${run.recommended_action}` : "";
     const retry = run.retry_reason ? ` retry_reason=${JSON.stringify(oneLine(run.retry_reason, 80))}` : "";
     const retryRequest = run.retry_request_reason ? ` retry_request=${JSON.stringify(oneLine(run.retry_request_reason, 80))}` : "";
     const nodeNote = run.node_freshness && run.node_freshness !== "unchecked"
       ? ` node=${run.node_id || "-"} (${run.node_freshness})`
       : ` node=${run.node_id || "-"}`;
-    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age}${heartbeat}${heartbeatAt}${heartbeatEvery}${lease}${edgeSession}${attempt}${failure}${retry}${retryRequest} created=${run.created_at || "-"}`);
+    lines.push(`- ${run.id || "-"}: ${run.status || "unknown"} agent=${run.agent_id || "-"}${nodeNote} age=${age}${heartbeat}${heartbeatAt}${heartbeatEvery}${lease}${edgeSession}${attempt}${failure}${action}${retry}${retryRequest} created=${run.created_at || "-"}`);
     if (run.retry_of_run_id) lines.push(`  retry_of: ${run.retry_of_run_id}`);
     if (run.last_error_excerpt) lines.push(`  error: ${oneLine(run.last_error_excerpt, 180)}`);
   }
@@ -5458,6 +5494,7 @@ function statusRunRecord(rawRun, roomId, {
   const seenAt = node?.last_seen_at || null;
   const lastHeartbeatAt = rawRun?.last_heartbeat_at || rawRun?.started_at || null;
   const attempt = runAttemptRecord(rawRun);
+  const failureGuidance = runFailureGuidance(attempt.failure_class);
   return {
     id: rawRun?.id || "",
     room_id: rawRun?.room_id || roomId,
@@ -5472,6 +5509,8 @@ function statusRunRecord(rawRun, roomId, {
     last_heartbeat_at: lastHeartbeatAt,
     attempt_no: attempt.attempt_no || rawRun?.attempt_no || null,
     failure_class: attempt.failure_class || "",
+    failure_category: attempt.failure_category || failureGuidance.failure_category || "",
+    recommended_action: attempt.recommended_action || failureGuidance.recommended_action || "",
     retryable: typeof attempt.retryable === "boolean" ? attempt.retryable : null,
     retry_reason: attempt.retry_reason || "",
     retry_request_reason: attempt.retry_request_reason || rawRun?.retry_request_reason || "",

@@ -504,7 +504,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/edge/register":
                     return self.json(register_node(self.config, body))
                 if path == "/edge/poll":
-                    return self.json(poll_node(self.config, body, int(body.get("timeout_ms") or self.config["defaults"]["pollTimeoutMs"])))
+                    poll_result = poll_node(self.config, body, int(body.get("timeout_ms") or self.config["defaults"]["pollTimeoutMs"]))
+                    delivered = self.json(poll_result)
+                    if delivered is False:
+                        requeue_poll_task_after_disconnect(body.get("node_id"), poll_result)
+                    return
                 if path == "/edge/events":
                     record_event(self.config, body)
                     return self.json({"ok": True})
@@ -584,9 +588,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("content-length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+            return True
         except Exception as exc:
             if is_client_disconnect(exc):
-                return
+                return False
             raise
 
     def console_asset(self, request_path):
@@ -4341,6 +4346,26 @@ def poll_node(config, body, timeout_ms):
         mark_task_dispatched(config, task, node_id, body)
         return {"type": "task", "task": task}
     return {"type": "idle"}
+
+
+def requeue_poll_task_after_disconnect(node_id, poll_result):
+    if not isinstance(poll_result, dict) or poll_result.get("type") != "task":
+        return False
+    task = poll_result.get("task")
+    if not isinstance(task, dict):
+        return False
+    node_id = node_id or task.get("node_id")
+    if not node_id:
+        return False
+    queue = STATE["queues"].setdefault(node_id, [])
+    run_id = task.get("run_id")
+    if run_id and any(isinstance(item, dict) and item.get("run_id") == run_id for item in queue):
+        return False
+    queue.insert(0, task)
+    cond = STATE["conditions"].setdefault(node_id, threading.Condition())
+    with cond:
+        cond.notify()
+    return True
 
 
 def update_node_edge_session(node, edge_session_id):

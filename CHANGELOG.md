@@ -82,6 +82,7 @@
 - Adds `agent-bus room follow-up ROOM_ID` so operators can preview or create a follow-up room from doctor/contract-gap context without copying a long generated command.
 - Makes `room health` distinguish live queued/running work from true stale/orphan recovery so active overnight rooms no longer look broken just because they are still running.
 - Adds a Node edge completion outbox so finished agent results are persisted locally and replayed after transient `/edge/complete` failures instead of being lost during central reconnects.
+- Requeues Python Central long-poll tasks when an edge poll response hits a client disconnect, preventing work from being delivered to a dead request and lost before the edge reconnects.
 
 ## 0.5.5 - Compact room session keys
 

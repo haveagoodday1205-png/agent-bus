@@ -39,6 +39,7 @@ async function main() {
   const agentScript = path.join(tempDir, "offline-agent.mjs");
   const failAgentScript = path.join(tempDir, "offline-fail-agent.mjs");
   const authFailAgentScript = path.join(tempDir, "offline-auth-fail-agent.mjs");
+  const noReportAgentScript = path.join(tempDir, "offline-no-report-agent.mjs");
 
   fs.writeFileSync(centralConfig, `${JSON.stringify({
     host: "127.0.0.1",
@@ -61,6 +62,7 @@ async function main() {
   fs.writeFileSync(agentScript, `const room = process.env.AGENT_ROOM_ID || "";\nconst cache = process.env.AGENT_CACHE_KEY || "";\nconst wake = process.env.AGENT_WAKE_REASON || "";\nconst edgeSession = process.env.EDGE_SESSION_ID || "";\nconsole.log("REPORT: offline smoke run completed for " + room);\nconsole.log("BLACKBOARD: cache key " + cache);\nconsole.log("BLACKBOARD: wake reason " + wake);\nconsole.log("BLACKBOARD: edge session " + edgeSession);\nconsole.log("BLACKBOARD: fake token=sk-test-secret-000000000000000000");\nconsole.log("DONE");\n`);
   fs.writeFileSync(failAgentScript, `console.error("API Error: 502 Upstream request failed in offline smoke");\nprocess.exit(1);\n`);
   fs.writeFileSync(authFailAgentScript, `console.error("API Error: 401 unauthorized API key in offline smoke");\nprocess.exit(1);\n`);
+  fs.writeFileSync(noReportAgentScript, `console.log("Completed without a REPORT line so room doctor can detect contract gaps.");\nconsole.log("DONE");\n`);
 
   fs.writeFileSync(edgeConfig, `${JSON.stringify({
     nodeId: "offline-smoke-node",
@@ -93,6 +95,14 @@ async function main() {
       adapter: "command",
       capabilities: ["test", "room", "offline", "auth-failure"],
       runCommand: `${quoteCommandArg(process.execPath)} ${quoteCommandArg(authFailAgentScript)}`
+    }, {
+      id: "offline-no-report-agent",
+      kind: "offline",
+      role: "executor",
+      enabled: true,
+      adapter: "command",
+      capabilities: ["test", "room", "offline", "contract-gap"],
+      runCommand: `${quoteCommandArg(process.execPath)} ${quoteCommandArg(noReportAgentScript)}`
     }]
   }, null, 2)}\n`);
 
@@ -111,6 +121,7 @@ async function main() {
   const agent = await waitForAgent(base, token, "offline-agent");
   await waitForAgent(base, token, "offline-fail-agent");
   await waitForAgent(base, token, "offline-auth-fail-agent");
+  await waitForAgent(base, token, "offline-no-report-agent");
   assert(agent.status === "online", "agent discovery did not expose online status");
   assert(agent.node_status === "online", "agent discovery did not expose online node status");
   assert(Boolean(agent.last_seen_at), "agent discovery did not expose last_seen_at");
@@ -220,7 +231,7 @@ async function main() {
   assert(cliNodes.some((item) => item.node_id === "offline-smoke-node" && /^edge_session_/.test(item.edge_session_id || "")), "CLI nodes did not expose edge_session_id");
   const cliStatus = await runCliJson(["status", "--json", "--gateway", base, "--token", token]);
   assert(cliStatus.ok === true, "CLI status did not report ok=true");
-  assert(cliStatus.summary?.online_agents === 3, "CLI status did not count all online smoke agents");
+  assert(cliStatus.summary?.online_agents === 4, "CLI status did not count all online smoke agents");
   assert(cliStatus.nodes?.some((item) => item.id === "offline-smoke-node" && item.freshness?.startsWith("online/fresh")), "CLI status did not include node freshness");
   assert(cliStatus.rooms?.some((item) => item.id === finalRoom.id), "CLI status did not include the smoke room");
   const statusAgent = cliStatus.agents?.find((item) => item.id === "offline-agent");
@@ -288,6 +299,32 @@ async function main() {
   assert(completedDoctor.object === "agent_bus.room_doctor", "CLI room doctor did not return a doctor object");
   assert(completedDoctor.summary === "completed", `completed room doctor returned ${completedDoctor.summary}`);
   assert(completedDoctor.actions?.some((item) => item.kind === "archive_or_export_completed_room"), "completed room doctor did not suggest archive/export");
+
+  const contractGapRoom = await requestJson(`${base}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Offline contract gap room",
+      goal: "Verify room doctor catches a completed room where an agent emitted DONE without REPORT.",
+      agents: ["offline-no-report-agent"],
+      wakeAgents: ["offline-no-report-agent"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const contractGapFinalRoom = await waitForRoomComplete(base, token, contractGapRoom.id);
+  assert(contractGapFinalRoom.status === "completed", "contract gap room did not complete");
+  assert(contractGapFinalRoom.blackboard?.agent_checklist?.summary?.missing_report_agents?.includes("offline-no-report-agent"), "contract gap room checklist did not mark missing REPORT");
+  const contractGapDoctor = await runCliJson(["room", "doctor", contractGapFinalRoom.id, "--json", "--gateway", base, "--token", token]);
+  assert(contractGapDoctor.summary === "completed_with_contract_gaps", `contract gap doctor returned ${contractGapDoctor.summary}`);
+  assert(contractGapDoctor.contract?.missing_report_agents?.includes("offline-no-report-agent"), "contract gap doctor did not expose missing REPORT agent");
+  assert(contractGapDoctor.counts?.contract_gap_agents === 1, "contract gap doctor did not count contract gap agent");
+  assert(contractGapDoctor.actions?.some((item) => item.kind === "create_contract_followup_room" && /room create/.test(item.command || "")), "contract gap doctor did not suggest a follow-up room");
+  const contractGapDoctorText = await runCliText(["room", "doctor", contractGapFinalRoom.id, "--gateway", base, "--token", token]);
+  assert(contractGapDoctorText.includes("completed_with_contract_gaps"), "contract gap doctor human output did not expose contract gap summary");
+  assert(contractGapDoctorText.includes("Missing REPORT: offline-no-report-agent"), "contract gap doctor human output did not list missing REPORT agent");
+  const contractGapHealth = await runCliJson(["room", "health", contractGapFinalRoom.id, "--json", "--gateway", base, "--token", token]);
+  assert(contractGapHealth.recovery_actions?.some((item) => item.kind === "request_report" && /room create/.test(item.command || "")), "contract gap health did not suggest a follow-up room instead of waking a completed room");
 
   const failedRoom = await requestJson(`${base}/rooms`, {
     method: "POST",

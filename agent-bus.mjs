@@ -3234,7 +3234,7 @@ function roomHealthRecoveryActions(room, agents, inspection) {
       level: "warn",
       agents: missingReport,
       message: "Terminal agents are missing REPORT. Wake them only to publish a concise operator report before continuing or archiving.",
-      command: `agent-bus room wake ${roomId} --agents ${missingReport.join(",")} --reason ${JSON.stringify("Please provide a concise REPORT for your last run, then DONE if your work is complete.")}`
+      command: roomHealthContractCommand(room, missingReport, "Please provide a concise REPORT for your last run, then DONE if your work is complete.")
     });
   }
   if (missingDone.length) {
@@ -3243,7 +3243,7 @@ function roomHealthRecoveryActions(room, agents, inspection) {
       level: "info",
       agents: missingDone,
       message: "Terminal agents are missing DONE. Ask them to finalize the room contract if no work remains.",
-      command: `agent-bus room wake ${roomId} --agents ${missingDone.join(",")} --reason ${JSON.stringify("Please finalize your room turn. Emit DONE if your assigned work is complete, or REPORT the remaining blocker.")}`
+      command: roomHealthContractCommand(room, missingDone, "Please finalize your room turn. Emit DONE if your assigned work is complete, or REPORT the remaining blocker.")
     });
   }
   if (failedAgents.length) {
@@ -3293,6 +3293,17 @@ function roomHealthRecoveryActions(room, agents, inspection) {
     });
   }
   return actions;
+}
+
+function roomHealthContractCommand(room, agents, reason) {
+  const roomId = room?.id || "ROOM_ID";
+  const agentList = (Array.isArray(agents) ? agents : []).filter(Boolean).join(",");
+  if (!agentList) return "";
+  if (["completed", "paused"].includes(String(room?.status || "").toLowerCase())) {
+    const goal = `Follow up on Agent Bus room ${roomId}. ${reason}`;
+    return `agent-bus room create --title ${JSON.stringify(`Contract follow-up for ${roomId}`)} --goal ${JSON.stringify(goal)} --agents ${agentList} --wake-agents ${agentList}`;
+  }
+  return `agent-bus room wake ${roomId} --agents ${agentList} --reason ${JSON.stringify(reason)}`;
 }
 
 function roomHealthRunBuckets(runs = []) {
@@ -3490,6 +3501,14 @@ function formatRoomDoctor(result) {
   lines.push(`Agents: ${Array.isArray(room.agents) && room.agents.length ? room.agents.join(", ") : "-"}`);
   lines.push(`Runs: active=${counts.active_runs || 0} stale_queued=${counts.stale_queued_runs || 0} stale_running=${counts.stale_running_runs || 0} duplicate_active_agents=${counts.duplicate_active_agents || 0}`);
   lines.push(`Failed attempts: ${counts.failed_attempts || 0}; retryable=${counts.retryable_failed_agents || 0}; blocked=${counts.blocked_failed_agents || 0}`);
+  lines.push(`Contract gaps: missing_report=${counts.missing_report_agents || 0} missing_done=${counts.missing_done_agents || 0} agents=${counts.contract_gap_agents || 0}`);
+  const contract = result?.contract || {};
+  if (Array.isArray(contract.missing_report_agents) && contract.missing_report_agents.length) {
+    lines.push(`Missing REPORT: ${contract.missing_report_agents.join(", ")}`);
+  }
+  if (Array.isArray(contract.missing_done_agents) && contract.missing_done_agents.length) {
+    lines.push(`Missing DONE: ${contract.missing_done_agents.join(", ")}`);
+  }
   if (Array.isArray(result?.retryable_failed_agents) && result.retryable_failed_agents.length) {
     lines.push(`Retryable failed agents: ${result.retryable_failed_agents.join(", ")}`);
   }

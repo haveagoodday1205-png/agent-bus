@@ -3155,7 +3155,8 @@ def room_doctor_api(config, room_id, query):
         run_heartbeat_stale_seconds=run_heartbeat_stale_seconds,
     )
     retry_failed = inspect_room_failed_agent_retries(room)
-    actions = room_doctor_actions(room, supervisor, retry_failed, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds)
+    contract = inspect_room_contract(room)
+    actions = room_doctor_actions(room, supervisor, retry_failed, contract, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds)
     failed_attempts = [
         group
         for group in retry_failed.get("groups") or []
@@ -3168,7 +3169,7 @@ def room_doctor_api(config, room_id, query):
         if group.get("agent_id") and not group.get("retryable")
     ]
     duplicate_active_runs = ((supervisor.get("analysis") or {}).get("duplicate_active_runs") or supervisor.get("duplicate_active_runs") or {})
-    summary = room_doctor_summary(room, supervisor, retry_failed, duplicate_active_runs)
+    summary = room_doctor_summary(room, supervisor, retry_failed, duplicate_active_runs, contract)
     severity = room_doctor_severity(summary, actions)
     return {
         "object": "agent_bus.room_doctor",
@@ -3187,20 +3188,63 @@ def room_doctor_api(config, room_id, query):
             "failed_attempts": len(failed_attempts),
             "retryable_failed_agents": len(retryable_failed_agents),
             "blocked_failed_agents": len(blocked_failed_agents),
+            "missing_report_agents": len(contract.get("missing_report_agents") or []),
+            "missing_done_agents": len(contract.get("missing_done_agents") or []),
+            "contract_gap_agents": len(contract.get("contract_gap_agents") or []),
         },
+        "contract": contract,
         "supervisor": supervisor,
         "retry_failed": retry_failed,
         "duplicate_active_runs": duplicate_active_runs,
         "failed_attempts": failed_attempts,
         "retryable_failed_agents": retryable_failed_agents,
         "blocked_failed_agents": blocked_failed_agents,
-        "blocking_agents": sorted(set(blocked_failed_agents + (retry_failed.get("blocked_active_agents") or []) + (retry_failed.get("unavailable_agents") or []))),
+        "blocking_agents": sorted(set(blocked_failed_agents + (retry_failed.get("blocked_active_agents") or []) + (retry_failed.get("unavailable_agents") or []) + (contract.get("contract_gap_agents") or []))),
         "actions": actions,
         "recommended_commands": [action.get("command") for action in actions if action.get("command")],
     }
 
 
-def room_doctor_summary(room, supervisor, retry_failed, duplicate_active_runs):
+def inspect_room_contract(room):
+    board = room.get("blackboard") if isinstance(room.get("blackboard"), dict) else {}
+    checklist = board.get("agent_checklist") if isinstance(board.get("agent_checklist"), dict) else {}
+    summary = checklist.get("summary") if isinstance(checklist.get("summary"), dict) else summarize_room_agent_checklist(room, checklist)
+    agents = checklist.get("agents") if isinstance(checklist.get("agents"), dict) else {}
+    expected_agents = [agent_id for agent_id in (room.get("agents") or []) if agent_id]
+    missing_report_agents = [agent_id for agent_id in (summary.get("missing_report_agents") or []) if agent_id]
+    missing_done_agents = [agent_id for agent_id in (summary.get("missing_done_agents") or []) if agent_id]
+    missing_agents = [agent_id for agent_id in (summary.get("missing_agents") or []) if agent_id]
+    contract_gap_agents = sorted(set(missing_report_agents + missing_done_agents + missing_agents))
+    agent_items = []
+    for agent_id in expected_agents:
+        item = agents.get(agent_id) if isinstance(agents.get(agent_id), dict) else {}
+        agent_items.append({
+            "agent_id": agent_id,
+            "run_id": item.get("run_id") or "",
+            "status": item.get("status") or ("missing" if agent_id in missing_agents else "unknown"),
+            "has_report": item.get("has_report") if isinstance(item.get("has_report"), bool) else False,
+            "has_done": item.get("has_done") if isinstance(item.get("has_done"), bool) else False,
+            "report_count": item.get("report_count") or 0,
+            "done_count": item.get("done_count") or 0,
+            "updated_at": item.get("updated_at"),
+        })
+    return {
+        "object": "agent_bus.room_contract",
+        "room_id": room.get("id"),
+        "room_status": room.get("status"),
+        "complete": len(contract_gap_agents) == 0,
+        "expected_agents": expected_agents,
+        "summary": summary,
+        "missing_agents": missing_agents,
+        "missing_report_agents": missing_report_agents,
+        "missing_done_agents": missing_done_agents,
+        "contract_gap_agents": contract_gap_agents,
+        "agents": agent_items,
+        "recommendation": "none" if not contract_gap_agents else "request_contract_reports",
+    }
+
+
+def room_doctor_summary(room, supervisor, retry_failed, duplicate_active_runs, contract=None):
     if (duplicate_active_runs.get("duplicate_active_agent_count") or 0) > 0:
         return "duplicate_active_runs"
     supervisor_summary = ((supervisor.get("analysis") or {}).get("summary") or "")
@@ -3218,6 +3262,8 @@ def room_doctor_summary(room, supervisor, retry_failed, duplicate_active_runs):
         return "failed_agents_retryable"
     if retry_failed.get("failed_agents"):
         return "failed_agents_blocked"
+    if contract and contract.get("contract_gap_agents"):
+        return "completed_with_contract_gaps" if str(room.get("status") or "").lower() == "completed" else "contract_gaps"
     if supervisor_summary:
         return supervisor_summary
     return str(room.get("status") or "unknown").lower() or "unknown"
@@ -3233,7 +3279,7 @@ def room_doctor_severity(summary, actions):
     return "info"
 
 
-def room_doctor_actions(room, supervisor, retry_failed, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds):
+def room_doctor_actions(room, supervisor, retry_failed, contract, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds):
     room_id = room.get("id") or "ROOM_ID"
     actions = []
     base_actions = supervisor_actions(room, supervisor, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds)
@@ -3270,6 +3316,7 @@ def room_doctor_actions(room, supervisor, retry_failed, queued_run_stale_seconds
             "message": "Failed agents cannot be retried until their edge node registers them as online.",
             "command": "agent-bus status",
         })
+    actions.extend(room_doctor_contract_actions(room, contract))
     if not actions and str(room.get("status") or "").lower() == "completed":
         actions.append({
             "kind": "archive_or_export_completed_room",
@@ -3281,6 +3328,76 @@ def room_doctor_actions(room, supervisor, retry_failed, queued_run_stale_seconds
     if not actions:
         actions.extend(base_actions)
     return actions
+
+
+def room_doctor_contract_actions(room, contract):
+    if not isinstance(contract, dict) or not contract.get("contract_gap_agents"):
+        return []
+    room_id = room.get("id") or "ROOM_ID"
+    room_status = str(room.get("status") or "").lower()
+    missing_report = contract.get("missing_report_agents") or []
+    missing_done = contract.get("missing_done_agents") or []
+    missing_agents = contract.get("missing_agents") or []
+    gap_agents = contract.get("contract_gap_agents") or []
+    active_room = room_status not in ("completed", "paused")
+    out = []
+    if active_room and missing_report:
+        reason = "Please provide a concise REPORT for your last run, then DONE if your work is complete."
+        out.append({
+            "kind": "request_missing_reports",
+            "level": "warn",
+            "executable": True,
+            "agents": missing_report,
+            "message": "Terminal agents are missing REPORT. Ask them to publish a concise operator report before archiving or continuing.",
+            "command": f"agent-bus room wake {room_id} --agents {','.join(missing_report)} --reason {json.dumps(reason)}",
+        })
+    if active_room and missing_done:
+        reason = "Please finalize your room turn. Emit DONE if your assigned work is complete, or REPORT the remaining blocker."
+        out.append({
+            "kind": "request_missing_done",
+            "level": "info",
+            "executable": True,
+            "agents": missing_done,
+            "message": "Terminal agents are missing DONE. Ask them to finalize the room contract if no work remains.",
+            "command": f"agent-bus room wake {room_id} --agents {','.join(missing_done)} --reason {json.dumps(reason)}",
+        })
+    if not active_room:
+        goal = (
+            "Follow up on Agent Bus room "
+            + room_id
+            + ". Missing contract items: "
+            + room_contract_gap_text(contract)
+            + ". Ask the selected agents to provide concise REPORT lines and DONE."
+        )
+        out.append({
+            "kind": "create_contract_followup_room",
+            "level": "warn",
+            "executable": False,
+            "agents": gap_agents,
+            "message": "This room is already terminal, so create a follow-up room if those missing reports or DONE markers are still needed.",
+            "command": f"agent-bus room create --title {json.dumps('Contract follow-up for ' + room_id)} --goal {json.dumps(goal)} --agents {','.join(gap_agents)} --wake-agents {','.join(gap_agents)}",
+        })
+    if active_room and missing_agents:
+        out.append({
+            "kind": "wake_missing_agents",
+            "level": "warn",
+            "executable": True,
+            "agents": missing_agents,
+            "message": "Expected room agents do not have any recorded run. Wake them before closing the room contract.",
+            "command": f"agent-bus room wake {room_id} --agents {','.join(missing_agents)} --reason {json.dumps('Please join this room, provide REPORT, and emit DONE when complete.')}",
+        })
+    return out
+
+
+def room_contract_gap_text(contract):
+    parts = []
+    if contract.get("missing_agents"):
+        parts.append("missing agents=" + ",".join(contract.get("missing_agents") or []))
+    if contract.get("missing_report_agents"):
+        parts.append("missing REPORT=" + ",".join(contract.get("missing_report_agents") or []))
+    if contract.get("missing_done_agents"):
+        parts.append("missing DONE=" + ",".join(contract.get("missing_done_agents") or []))
+    return "; ".join(parts) or "unknown"
 
 
 def room_retry_requested_agents(body):

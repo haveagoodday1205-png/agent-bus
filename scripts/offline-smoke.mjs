@@ -325,6 +325,7 @@ async function main() {
   assert(contractGapDoctorText.includes("Missing REPORT: offline-no-report-agent"), "contract gap doctor human output did not list missing REPORT agent");
   const contractGapHealth = await runCliJson(["room", "health", contractGapFinalRoom.id, "--json", "--gateway", base, "--token", token]);
   assert(contractGapHealth.recovery_actions?.some((item) => item.kind === "request_report" && /room create/.test(item.command || "")), "contract gap health did not suggest a follow-up room instead of waking a completed room");
+  assert(contractGapHealth.recovery_actions?.some((item) => item.kind === "request_report" && /follow-up room/i.test(item.message || "")), "contract gap health did not explain follow-up-room recovery");
 
   const failedRoom = await requestJson(`${base}/rooms`, {
     method: "POST",

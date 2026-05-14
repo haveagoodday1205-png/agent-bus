@@ -3233,7 +3233,9 @@ function roomHealthRecoveryActions(room, agents, inspection) {
       kind: "request_report",
       level: "warn",
       agents: missingReport,
-      message: "Terminal agents are missing REPORT. Wake them only to publish a concise operator report before continuing or archiving.",
+      message: roomHealthTerminalRoom(room)
+        ? "Terminal agents are missing REPORT, but this room is already terminal. Create a follow-up room if an operator report is still needed."
+        : "Terminal agents are missing REPORT. Wake them only to publish a concise operator report before continuing or archiving.",
       command: roomHealthContractCommand(room, missingReport, "Please provide a concise REPORT for your last run, then DONE if your work is complete.")
     });
   }
@@ -3242,7 +3244,9 @@ function roomHealthRecoveryActions(room, agents, inspection) {
       kind: "request_done",
       level: "info",
       agents: missingDone,
-      message: "Terminal agents are missing DONE. Ask them to finalize the room contract if no work remains.",
+      message: roomHealthTerminalRoom(room)
+        ? "Terminal agents are missing DONE, but this room is already terminal. Create a follow-up room if the contract needs explicit closure."
+        : "Terminal agents are missing DONE. Ask them to finalize the room contract if no work remains.",
       command: roomHealthContractCommand(room, missingDone, "Please finalize your room turn. Emit DONE if your assigned work is complete, or REPORT the remaining blocker.")
     });
   }
@@ -3299,11 +3303,15 @@ function roomHealthContractCommand(room, agents, reason) {
   const roomId = room?.id || "ROOM_ID";
   const agentList = (Array.isArray(agents) ? agents : []).filter(Boolean).join(",");
   if (!agentList) return "";
-  if (["completed", "paused"].includes(String(room?.status || "").toLowerCase())) {
+  if (roomHealthTerminalRoom(room)) {
     const goal = `Follow up on Agent Bus room ${roomId}. ${reason}`;
     return `agent-bus room create --title ${JSON.stringify(`Contract follow-up for ${roomId}`)} --goal ${JSON.stringify(goal)} --agents ${agentList} --wake-agents ${agentList}`;
   }
   return `agent-bus room wake ${roomId} --agents ${agentList} --reason ${JSON.stringify(reason)}`;
+}
+
+function roomHealthTerminalRoom(room) {
+  return ["completed", "paused"].includes(String(room?.status || "").toLowerCase());
 }
 
 function roomHealthRunBuckets(runs = []) {

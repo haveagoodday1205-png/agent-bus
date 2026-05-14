@@ -80,6 +80,7 @@
 - Adds bridge-side actionable diagnostics for missing Claude Code/OpenClaw binaries and unreadable Agent Bus message files while keeping prompt contents out of stderr.
 - Adds room doctor REPORT/DONE contract-gap diagnosis, including follow-up-room recommendations when completed or paused rooms cannot be safely woken.
 - Adds `agent-bus room follow-up ROOM_ID` so operators can preview or create a follow-up room from doctor/contract-gap context without copying a long generated command.
+- Makes `room health` distinguish live queued/running work from true stale/orphan recovery so active overnight rooms no longer look broken just because they are still running.
 
 ## 0.5.5 - Compact room session keys
 

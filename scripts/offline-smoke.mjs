@@ -477,6 +477,23 @@ async function main() {
   assert(duplicateAfterHealth.summary?.duplicate_active_agent_count === 0, "CLI room health still reported duplicate active agents after resolve-duplicates");
   await runCliJson(["room", "pause", duplicateActiveRoom.id, "--reason", "offline smoke duplicate active checked", "--gateway", base, "--token", token]);
 
+  const liveQueuedRoom = await requestJson(`${base}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Offline live queued health room",
+      goal: "Verify room health treats fresh queued work as monitor-only, not stale recovery.",
+      agents: ["offline-agent"],
+      wakeAgents: ["offline-agent"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const liveQueuedHealth = await runCliJson(["room", "health", liveQueuedRoom.id, "--json", "--gateway", base, "--token", token]);
+  assert(liveQueuedHealth.recovery_actions?.some((item) => item.kind === "monitor_live_room"), "CLI room health did not describe a live queued room as monitor-only");
+  assert(!liveQueuedHealth.recovery_actions?.some((item) => item.kind === "inspect_stale_agents"), "CLI room health incorrectly treated fresh queued work as stale recovery");
+  await runCliJson(["room", "pause", liveQueuedRoom.id, "--reason", "offline smoke live queued checked", "--gateway", base, "--token", token]);
+
   const pauseRoom = await requestJson(`${base}/rooms`, {
     method: "POST",
     headers: authJsonHeaders(token),

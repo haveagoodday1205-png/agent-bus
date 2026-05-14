@@ -3263,6 +3263,10 @@ function roomHealthRecoveryActions(room, agents, inspection) {
     .filter((item) => ["failed", "error", "cancelled", "canceled", "skipped"].includes(String(item.status || "").toLowerCase()))
     .map((item) => item.agent_id)
     .filter(Boolean);
+  const liveAgents = agents
+    .filter((item) => roomHealthLiveNonTerminalState(item.stale_state) && !roomHealthTerminalStatus(item.status))
+    .map((item) => item.agent_id)
+    .filter(Boolean);
   const staleAgents = agents
     .filter((item) => roomHealthRecoveryStaleState(item.stale_state) && !roomHealthTerminalStatus(item.status))
     .map((item) => item.agent_id)
@@ -3335,6 +3339,15 @@ function roomHealthRecoveryActions(room, agents, inspection) {
       command: `agent-bus room export ${roomId} --reports-only --out room-summary.md`
     });
   }
+  if (!actions.length && liveAgents.length) {
+    actions.push({
+      kind: "monitor_live_room",
+      level: "info",
+      agents: liveAgents,
+      message: "Room has live queued or running work and no recovery action is needed right now. Re-check health or doctor after the current run changes state.",
+      command: `agent-bus room health ${roomId}`
+    });
+  }
   if (!actions.length) {
     actions.push({
       kind: "inspect_room",
@@ -3364,6 +3377,10 @@ function roomHealthTerminalRoom(room) {
 
 function roomHealthRecoveryStaleState(state) {
   return ["stale_queued", "stale_running", "orphaned_running"].includes(String(state || "").toLowerCase());
+}
+
+function roomHealthLiveNonTerminalState(state) {
+  return ["live_queued", "live_running", "other_non_terminal"].includes(String(state || "").toLowerCase());
 }
 
 function roomFollowUpDefaultTitle(room) {

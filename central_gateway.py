@@ -202,6 +202,9 @@ def recover_agent_run_health():
 
 
 def sync_recovered_containers(config):
+    for run_id, run in list(STATE["runs"].items()):
+        if normalize_terminal_run_lease(run):
+            write_snapshot(config, "runs", run_id, run)
     for thread_id, thread in list(STATE["threads"].items()):
         if sync_container_runs(thread):
             write_snapshot(config, "threads", thread_id, thread)
@@ -216,9 +219,11 @@ def sync_container_runs(container):
     for run in container.get("runs") or []:
         latest = STATE["runs"].get(run.get("id"))
         if latest:
+            changed = normalize_terminal_run_lease(latest) or changed
             synced.append(latest)
             changed = changed or latest is not run
         else:
+            changed = normalize_terminal_run_lease(run) or changed
             synced.append(run)
     if changed:
         container["runs"] = synced
@@ -4134,6 +4139,20 @@ def update_run_lease(run, event, state):
     run["lease"] = {key: value for key, value in lease.items() if value not in (None, "", [])}
 
 
+def normalize_terminal_run_lease(run):
+    if not isinstance(run, dict) or not run_is_terminal(run):
+        return False
+    lease = dict(run.get("lease") or {})
+    if not lease or lease.get("state") == "released":
+        return False
+    before = dict(lease)
+    lease["state"] = "released"
+    lease["released_at"] = lease.get("released_at") or run.get("completed_at") or now()
+    lease["terminal_status"] = lease.get("terminal_status") or run.get("status")
+    run["lease"] = {key: value for key, value in lease.items() if value not in (None, "", [])}
+    return run["lease"] != before
+
+
 def record_event(config, body):
     run = STATE["runs"].get(body.get("run_id")) or read_snapshot(config, "runs", body.get("run_id"))
     if not run:
@@ -4162,6 +4181,7 @@ def record_event(config, body):
     if run_is_terminal(run):
         event["ignored"] = True
         event["ignored_reason"] = "run_terminal"
+        normalize_terminal_run_lease(run)
         run.setdefault("events", []).append(event)
         STATE["runs"][run["id"]] = run
         write_snapshot(config, "runs", run["id"], run)

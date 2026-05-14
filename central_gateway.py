@@ -6358,9 +6358,9 @@ def redact(value):
     if isinstance(value, str):
         return redact_text(value)
     if isinstance(value, list):
-        return [redact(item) for item in value]
+        return [redact(item) for item in list(value)]
     if isinstance(value, dict):
-        return {key: redact(item) for key, item in value.items()}
+        return {key: redact(item) for key, item in list(value.items())}
     return value
 
 

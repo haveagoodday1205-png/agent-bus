@@ -4159,6 +4159,17 @@ def record_event(config, body):
         append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
         append_run_attempt_event(config, run, "ignored_event")
         return
+    if run_is_terminal(run):
+        event["ignored"] = True
+        event["ignored_reason"] = "run_terminal"
+        run.setdefault("events", []).append(event)
+        STATE["runs"][run["id"]] = run
+        write_snapshot(config, "runs", run["id"], run)
+        update_thread_run(config, run)
+        update_room_run(config, run)
+        append_jsonl(config, "events.jsonl", {"run_id": run["id"], **event})
+        append_run_attempt_event(config, run, "ignored_event")
+        return
     attempt_phase = None
     if event.get("type") == "run.started":
         run["status"] = "running"

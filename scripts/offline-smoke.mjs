@@ -154,6 +154,22 @@ async function main() {
   assert(/^edge_session_/.test(run?.edge_session_id || ""), "offline room run did not persist edge_session_id");
   assert(run?.lease?.state === "released", "offline room run did not release its run lease");
   assert(run?.lease?.edge_session_id === run?.edge_session_id, "offline room lease did not track the edge session");
+  await requestJson(`${base}/edge/events`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      node_id: "offline-smoke-node",
+      run_id: run.id,
+      trace_id: run.trace_id,
+      edge_session_id: run.edge_session_id,
+      event: { type: "run.heartbeat" }
+    })
+  });
+  const runAfterLateHeartbeat = await requestJson(`${base}/runs/${encodeURIComponent(run.id)}`, { headers: authHeaders(token) });
+  assert(runAfterLateHeartbeat.status === "completed", "late heartbeat changed completed run status");
+  assert(runAfterLateHeartbeat.lease?.state === "released", "late heartbeat moved a released lease back to heartbeat");
+  assert(runAfterLateHeartbeat.attempt?.status === "completed", "late heartbeat changed completed attempt status");
+  assert(runAfterLateHeartbeat.events?.some((event) => event.type === "run.heartbeat" && event.ignored === true && event.ignored_reason === "run_terminal"), "late heartbeat was not recorded as an ignored terminal event");
   assert(finalRoom.status === "completed", "offline room did not complete after DONE");
   assert(finalRoom.reports?.some((item) => /offline smoke run completed/.test(item.content || "")), "REPORT directive was not captured");
   assert(finalRoom.blackboard?.notes?.some((item) => /cache key agent-bus-offline-agent/.test(item.content || "")), "BLACKBOARD directive was not captured");

@@ -224,6 +224,7 @@ Usage:
   agent-bus room expand room_xxx 'messages[7]' --around 1 --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room health room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json]
   agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
+  agent-bus room doctor room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
@@ -231,7 +232,7 @@ Usage:
   agent-bus room replay --in room-events.json --format markdown [--strict]
   agent-bus room wake room_xxx --agents hermes-hk --reason "Continue"
   agent-bus room pause room_xxx --reason "old orphan queued run recovery"
-  agent-bus room retry-failed room_xxx [--yes] --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room retry-failed room_xxx [--yes] [--force] --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room recover room_xxx --yes --reason "stale queued run recovery"
   agent-bus room resolve-duplicates room_xxx [--yes] --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room supervisor room_xxx [--yes] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
@@ -2539,6 +2540,21 @@ async function room(args) {
     process.stdout.write(formatRoomHealth(health));
     return;
   }
+  if (action === "doctor" || action === "diagnose") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const params = new URLSearchParams();
+    const queuedRunStaleSeconds = optionValue(args, "--queued-run-stale-seconds") || process.env.AGENT_BUS_STATUS_QUEUED_RUN_STALE_SECONDS;
+    const staleSeconds = optionValue(args, "--node-stale-seconds") || optionValue(args, "--stale-seconds") || process.env.AGENT_BUS_STATUS_STALE_SECONDS;
+    const runHeartbeatStaleSeconds = runHeartbeatStaleOption(args);
+    if (queuedRunStaleSeconds) params.set("queued_run_stale_seconds", queuedRunStaleSeconds);
+    if (staleSeconds) params.set("node_stale_seconds", staleSeconds);
+    if (runHeartbeatStaleSeconds) params.set("run_heartbeat_stale_seconds", runHeartbeatStaleSeconds);
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const result = await gatewayJson(`/rooms/${pathPart(roomId)}/doctor${suffix}`, { auth: true, args });
+    if (args.includes("--json")) return printJson(result);
+    process.stdout.write(formatRoomDoctor(result));
+    return;
+  }
   if (action === "export" || action === "dump") {
     const roomId = requiredPositional(args, 1, "room id");
     const format = optionValue(args, "--format") || (args.includes("--json") ? "json" : "markdown");
@@ -2623,11 +2639,13 @@ async function room(args) {
     const agents = csvOption(args, "--agents");
     const singleAgent = optionValue(args, "--agent");
     const yes = args.includes("--yes");
+    const force = args.includes("--force");
     const reason = optionValue(args, "--reason") || optionValue(args, "--message") || "Retry failed room agents.";
     const body = {
       dry_run: !yes,
       confirm: yes,
       yes,
+      force,
       reason,
       ...(agents.length ? { agents } : {}),
       ...(singleAgent ? { agent: singleAgent } : {})
@@ -2719,7 +2737,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
+  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|doctor|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
 }
 
 function formatRoomMemory(value, options = {}) {
@@ -2906,23 +2924,32 @@ function formatRoomFailedRetryResult(result, { roomId, reason = "Retry failed ro
   const lines = [];
   lines.push(`Room failed-agent retry: ${roomId}`);
   lines.push(`Recommendation: ${inspection.recommendation || "unknown"}`);
+  lines.push(`Force: ${result?.force || inspection.force ? "yes" : "no"}`);
   lines.push(`Failed agents: ${formatInlineList(inspection.failed_agents || [])}`);
   lines.push(`Retryable agents: ${formatInlineList(inspection.retryable_agents || [])}`);
+  if (Array.isArray(inspection.blocked_failure_class_agents) && inspection.blocked_failure_class_agents.length) {
+    lines.push(`Blocked by failure class: ${formatInlineList(inspection.blocked_failure_class_agents)}`);
+  }
   if (Array.isArray(inspection.groups) && inspection.groups.length) {
     lines.push("", "Agents:");
     for (const group of inspection.groups) {
-      const state = group.retryable ? "retryable" : (group.blocked_reason || "blocked");
+      const state = group.retryable ? (group.forced_retry ? "forced-retryable" : "retryable") : (group.blocked_reason || "blocked");
+      const failure = group.failure_class ? ` failure=${group.failure_class}${group.taxonomy_retryable ? "/auto" : "/manual"}` : "";
       const error = group.latest_error ? ` error=${oneLine(group.latest_error, 100)}` : "";
-      lines.push(`- ${group.agent_id || "-"}: ${state} latest=${group.latest_run_id || "-"} status=${group.latest_status || "unknown"}${error}`);
+      lines.push(`- ${group.agent_id || "-"}: ${state} latest=${group.latest_run_id || "-"} status=${group.latest_status || "unknown"}${failure}${error}`);
     }
   }
   if (result?.dry_run !== false) {
     lines.push("");
     lines.push("Dry run. Server-side retry did not create new room runs.");
     if (Array.isArray(inspection.retryable_agents) && inspection.retryable_agents.length) {
-      lines.push(`To retry failed agents: agent-bus room retry-failed ${roomId} --yes --reason ${JSON.stringify(reason)}`);
+      const forceFlag = result?.force || inspection.force ? " --force" : "";
+      lines.push(`To retry failed agents: agent-bus room retry-failed ${roomId} --yes${forceFlag} --reason ${JSON.stringify(reason)}`);
     } else {
       lines.push("No failed online agent is safe to retry automatically.");
+      if (Array.isArray(inspection.blocked_failure_class_agents) && inspection.blocked_failure_class_agents.length) {
+        lines.push(`After operator review, dry-run force with: agent-bus room retry-failed ${roomId} --agents ${inspection.blocked_failure_class_agents.join(",")} --force`);
+      }
     }
     return `${lines.join("\n")}\n`;
   }
@@ -3418,6 +3445,42 @@ function formatRoomHealth(health) {
     for (const hint of health.operator_hints) {
       lines.push(`- ${hint.level || "info"}: ${hint.message || ""}`.trimEnd());
       if (hint.command) lines.push(`  ${hint.command}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatRoomDoctor(result) {
+  const room = result?.room || {};
+  const counts = result?.counts || {};
+  const lines = [];
+  lines.push(`Agent Bus room doctor: ${room.id || "-"}`);
+  lines.push(`Status: ${room.status || "unknown"} (${result?.summary || "unknown"}, ${result?.severity || "info"})`);
+  lines.push(`Agents: ${Array.isArray(room.agents) && room.agents.length ? room.agents.join(", ") : "-"}`);
+  lines.push(`Runs: active=${counts.active_runs || 0} stale_queued=${counts.stale_queued_runs || 0} stale_running=${counts.stale_running_runs || 0} duplicate_active_agents=${counts.duplicate_active_agents || 0}`);
+  lines.push(`Failed attempts: ${counts.failed_attempts || 0}; retryable=${counts.retryable_failed_agents || 0}; blocked=${counts.blocked_failed_agents || 0}`);
+  if (Array.isArray(result?.retryable_failed_agents) && result.retryable_failed_agents.length) {
+    lines.push(`Retryable failed agents: ${result.retryable_failed_agents.join(", ")}`);
+  }
+  if (Array.isArray(result?.blocked_failed_agents) && result.blocked_failed_agents.length) {
+    lines.push(`Blocked failed agents: ${result.blocked_failed_agents.join(", ")}`);
+  }
+  if (Array.isArray(result?.failed_attempts) && result.failed_attempts.length) {
+    lines.push("", "Failed attempts:");
+    for (const item of result.failed_attempts) {
+      const state = item.retryable ? (item.forced_retry ? "forced-retryable" : "retryable") : (item.blocked_reason || "blocked");
+      const failure = item.failure_class ? ` failure=${item.failure_class}${item.taxonomy_retryable ? "/auto" : "/manual"}` : "";
+      const error = item.latest_error ? ` error=${oneLine(item.latest_error, 120)}` : "";
+      lines.push(`- ${item.agent_id || "-"}: ${state} run=${item.latest_run_id || "-"}${failure}${error}`);
+    }
+  }
+  if (Array.isArray(result?.actions) && result.actions.length) {
+    lines.push("", "Actions:");
+    for (const action of result.actions) {
+      const agents = Array.isArray(action.agents) && action.agents.length ? ` agents=${action.agents.join(",")}` : "";
+      lines.push(`- ${action.level || "info"} ${action.kind || "action"}${agents}: ${action.message || ""}`.trimEnd());
+      if (action.command) lines.push(`  ${action.command}`);
+      if (action.confirm_command) lines.push(`  confirm: ${action.confirm_command}`);
     }
   }
   return `${lines.join("\n")}\n`;

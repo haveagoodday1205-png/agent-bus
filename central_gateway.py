@@ -455,6 +455,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(room_memory_api(self.config, parts[1], query))
                 if len(parts) == 4 and parts[2] == "memory" and parts[3] == "expand":
                     return self.json(room_memory_expand_api(self.config, parts[1], query))
+                if len(parts) == 3 and parts[2] in ("doctor", "diagnose"):
+                    return self.json(room_doctor_api(self.config, parts[1], query))
                 if len(parts) != 2:
                     return self.json({"error": "not_found"}, 404)
                 room_id = parts[1] if len(parts) >= 2 else path.rsplit("/", 1)[-1]
@@ -956,6 +958,7 @@ STATUS_RUN_HEARTBEAT_STALE_SECONDS = max(
         int_env("AGENT_BUS_RUNNING_RUN_STALE_SECONDS", 90),
     ),
 )
+ROOM_AUTO_RETRY_FAILURE_CLASSES = {"rate_limited", "timeout", "upstream_transient"}
 
 
 def public_status(config):
@@ -1323,6 +1326,7 @@ def agent_bus_manifest(config):
             "room": "GET /rooms/{room_id}",
             "room_memory": "GET /rooms/{room_id}/memory",
             "room_memory_expand": "GET /rooms/{room_id}/memory/expand?ref=messages[7]&around=1",
+            "room_doctor": "GET /rooms/{room_id}/doctor",
             "room_message": "POST /rooms/{room_id}/messages",
             "room_wake": "POST /rooms/{room_id}/wake",
             "room_retry_failed": "POST /rooms/{room_id}/retry-failed",
@@ -2269,9 +2273,10 @@ def retry_failed_room_agents(config, room_id, body, trace_id=None):
     room = get_room(config, room_id)
     dry_run = body_bool(body, "dry_run", "dryRun", default=True)
     confirm = body_bool(body, "confirm", "yes", default=False)
+    force = body_bool(body, "force", "forceRetry", default=False)
     reason = (body.get("reason") or "Retry failed room agents.").strip() or "Retry failed room agents."
     requested_agents = room_retry_requested_agents(body)
-    inspection = inspect_room_failed_agent_retries(room, requested_agents)
+    inspection = inspect_room_failed_agent_retries(room, requested_agents, force=force)
     result = {
         "ok": True,
         "dry_run": dry_run,
@@ -2279,6 +2284,7 @@ def retry_failed_room_agents(config, room_id, body, trace_id=None):
         "room_id": room_id,
         "action": "retry_failed_room_agents",
         "reason": reason,
+        "force": force,
         "requires_confirmation": True,
         "inspection": inspection,
     }
@@ -2325,6 +2331,7 @@ def retry_failed_room_agents(config, room_id, body, trace_id=None):
         "agents": retry_agents,
         "created_run_ids": [run.get("id") for run in created_runs if run.get("id")],
         "source_failed_run_ids": inspection.get("failed_run_ids") or [],
+        "force": force,
     })
     room.setdefault("reports", []).append({
         "at": retry_at,
@@ -2339,7 +2346,7 @@ def retry_failed_room_agents(config, room_id, body, trace_id=None):
     result["created_runs"] = [room_recovery_run_record(room, run) for run in created_runs]
     result["created_run_ids"] = [run.get("id") for run in created_runs if run.get("id")]
     result["room"] = room
-    result["inspection_after"] = inspect_room_failed_agent_retries(room, requested_agents)
+    result["inspection_after"] = inspect_room_failed_agent_retries(room, requested_agents, force=force)
     if not created_runs:
         result["requires_operator_inspection"] = True
         result["refusal_reason"] = "Retry was confirmed, but no retry run was created."
@@ -2891,7 +2898,33 @@ def room_recovery_run_record(room, run):
     return item
 
 
-def inspect_room_failed_agent_retries(room, requested_agents=None):
+def room_failure_class_is_auto_retryable(failure_class):
+    return str(failure_class or "").strip().lower() in ROOM_AUTO_RETRY_FAILURE_CLASSES
+
+
+def room_run_failure_taxonomy(run, status, latest_attempt=None):
+    latest_attempt = latest_attempt if isinstance(latest_attempt, dict) else {}
+    classification = {}
+    if isinstance(run, dict):
+        classification = classify_run_attempt(
+            status or run.get("status"),
+            exit_code=run.get("exit_code"),
+            stdout=run.get("stdout"),
+            stderr=run.get("stderr"),
+            summary=run.get("summary"),
+        )
+    failure_class = latest_attempt.get("failure_class") or classification.get("failure_class") or ""
+    retryable = latest_attempt.get("retryable")
+    if not isinstance(retryable, bool):
+        retryable = classification.get("retryable") if isinstance(classification.get("retryable"), bool) else None
+    return {
+        "failure_class": failure_class,
+        "retryable": retryable,
+        "retry_reason": latest_attempt.get("retry_reason") or classification.get("retry_reason") or "",
+    }
+
+
+def inspect_room_failed_agent_retries(room, requested_agents=None, force=False):
     requested_agents = [agent_id for agent_id in (requested_agents or []) if agent_id]
     expected_agents = [agent_id for agent_id in (room.get("agents") or []) if agent_id]
     scope_agents = requested_agents or expected_agents
@@ -2912,6 +2945,7 @@ def inspect_room_failed_agent_retries(room, requested_agents=None):
     failed_run_ids = []
     groups = []
     blocked_active = []
+    blocked_failure_class = []
     unavailable = []
     not_failed = []
     unknown = []
@@ -2924,7 +2958,11 @@ def inspect_room_failed_agent_retries(room, requested_agents=None):
         latest_error = room_run_contract_error(latest or {}, latest.get("stderr") or latest.get("summary") if latest else "")
         if not latest_error:
             latest_error = latest_attempt.get("last_error_excerpt") or latest_attempt.get("source_error_excerpt") or ""
+        classification = room_run_failure_taxonomy(latest, latest_status, latest_attempt)
         failure_retryable = latest_attempt.get("retryable")
+        if not isinstance(failure_retryable, bool):
+            failure_retryable = classification.get("retryable")
+        taxonomy_retryable = room_failure_class_is_auto_retryable(classification.get("failure_class"))
         item = {
             "agent_id": agent_id,
             "latest_run_id": latest.get("id") if latest else "",
@@ -2934,9 +2972,11 @@ def inspect_room_failed_agent_retries(room, requested_agents=None):
             "agent_status": registered.get("status") if registered else "unknown",
             "node_id": registered.get("node_id") if registered else "",
             "attempt_no": (latest_attempt.get("attempt_no") or latest.get("attempt_no")) if latest else None,
-            "failure_class": latest_attempt.get("failure_class") or "",
+            "failure_class": classification.get("failure_class") or "",
             "failure_retryable": failure_retryable if isinstance(failure_retryable, bool) else None,
-            "retry_reason": latest_attempt.get("retry_reason") or "",
+            "taxonomy_retryable": taxonomy_retryable,
+            "auto_retryable": taxonomy_retryable,
+            "retry_reason": classification.get("retry_reason") or "",
             "attempt": latest_attempt,
         }
         if agent_id not in expected_agents:
@@ -2960,6 +3000,16 @@ def inspect_room_failed_agent_retries(room, requested_agents=None):
             item["retryable"] = False
             item["blocked_reason"] = "agent_not_online"
             failed_run_ids.append(latest.get("id"))
+        elif not taxonomy_retryable:
+            failed_run_ids.append(latest.get("id"))
+            item["retryable"] = bool(force)
+            item["force_retryable"] = True
+            item["blocked_reason"] = "" if force else "failure_class_not_retryable"
+            if force:
+                item["forced_retry"] = True
+                retryable.append(agent_id)
+            else:
+                blocked_failure_class.append(agent_id)
         else:
             retryable.append(agent_id)
             failed_run_ids.append(latest.get("id"))
@@ -2977,14 +3027,182 @@ def inspect_room_failed_agent_retries(room, requested_agents=None):
         "requested_agents": requested_agents,
         "failed_agents": failed_agents,
         "retryable_agents": retryable,
+        "safe_retryable_agents": [group.get("agent_id") for group in groups if group.get("taxonomy_retryable") and group.get("retryable") and group.get("agent_id")],
+        "blocked_failure_class_agents": blocked_failure_class,
         "failed_run_ids": [run_id for run_id in failed_run_ids if run_id],
         "blocked_active_agents": blocked_active,
         "unavailable_agents": unavailable,
         "not_failed_agents": not_failed,
         "unknown_agents": unknown,
+        "force": bool(force),
+        "auto_retry_failure_classes": sorted(ROOM_AUTO_RETRY_FAILURE_CLASSES),
         "groups": groups,
-        "recommendation": "retry_failed_agents" if retryable else "inspect_failed_agents" if failed_agents else "none",
+        "recommendation": "retry_failed_agents" if retryable else "inspect_or_force_retry_failed_agents" if blocked_failure_class else "inspect_failed_agents" if failed_agents else "none",
     }
+
+
+def room_doctor_api(config, room_id, query):
+    room = get_room(config, room_id)
+    queued_run_stale_seconds = room_query_int_any(
+        query,
+        ("queued_run_stale_seconds", "queuedRunStaleSeconds", "queued-run-stale-seconds"),
+        STATUS_QUEUED_RUN_STALE_SECONDS,
+        1,
+        604800,
+    )
+    node_stale_seconds = room_query_int_any(
+        query,
+        ("node_stale_seconds", "nodeStaleSeconds", "stale_seconds", "staleSeconds", "node-stale-seconds", "stale-seconds"),
+        NODE_STALE_SECONDS,
+        1,
+        86400,
+    )
+    run_heartbeat_stale_seconds = room_query_int_any(
+        query,
+        (
+            "run_heartbeat_stale_seconds",
+            "runHeartbeatStaleSeconds",
+            "running_run_stale_seconds",
+            "runningRunStaleSeconds",
+            "run-heartbeat-stale-seconds",
+        ),
+        STATUS_RUN_HEARTBEAT_STALE_SECONDS,
+        1,
+        86400,
+    )
+    supervisor = inspect_room_supervisor(
+        room,
+        queued_run_stale_seconds=queued_run_stale_seconds,
+        node_stale_seconds=node_stale_seconds,
+        run_heartbeat_stale_seconds=run_heartbeat_stale_seconds,
+    )
+    retry_failed = inspect_room_failed_agent_retries(room)
+    actions = room_doctor_actions(room, supervisor, retry_failed, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds)
+    failed_attempts = [
+        group
+        for group in retry_failed.get("groups") or []
+        if str(group.get("latest_status") or "").lower() in {"failed", "error"}
+    ]
+    retryable_failed_agents = retry_failed.get("retryable_agents") or []
+    blocked_failed_agents = [
+        group.get("agent_id")
+        for group in failed_attempts
+        if group.get("agent_id") and not group.get("retryable")
+    ]
+    duplicate_active_runs = ((supervisor.get("analysis") or {}).get("duplicate_active_runs") or supervisor.get("duplicate_active_runs") or {})
+    summary = room_doctor_summary(room, supervisor, retry_failed, duplicate_active_runs)
+    severity = room_doctor_severity(summary, actions)
+    return {
+        "object": "agent_bus.room_doctor",
+        "room": supervisor.get("room") or {
+            "id": room.get("id"),
+            "title": room.get("title"),
+            "status": room.get("status"),
+            "agents": room.get("agents") or [],
+            "updated_at": room.get("updated_at"),
+        },
+        "summary": summary,
+        "severity": severity,
+        "thresholds": supervisor.get("thresholds") or {},
+        "counts": {
+            **(supervisor.get("counts") or {}),
+            "failed_attempts": len(failed_attempts),
+            "retryable_failed_agents": len(retryable_failed_agents),
+            "blocked_failed_agents": len(blocked_failed_agents),
+        },
+        "supervisor": supervisor,
+        "retry_failed": retry_failed,
+        "duplicate_active_runs": duplicate_active_runs,
+        "failed_attempts": failed_attempts,
+        "retryable_failed_agents": retryable_failed_agents,
+        "blocked_failed_agents": blocked_failed_agents,
+        "blocking_agents": sorted(set(blocked_failed_agents + (retry_failed.get("blocked_active_agents") or []) + (retry_failed.get("unavailable_agents") or []))),
+        "actions": actions,
+        "recommended_commands": [action.get("command") for action in actions if action.get("command")],
+    }
+
+
+def room_doctor_summary(room, supervisor, retry_failed, duplicate_active_runs):
+    if (duplicate_active_runs.get("duplicate_active_agent_count") or 0) > 0:
+        return "duplicate_active_runs"
+    supervisor_summary = ((supervisor.get("analysis") or {}).get("summary") or "")
+    if supervisor_summary in {
+        "stale_queued_recovery_candidate",
+        "orphaned_running_candidate",
+        "mixed_orphaned_running_and_stale_queued",
+        "stale_running_candidate",
+        "mixed_live_and_stale_running",
+        "mixed_stale_running_and_stale_queued",
+        "mixed_live_and_stale_queued",
+    }:
+        return supervisor_summary
+    if retry_failed.get("retryable_agents"):
+        return "failed_agents_retryable"
+    if retry_failed.get("failed_agents"):
+        return "failed_agents_blocked"
+    if supervisor_summary:
+        return supervisor_summary
+    return str(room.get("status") or "unknown").lower() or "unknown"
+
+
+def room_doctor_severity(summary, actions):
+    if summary in {"completed", "paused", "active_without_live_runs"}:
+        return "info"
+    if any(action.get("level") == "error" for action in actions):
+        return "error"
+    if any(action.get("level") == "warn" for action in actions):
+        return "warn"
+    return "info"
+
+
+def room_doctor_actions(room, supervisor, retry_failed, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds):
+    room_id = room.get("id") or "ROOM_ID"
+    actions = []
+    base_actions = supervisor_actions(room, supervisor, queued_run_stale_seconds, node_stale_seconds, run_heartbeat_stale_seconds)
+    actions.extend([action for action in base_actions if action.get("kind") != "no_action"])
+    retryable = retry_failed.get("retryable_agents") or []
+    if retryable:
+        actions.append({
+            "kind": "retry_failed_agents",
+            "level": "warn",
+            "executable": True,
+            "agents": retryable,
+            "message": "Failed agents have transient retry-safe failure classes and are online.",
+            "command": f"agent-bus room retry-failed {room_id} --agents {','.join(retryable)}",
+            "confirm_command": f"agent-bus room retry-failed {room_id} --agents {','.join(retryable)} --yes",
+        })
+    blocked_by_class = retry_failed.get("blocked_failure_class_agents") or []
+    if blocked_by_class:
+        actions.append({
+            "kind": "inspect_or_force_failed_agents",
+            "level": "warn",
+            "executable": False,
+            "agents": blocked_by_class,
+            "message": "Failed agents are online, but their failure class is not safe for automatic retry. Fix the cause or force retry explicitly.",
+            "command": f"agent-bus room retry-failed {room_id} --agents {','.join(blocked_by_class)} --force",
+            "confirm_command": f"agent-bus room retry-failed {room_id} --agents {','.join(blocked_by_class)} --force --yes",
+        })
+    unavailable = retry_failed.get("unavailable_agents") or []
+    if unavailable:
+        actions.append({
+            "kind": "wait_for_failed_agents_online",
+            "level": "warn",
+            "executable": False,
+            "agents": unavailable,
+            "message": "Failed agents cannot be retried until their edge node registers them as online.",
+            "command": "agent-bus status",
+        })
+    if not actions and str(room.get("status") or "").lower() == "completed":
+        actions.append({
+            "kind": "archive_or_export_completed_room",
+            "level": "info",
+            "executable": False,
+            "message": "Room is completed with no recovery action needed.",
+            "command": f"agent-bus room export {room_id} --reports-only",
+        })
+    if not actions:
+        actions.extend(base_actions)
+    return actions
 
 
 def room_retry_requested_agents(body):
@@ -3533,6 +3751,17 @@ def room_memory_query_int(query, name, default, lower, upper):
     except (TypeError, ValueError):
         value = default
     return max(lower, min(value, upper))
+
+
+def room_query_int_any(query, names, default, lower, upper):
+    for name in names:
+        raw = room_memory_query_value(query, name, "")
+        if raw:
+            try:
+                return max(lower, min(int(raw), upper))
+            except (TypeError, ValueError):
+                return max(lower, min(default, upper))
+    return max(lower, min(default, upper))
 
 
 def room_memory_api(config, room_id, query):

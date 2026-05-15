@@ -130,6 +130,10 @@ async function main() {
     await runScript("scripts/offline-smoke.mjs", stripCliOnlyArgs(argv.slice(1)));
     return;
   }
+  if (command === "protocol" || command === "conformance") {
+    await protocol(argv.slice(command === "conformance" ? 0 : 1));
+    return;
+  }
   if (command === "demo") {
     await demo(argv.slice(1));
     return;
@@ -204,6 +208,8 @@ Usage:
   agent-bus doctor --mode central --config central.config.json [--json]
   agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
   agent-bus smoke --offline
+  agent-bus protocol check
+  agent-bus protocol conformance [--json]
   agent-bus demo
   agent-bus demo zero-token
   agent-bus demo room
@@ -289,6 +295,19 @@ function demo(args) {
     return runScript("scripts/demo-local.mjs", extra);
   }
   throw new Error("Usage: agent-bus demo zero-token|starter|room|agent-model|issue|local");
+}
+
+function protocol(args) {
+  const first = args[0] || "";
+  const action = first && !first.startsWith("-") ? first : "conformance";
+  const extra = stripCliOnlyArgs(first && !first.startsWith("-") ? args.slice(1) : args);
+  if (["check", "verify", "schema"].includes(action)) {
+    return runScript("scripts/verify-protocol-v1.mjs", extra);
+  }
+  if (["conformance", "conform", "compat", "compatibility"].includes(action)) {
+    return runScript("scripts/protocol-conformance.mjs", extra);
+  }
+  throw new Error("Usage: agent-bus protocol check|conformance [--json]");
 }
 
 async function serve(args) {

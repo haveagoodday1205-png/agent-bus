@@ -65,6 +65,7 @@ const jsFiles = [
   "scripts/offline-smoke.mjs",
   "scripts/npm-install-smoke.mjs",
   "scripts/verify-protocol-v1.mjs",
+  "scripts/protocol-conformance.mjs",
   "scripts/verify-package.mjs",
   "scripts/verify-portable-release.mjs",
   "scripts/release-check.mjs",
@@ -87,6 +88,7 @@ try {
   const python = process.env.AGENT_BUS_PYTHON || process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py", "sdk/python/agent_bus_sdk.py", "sdk/python/__init__.py", "examples/room-agent-python/room_agent.py", "examples/python-agent-model/agent_model_example.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
+  step("protocol conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json"]);
   step("zero-token local demo", process.execPath, ["scripts/demo-zero-token.mjs", "--json"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);

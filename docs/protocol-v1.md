@@ -33,6 +33,7 @@ Offline verification:
 
 ```bash
 npm run protocol:check
+npm run protocol:conformance
 npm run compat:check
 ```
 
@@ -316,7 +317,7 @@ A v1-compatible gateway should pass:
 - agent-backed `/v1/chat/completions`
 - agent-backed `/v1/responses`
 
-The repository includes `npm run compat:check` for this baseline. It starts a temporary local Python gateway and Node edge, registers `examples/hello-agent`, verifies scoped edge discovery, confirms edge tokens only see `agent:<id>` virtual models, exercises agent-backed Chat Completions and Responses calls, then creates a room and checks `REPORT`, `BLACKBOARD`, and `DONE` parsing. It makes no provider model calls.
+The repository includes `agent-bus protocol conformance --json` and `npm run protocol:conformance` for this baseline. The conformance runner starts a temporary local Python gateway and Node edge, registers `examples/hello-agent`, verifies discovery endpoints, confirms scoped edge tokens only see `agent:<id>` virtual models, exercises agent-backed Chat Completions and Responses calls, creates a room, checks `REPORT`, `BLACKBOARD`, and `DONE` parsing, renders `room event-log`, exports a strict v1 event bundle, and replays it through the CLI plus JS SDK. It makes no provider model calls. `npm run compat:check` remains the smaller compatibility smoke for quick adapter regressions.
 
 ## Flagship Demo Target
 

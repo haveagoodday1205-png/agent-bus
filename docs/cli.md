@@ -15,6 +15,7 @@ Install from npm:
 npm install -g agent-bus-cli
 agent-bus --help
 agent-bus smoke --offline
+agent-bus protocol conformance --json
 agent-bus demo room
 agent-bus demo agent-model
 agent-bus demo issue

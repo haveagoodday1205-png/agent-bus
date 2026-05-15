@@ -89,6 +89,8 @@ try {
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py", "sdk/python/agent_bus_sdk.py", "sdk/python/__init__.py", "examples/room-agent-python/room_agent.py", "examples/python-agent-model/agent_model_example.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
   step("protocol conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json"]);
+  const helloAgentCommand = `${quoteCommandArg(process.execPath)} ${quoteCommandArg(path.join(root, "examples", "hello-agent", "hello-agent.mjs"))}`;
+  step("protocol adapter-command conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json", "--profile", "adapter-command", "--agent-command", helloAgentCommand, "--agent-id", "adapter-conformance"]);
   step("zero-token local demo", process.execPath, ["scripts/demo-zero-token.mjs", "--json"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
@@ -199,6 +201,13 @@ function releaseStepEnv(overrides = {}) {
 function compact(text) {
   const value = String(text || "").trim();
   return value.length > 800 ? `${value.slice(0, 800)}...` : value;
+}
+
+function quoteCommandArg(value) {
+  const text = String(value || "");
+  if (process.platform === "win32") return `"${text.replace(/"/g, '""')}"`;
+  if (/^[A-Za-z0-9_/:=.,+@%-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, `'"'"'`)}'`;
 }
 
 function printResult(result) {

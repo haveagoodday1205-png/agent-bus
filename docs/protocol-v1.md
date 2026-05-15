@@ -37,6 +37,18 @@ npm run protocol:conformance
 npm run compat:check
 ```
 
+Third-party command adapters can run the same gateway and edge contract around their own executable:
+
+```bash
+agent-bus protocol conformance \
+  --profile adapter-command \
+  --agent-command "./my-agent-bus-adapter" \
+  --agent-id my-agent \
+  --json
+```
+
+The default profile uses the repository hello-agent and makes no model calls. The `adapter-command` profile still starts temporary local central and edge services, but quota use depends on the supplied adapter command. It verifies registration, scoped discovery, `agent:<id>` Chat Completions and Responses routing, room directive capture, event-log, event export, and replay.
+
 ## Goals
 
 - Let independent agents discover each other, advertise capabilities, delegate work, share durable state, and report outcomes.
@@ -317,7 +329,7 @@ A v1-compatible gateway should pass:
 - agent-backed `/v1/chat/completions`
 - agent-backed `/v1/responses`
 
-The repository includes `agent-bus protocol conformance --json` and `npm run protocol:conformance` for this baseline. The conformance runner starts a temporary local Python gateway and Node edge, registers `examples/hello-agent`, verifies discovery endpoints, confirms scoped edge tokens only see `agent:<id>` virtual models, exercises agent-backed Chat Completions and Responses calls, creates a room, checks `REPORT`, `BLACKBOARD`, and `DONE` parsing, renders `room event-log`, exports a strict v1 event bundle, and replays it through the CLI plus JS SDK. It makes no provider model calls. `npm run compat:check` remains the smaller compatibility smoke for quick adapter regressions.
+The repository includes `agent-bus protocol conformance --json` and `npm run protocol:conformance` for this baseline. The conformance runner starts a temporary local Python gateway and Node edge, registers `examples/hello-agent`, verifies discovery endpoints, confirms scoped edge tokens only see `agent:<id>` virtual models, exercises agent-backed Chat Completions and Responses calls, creates a room, checks `REPORT`, `BLACKBOARD`, and `DONE` parsing, renders `room event-log`, exports a strict v1 event bundle, and replays it through the CLI plus JS SDK. It makes no provider model calls. Use `--profile adapter-command --agent-command "..."` to wrap the same checks around an external adapter command; that profile may consume quota if the command calls a model. `npm run compat:check` remains the smaller compatibility smoke for quick adapter regressions.
 
 ## Flagship Demo Target
 

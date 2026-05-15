@@ -38,16 +38,30 @@ async function main() {
   const python = findPython();
   if (!python) throw new Error("Protocol conformance requires Python 3.10+ for the local room gateway.");
 
+  const externalCommand = optionValue(args, "--agent-command") || optionValue(args, "--command") || "";
+  const profile = normalizeProfile(optionValue(args, "--profile") || optionValue(args, "--mode") || "", externalCommand);
+  const referenceAgent = profile === "local-reference-agent";
+  if (profile === "adapter-command" && !externalCommand) {
+    throw new Error("adapter-command conformance requires --agent-command \"your adapter command\".");
+  }
+
   const port = await freePort();
   const gateway = `http://127.0.0.1:${port}`;
   const adminToken = "sk-protocol-conformance-token-000000";
   const edgeToken = "abt_edge_protocol_conformance_token_000000";
-  const agentId = "conformance-agent";
-  const nodeId = "conformance-node";
+  const agentId = optionValue(args, "--agent-id") || "conformance-agent";
+  const nodeId = optionValue(args, "--node-id") || "conformance-node";
+  const agentKind = optionValue(args, "--kind") || (referenceAgent ? "example" : "external");
+  const agentRole = optionValue(args, "--role") || "worker";
+  const capabilities = unique([
+    ...(referenceAgent ? ["hello", "protocol-v1", "conformance", "offline"] : ["protocol-v1", "conformance", "adapter-command"]),
+    ...csvOption(args, "--capabilities")
+  ]);
   const centralConfig = path.join(tempDir, "central.config.json");
   const edgeConfig = path.join(tempDir, "edge.config.json");
   const eventBundlePath = path.join(tempDir, "room-events.json");
   const helloAgent = path.join(root, "examples", "hello-agent", "hello-agent.mjs");
+  const runCommand = externalCommand || `${quoteCommandArg(node)} ${quoteCommandArg(helloAgent)}`;
   const adminClient = new AgentBusClient({ gatewayUrl: gateway, token: adminToken });
   const edgeClient = new AgentBusClient({ gatewayUrl: gateway, token: edgeToken });
 
@@ -85,17 +99,17 @@ async function main() {
     agents: [
       {
         id: agentId,
-        kind: "example",
-        role: "worker",
+        kind: agentKind,
+        role: agentRole,
         enabled: true,
         adapter: "command",
-        capabilities: ["hello", "protocol-v1", "conformance", "offline"],
-        runCommand: `${quoteCommandArg(node)} ${quoteCommandArg(helloAgent)}`
+        capabilities,
+        runCommand
       }
     ]
   }, null, 2)}\n`);
 
-  step("Starting local conformance gateway");
+  step(`Starting local conformance gateway (${profile})`);
   const central = start(python, [path.join(root, "central_gateway.py")], {
     AGENT_BUS_CONFIG: centralConfig,
     AGENT_BUS_TOKEN: adminToken,
@@ -147,8 +161,12 @@ async function main() {
   const chatContent = chat.choices?.[0]?.message?.content || "";
   assert(chat.model === `agent:${agentId}`, "chat completion returned the wrong model");
   assert(chat.agent_bus?.agent_id === agentId, "chat completion omitted agent_bus agent metadata");
-  assert(/REPORT: conformance-agent received/.test(chatContent), "chat completion did not route through the agent");
-  assert(/BLACKBOARD: conformance-agent message_source=file/.test(chatContent), "chat completion did not prove file-based task delivery");
+  if (referenceAgent) {
+    assert(new RegExp(`REPORT: ${escapeRegExp(agentId)} received`).test(chatContent), "chat completion did not route through the agent");
+    assert(new RegExp(`BLACKBOARD: ${escapeRegExp(agentId)} message_source=file`).test(chatContent), "chat completion did not prove file-based task delivery");
+  } else {
+    assertNonEmptyAdapterOutput(chatContent, "chat completion");
+  }
   pass("openai.chat_completions_agent_model", "agent:<id> Chat Completions routed through the edge agent", {
     run_id: chat.agent_bus?.run_id
   });
@@ -161,8 +179,12 @@ async function main() {
   assert(response.status === "completed", "Responses API call did not complete");
   assert(response.model === `agent:${agentId}`, "Responses API returned the wrong model");
   assert(response.agent_bus?.agent_id === agentId, "Responses API omitted agent_bus agent metadata");
-  assert(/REPORT: conformance-agent received/.test(response.output_text || ""), "Responses API did not route through the agent");
-  assert(/BLACKBOARD: conformance-agent message_source=file/.test(response.output_text || ""), "Responses API did not prove file-based task delivery");
+  if (referenceAgent) {
+    assert(new RegExp(`REPORT: ${escapeRegExp(agentId)} received`).test(response.output_text || ""), "Responses API did not route through the agent");
+    assert(new RegExp(`BLACKBOARD: ${escapeRegExp(agentId)} message_source=file`).test(response.output_text || ""), "Responses API did not prove file-based task delivery");
+  } else {
+    assertNonEmptyAdapterOutput(response.output_text || "", "Responses API");
+  }
   pass("openai.responses_agent_model", "agent:<id> Responses routed through the edge agent", {
     run_id: response.agent_bus?.run_id
   });
@@ -170,7 +192,9 @@ async function main() {
   step("Creating a conformance room");
   const room = await adminClient.createRoom({
     title: "Protocol conformance room",
-    goal: "Verify Agent Bus v1 room run delivery, REPORT/BLACKBOARD/DONE directives, event-log, event export, and replay without model calls.",
+    goal: referenceAgent
+      ? "Verify Agent Bus v1 room run delivery, REPORT/BLACKBOARD/DONE directives, event-log, event export, and replay without model calls."
+      : "Verify Agent Bus v1 adapter command delivery. Read the task normally and reply with one REPORT line, one BLACKBOARD line, and DONE so the gateway can validate the room directive contract.",
     agents: [agentId],
     wakeAgents: [agentId],
     auto_rotate: false,
@@ -180,11 +204,15 @@ async function main() {
   const run = finalRoom.runs?.find((item) => item.agent_id === agentId);
   assert(finalRoom.status === "completed", "conformance room did not complete");
   assert(run?.status === "completed", "conformance agent room run did not complete");
-  assert(/REPORT: conformance-agent received/.test(run.stdout || ""), "room run stdout did not include REPORT");
-  assert(/BLACKBOARD: conformance-agent message_source=file/.test(run.stdout || ""), "room run stdout did not prove AGENT_MESSAGE_FILE usage");
+  if (referenceAgent) {
+    assert(new RegExp(`REPORT: ${escapeRegExp(agentId)} received`).test(run.stdout || ""), "room run stdout did not include REPORT");
+    assert(new RegExp(`BLACKBOARD: ${escapeRegExp(agentId)} message_source=file`).test(run.stdout || ""), "room run stdout did not prove AGENT_MESSAGE_FILE usage");
+  } else {
+    assertNonEmptyAdapterOutput(run.stdout || "", "room run");
+  }
   assert(/\bDONE\b/.test(run.stdout || ""), "room run stdout did not include DONE");
-  assert(finalRoom.reports?.some((item) => /conformance-agent received/.test(item.content || "")), "gateway did not persist the REPORT directive");
-  assert(finalRoom.blackboard?.notes?.some((item) => /conformance-agent message_source=file/.test(item.content || "")), "gateway did not persist the BLACKBOARD directive");
+  assert(finalRoom.reports?.some((item) => referenceAgent ? new RegExp(`${escapeRegExp(agentId)} received`).test(item.content || "") : String(item.content || "").trim()), "gateway did not persist the REPORT directive");
+  assert(finalRoom.blackboard?.notes?.some((item) => referenceAgent ? new RegExp(`${escapeRegExp(agentId)} message_source=file`).test(item.content || "") : String(item.content || "").trim()), "gateway did not persist the BLACKBOARD directive");
   pass("room.directive_contract", "room captured REPORT, BLACKBOARD, and DONE from the agent", {
     room_id: finalRoom.id,
     run_id: run.id
@@ -228,11 +256,12 @@ async function main() {
     ok: true,
     mode: "protocol_conformance",
     protocol: "agent-bus.v1",
-    profile: "local-reference-agent",
-    quota: "no_model_calls",
+    profile,
+    quota: referenceAgent ? "no_model_calls" : "depends_on_agent_command",
     gateway,
     node_id: nodeId,
     agent_id: agentId,
+    agent_command_provided: Boolean(externalCommand),
     room_id: finalRoom.id,
     room_status: finalRoom.status,
     checks,
@@ -254,10 +283,11 @@ async function main() {
   console.log("");
   console.log("Agent Bus protocol conformance passed");
   console.log(`Protocol: ${result.protocol}`);
+  console.log(`Profile: ${result.profile}`);
   console.log(`Agent: ${result.agent_id} on ${result.node_id}`);
   console.log(`Room: ${result.room_id} (${result.room_status})`);
   console.log(`Checks: ${result.summary.checks}`);
-  console.log("Quota: no model calls");
+  console.log(`Quota: ${result.quota}`);
 }
 
 function pass(id, detail, data = {}) {
@@ -460,6 +490,35 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function assertNonEmptyAdapterOutput(text, label) {
+  assert(String(text || "").trim().length > 0, `${label} returned empty adapter output`);
+}
+
+function optionValue(argv, name) {
+  const index = argv.indexOf(name);
+  if (index < 0) return "";
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) return "";
+  return value;
+}
+
+function csvOption(argv, name) {
+  const value = optionValue(argv, name);
+  return value ? value.split(",").map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function normalizeProfile(value, externalCommand) {
+  const profile = String(value || "").trim().toLowerCase();
+  if (!profile) return externalCommand ? "adapter-command" : "local-reference-agent";
+  if (["full", "reference", "local", "local-reference", "local-reference-agent"].includes(profile)) {
+    return "local-reference-agent";
+  }
+  if (["adapter", "adapter-command", "command", "external", "external-command"].includes(profile)) {
+    return "adapter-command";
+  }
+  throw new Error(`Unknown protocol conformance profile: ${value}`);
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -534,6 +593,10 @@ function quoteCommandArg(value) {
   if (process.platform === "win32") return `"${text.replace(/"/g, '""')}"`;
   if (/^[A-Za-z0-9_/:=.,+@%-]+$/.test(text)) return text;
   return `'${text.replace(/'/g, `'"'"'`)}'`;
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const HERMETIC_AGENT_BUS_ENV = [

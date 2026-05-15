@@ -329,8 +329,10 @@ async function serve(config) {
       if (req.method === "POST" && url.pathname === "/edge/poll") {
         requireAuth(req, config, ["admin", "edge"]);
         const body = await readJson(req);
-        const payload = await pollNode(body, Number(body.timeout_ms || config.defaults.pollTimeoutMs || 25000));
-        return sendJson(res, payload);
+        const payload = await pollNode(body, Number(body.timeout_ms || config.defaults.pollTimeoutMs || 25000), { res });
+        const delivered = sendJson(res, payload);
+        if (!delivered) requeueUndeliveredPollPayload(body.node_id, payload);
+        return delivered;
       }
       if (req.method === "POST" && url.pathname === "/edge/events") {
         requireAuth(req, config, ["admin", "edge"]);
@@ -1707,19 +1709,35 @@ function createThread(config, body, traceId = "") {
 }
 
 function enqueueTask(nodeId, task) {
-  const waiterQueue = state.waiters.get(nodeId) || [];
-  const waiter = waiterQueue.shift();
-  if (waiter) {
-    clearTimeout(waiter.timer);
-    waiter.resolve({ type: "task", task });
-    return;
-  }
   const queue = state.queues.get(nodeId) || [];
   queue.push(task);
   state.queues.set(nodeId, queue);
+  deliverQueuedPollTask(nodeId);
 }
 
-function pollNode(body, timeoutMs) {
+function deliverQueuedPollTask(nodeId) {
+  const queue = state.queues.get(nodeId) || [];
+  const waiterQueue = state.waiters.get(nodeId) || [];
+  while (queue.length && waiterQueue.length) {
+    const task = queue.shift();
+    let delivered = false;
+    while (waiterQueue.length) {
+      const waiter = waiterQueue.shift();
+      if (resolvePollWaiter(nodeId, waiter, { type: "task", task })) {
+        delivered = true;
+        break;
+      }
+    }
+    if (!delivered) {
+      queue.unshift(task);
+      break;
+    }
+  }
+  state.queues.set(nodeId, queue);
+  state.waiters.set(nodeId, waiterQueue);
+}
+
+function pollNode(body, timeoutMs, lifecycle = {}) {
   const nodeId = body?.node_id;
   if (!nodeId || !state.nodes.has(nodeId)) {
     const err = new Error("unknown node_id");
@@ -1736,21 +1754,53 @@ function pollNode(body, timeoutMs) {
   const queue = state.queues.get(nodeId) || [];
   const task = queue.shift();
   if (task) return Promise.resolve({ type: "task", task });
+  if (lifecycle.res?.destroyed || lifecycle.res?.writableEnded) return Promise.resolve({ type: "idle" });
 
   return new Promise((resolve) => {
     const waiter = {
       resolve,
-      timer: setTimeout(() => {
-        const waiters = state.waiters.get(nodeId) || [];
-        const index = waiters.indexOf(waiter);
-        if (index !== -1) waiters.splice(index, 1);
-        resolve({ type: "idle" });
-      }, Math.min(Math.max(timeoutMs || 25000, 1000), 60000))
+      done: false,
+      cleanup: null,
+      timer: null
     };
+    waiter.timer = setTimeout(() => {
+      resolvePollWaiter(nodeId, waiter, { type: "idle" });
+    }, Math.min(Math.max(timeoutMs || 25000, 1000), 60000));
     const waiters = state.waiters.get(nodeId) || [];
     waiters.push(waiter);
     state.waiters.set(nodeId, waiters);
+    if (lifecycle.res) {
+      const onClose = () => resolvePollWaiter(nodeId, waiter, { type: "idle" });
+      waiter.cleanup = () => lifecycle.res.off("close", onClose);
+      lifecycle.res.once("close", onClose);
+      if (lifecycle.res.destroyed || lifecycle.res.writableEnded) {
+        resolvePollWaiter(nodeId, waiter, { type: "idle" });
+      }
+    }
   });
+}
+
+function resolvePollWaiter(nodeId, waiter, payload) {
+  if (!waiter || waiter.done) return false;
+  waiter.done = true;
+  clearTimeout(waiter.timer);
+  if (waiter.cleanup) waiter.cleanup();
+  const waiters = state.waiters.get(nodeId) || [];
+  const index = waiters.indexOf(waiter);
+  if (index !== -1) waiters.splice(index, 1);
+  waiter.resolve(payload);
+  return true;
+}
+
+function requeueUndeliveredPollPayload(nodeId, payload) {
+  if (!nodeId || payload?.type !== "task" || !payload.task) return false;
+  const queue = state.queues.get(nodeId) || [];
+  const runId = payload.task.run_id;
+  if (runId && queue.some((task) => task?.run_id === runId)) return false;
+  queue.unshift(payload.task);
+  state.queues.set(nodeId, queue);
+  deliverQueuedPollTask(nodeId);
+  return true;
 }
 
 function mergeAgentUpdates(nodeId, current, updates) {
@@ -1879,7 +1929,7 @@ function readJson(req) {
 }
 
 function sendJson(res, value, status = 200, options = {}) {
-  if (res.destroyed || res.writableEnded) return;
+  if (res.destroyed || res.writableEnded) return false;
   const payload = options.redact === false ? value : redactObject(value);
   const body = `${JSON.stringify(payload, null, 2)}\n`;
   try {
@@ -1888,8 +1938,9 @@ function sendJson(res, value, status = 200, options = {}) {
       "cache-control": "no-store"
     });
     res.end(body);
+    return true;
   } catch (err) {
-    if (isClientDisconnect(err)) return;
+    if (isClientDisconnect(err)) return false;
     throw err;
   }
 }

@@ -62,6 +62,8 @@ function loadConfig(file) {
   config.gatewayUrl = process.env.AGENT_BUS_GATEWAY_URL || config.gatewayUrl;
   config.token = process.env.AGENT_BUS_TOKEN || config.token;
   config.pollTimeoutMs ||= 25000;
+  config.pollRequestGraceMs ||= 5000;
+  config.requestTimeoutMs ||= 60000;
   config.idleDelayMs ||= 1000;
   config.defaultTimeoutMs ||= 600000;
   config.healthProbeIntervalMs ||= 60000;
@@ -491,12 +493,12 @@ function spawnCommand(config, agent, task, commandText, options = {}) {
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString("utf8");
       stdout += text;
-      if (options.emit !== false) void event(config, task, { type: "run.output", stream: "stdout", text });
+      if (options.emit !== false) emitEvent(config, task, { type: "run.output", stream: "stdout", text });
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString("utf8");
       stderr += text;
-      if (options.emit !== false) void event(config, task, { type: "run.output", stream: "stderr", text });
+      if (options.emit !== false) emitEvent(config, task, { type: "run.output", stream: "stderr", text });
     });
     child.on("error", (err) => {
       finishOnce({ status: "error", exit_code: 1, stdout, stderr: err.message });
@@ -529,6 +531,14 @@ async function event(config, task, payload) {
     run_id: task.run_id,
     trace_id: task.trace_id || "",
     event: payload
+  });
+}
+
+function emitEvent(config, task, payload) {
+  event(config, task, payload).catch((err) => {
+    if (config.debugEvents) {
+      console.error(`edge-node: failed to emit ${payload.type || "event"} for run ${task.run_id}: ${err.message || err}`);
+    }
   });
 }
 
@@ -686,6 +696,10 @@ function safeFileName(value) {
 
 async function postJson(config, pathname, body) {
   let res;
+  const timeoutMs = postJsonTimeoutMs(config, pathname, body);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
   try {
     res = await fetch(gatewayEndpoint(config.gatewayUrl, pathname), {
       method: "POST",
@@ -693,25 +707,51 @@ async function postJson(config, pathname, body) {
         "content-type": "application/json",
         ...(config.token ? { authorization: `Bearer ${config.token}` } : {})
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: controller.signal
     });
+    const text = await res.text();
+    let data = {};
+    try {
+      data = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+    if (!res.ok) {
+      const err = new Error(data.error || `${res.status} ${res.statusText}`);
+      err.statusCode = res.status;
+      throw err;
+    }
+    return data;
   } catch (err) {
+    if (isAbortError(err)) {
+      const timeoutErr = new Error(`POST ${pathname} timed out after ${timeoutMs}ms`);
+      timeoutErr.code = "ETIMEDOUT";
+      timeoutErr.transient = true;
+      throw timeoutErr;
+    }
     err.transient = true;
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  const text = await res.text();
-  let data = {};
-  try {
-    data = text.trim() ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-  if (!res.ok) {
-    const err = new Error(data.error || `${res.status} ${res.statusText}`);
-    err.statusCode = res.status;
-    throw err;
-  }
-  return data;
+}
+
+function postJsonTimeoutMs(config, pathname, body) {
+  const fallback = pathname === "/edge/poll"
+    ? Number(body?.timeout_ms || config.pollTimeoutMs || 25000) + Number(config.pollRequestGraceMs || 5000)
+    : Number(config.requestTimeoutMs || 60000);
+  return boundedMs(fallback, 1000, 10 * 60 * 1000, 60000);
+}
+
+function boundedMs(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.min(Math.max(Math.round(numeric), min), max);
+}
+
+function isAbortError(err) {
+  return err?.name === "AbortError" || err?.code === "ABORT_ERR";
 }
 
 function isAuthError(err) {

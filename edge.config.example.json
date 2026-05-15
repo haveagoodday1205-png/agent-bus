@@ -4,6 +4,8 @@
   "token": "change-me-to-a-scoped-edge-token",
   "tokenScope": "edge",
   "pollTimeoutMs": 25000,
+  "pollRequestGraceMs": 5000,
+  "requestTimeoutMs": 60000,
   "idleDelayMs": 1000,
   "defaultTimeoutMs": 600000,
   "dataDir": "./data/edge",

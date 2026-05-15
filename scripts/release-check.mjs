@@ -42,6 +42,8 @@ const jsFiles = [
   "scripts/edge-token-api-smoke.mjs",
   "scripts/edge-completion-outbox-smoke.mjs",
   "scripts/edge-poll-disconnect-smoke.mjs",
+  "scripts/node-poll-disconnect-smoke.mjs",
+  "scripts/edge-poll-timeout-smoke.mjs",
   "scripts/trace-smoke.mjs",
   "scripts/central-restart-smoke.mjs",
   "scripts/duplicate-complete-smoke.mjs",
@@ -93,6 +95,8 @@ try {
   step("edge token API smoke", process.execPath, ["scripts/edge-token-api-smoke.mjs", "--json"]);
   step("edge completion outbox smoke", process.execPath, ["scripts/edge-completion-outbox-smoke.mjs", "--json"]);
   step("edge poll disconnect smoke", process.execPath, ["scripts/edge-poll-disconnect-smoke.mjs", "--json"]);
+  step("Node edge poll disconnect smoke", process.execPath, ["scripts/node-poll-disconnect-smoke.mjs", "--json"]);
+  step("edge poll timeout smoke", process.execPath, ["scripts/edge-poll-timeout-smoke.mjs", "--json"]);
   step("trace smoke", process.execPath, ["scripts/trace-smoke.mjs", "--json"]);
   step("central restart smoke", process.execPath, ["scripts/central-restart-smoke.mjs", "--json"]);
   step("duplicate complete smoke", process.execPath, ["scripts/duplicate-complete-smoke.mjs", "--json"]);

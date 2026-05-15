@@ -41,6 +41,7 @@ const jsFiles = [
   "scripts/setup-join-smoke.mjs",
   "scripts/edge-token-api-smoke.mjs",
   "scripts/edge-completion-outbox-smoke.mjs",
+  "scripts/python-edge-completion-outbox-smoke.mjs",
   "scripts/edge-poll-disconnect-smoke.mjs",
   "scripts/node-poll-disconnect-smoke.mjs",
   "scripts/edge-poll-timeout-smoke.mjs",
@@ -94,6 +95,7 @@ try {
   step("setup join smoke", process.execPath, ["scripts/setup-join-smoke.mjs", "--json"]);
   step("edge token API smoke", process.execPath, ["scripts/edge-token-api-smoke.mjs", "--json"]);
   step("edge completion outbox smoke", process.execPath, ["scripts/edge-completion-outbox-smoke.mjs", "--json"]);
+  step("python edge completion outbox smoke", process.execPath, ["scripts/python-edge-completion-outbox-smoke.mjs", "--json"]);
   step("edge poll disconnect smoke", process.execPath, ["scripts/edge-poll-disconnect-smoke.mjs", "--json"]);
   step("Node edge poll disconnect smoke", process.execPath, ["scripts/node-poll-disconnect-smoke.mjs", "--json"]);
   step("edge poll timeout smoke", process.execPath, ["scripts/edge-poll-timeout-smoke.mjs", "--json"]);

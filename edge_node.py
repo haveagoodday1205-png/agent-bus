@@ -43,6 +43,8 @@ def load_config(config_path):
     config["gatewayUrl"] = os.environ.get("AGENT_BUS_GATEWAY_URL", config.get("gatewayUrl", "http://127.0.0.1:8788"))
     config["token"] = os.environ.get("AGENT_BUS_TOKEN", config.get("token", ""))
     config["pollTimeoutMs"] = int(config.get("pollTimeoutMs", 25000))
+    config["pollRequestGraceMs"] = int(config.get("pollRequestGraceMs", 5000))
+    config["requestTimeoutMs"] = int(config.get("requestTimeoutMs", 60000))
     config["idleDelayMs"] = int(config.get("idleDelayMs", 1000))
     config["defaultTimeoutMs"] = int(config.get("defaultTimeoutMs", 600000))
     config["healthProbeIntervalMs"] = int(config.get("healthProbeIntervalMs", 60000))
@@ -50,11 +52,23 @@ def load_config(config_path):
     config["runHeartbeatIntervalMs"] = int(config.get("runHeartbeatIntervalMs", 30000))
     config["completeRetryAttempts"] = int(config.get("completeRetryAttempts", 5))
     config["completeRetryBaseDelayMs"] = int(config.get("completeRetryBaseDelayMs", 2000))
+    config["dataDir"] = resolve_config_path(os.environ.get("AGENT_BUS_DATA_DIR") or config.get("dataDir") or ".agent-bus", path.parent)
+    config["completionOutboxDir"] = resolve_config_path(
+        os.environ.get("AGENT_BUS_COMPLETION_OUTBOX_DIR") or config.get("completionOutboxDir") or str(Path(config["dataDir"]) / "edge-completions"),
+        path.parent,
+    )
     config.setdefault("agents", [])
     config["edgeSessionId"] = os.environ.get("AGENT_BUS_EDGE_SESSION_ID") or f"edge_session_{int(time.time() * 1000):x}_{uuid.uuid4()}"
     config["_agentHealth"] = {}
     config["_nextHealthProbeAt"] = 0
     return config
+
+
+def resolve_config_path(value, base_dir):
+    path = Path(str(value or "")).expanduser()
+    if not path.is_absolute():
+        path = Path(base_dir) / path
+    return str(path)
 
 
 def public_agents(config):
@@ -96,6 +110,7 @@ def connect(config, once=False):
                 registered = True
                 failures = 0
                 print(f"edge-node.py {config['nodeId']} connected to {config['gatewayUrl']}", flush=True)
+            drain_pending_completions(config)
             refresh_agent_health(config)
             payload = post(config, "/edge/poll", {
                 "node_id": config["nodeId"],
@@ -190,7 +205,7 @@ def start_run_heartbeat(config, task, agent):
 def run_agent(config, agent, task):
     if agent.get("adapter") == "echo":
         stdout = f"[{agent['id']}] {task.get('message', '')}\n"
-        event(config, task, {"type": "run.output", "stream": "stdout", "text": stdout})
+        emit_event(config, task, {"type": "run.output", "stream": "stdout", "text": stdout})
         return {"status": "completed", "exit_code": 0, "stdout": stdout, "stderr": "", "summary": stdout.strip()}
     command = agent.get("runCommand")
     if not command:
@@ -416,9 +431,9 @@ def run_command(config, agent, task, command, emit=True):
             stderr = (stderr or "") + f"\nTimed out after {agent.get('timeoutMs', config['defaultTimeoutMs'])}ms"
             return {"status": "failed", "exit_code": 124, "stdout": stdout or "", "stderr": stderr.strip()}
         if emit and stdout:
-            event(config, task, {"type": "run.output", "stream": "stdout", "text": stdout})
+            emit_event(config, task, {"type": "run.output", "stream": "stdout", "text": stdout})
         if emit and stderr:
-            event(config, task, {"type": "run.output", "stream": "stderr", "text": stderr})
+            emit_event(config, task, {"type": "run.output", "stream": "stderr", "text": stderr})
         return {
             "status": "completed" if proc.returncode == 0 else "failed",
             "exit_code": proc.returncode,
@@ -434,8 +449,23 @@ def event(config, task, payload):
     return post(config, "/edge/events", {"node_id": config["nodeId"], "edge_session_id": config["edgeSessionId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "event": payload})
 
 
+def emit_event(config, task, payload):
+    try:
+        event(config, task, payload)
+    except Exception as exc:
+        if config.get("debugEvents"):
+            print(f"edge-node: failed to emit {payload.get('type', 'event')} for run {task.get('run_id')}: {exc}", file=sys.stderr, flush=True)
+
+
 def complete(config, task, result):
     body = {"node_id": config["nodeId"], "edge_session_id": config["edgeSessionId"], "run_id": task["run_id"], "trace_id": task.get("trace_id", ""), "result": result}
+    pending_file, _pending_record = write_pending_completion(config, body)
+    response = submit_completion_with_retry(config, body)
+    delete_pending_completion(pending_file)
+    return response
+
+
+def submit_completion_with_retry(config, body):
     attempts = max(1, int(config.get("completeRetryAttempts", 5) or 5))
     base_delay = max(100, int(config.get("completeRetryBaseDelayMs", 2000) or 2000))
     last_exc = None
@@ -455,6 +485,126 @@ def complete(config, task, result):
         time.sleep(delay + random.random() * min(1.0, delay / 2))
 
 
+def drain_pending_completions(config):
+    files = list_pending_completion_files(config)
+    if not files:
+        return
+    print(f"edge-node: replaying {len(files)} pending completion{'s' if len(files) != 1 else ''}", flush=True)
+    for file_path in files:
+        try:
+            record = json.loads(file_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            move_pending_completion_to_failed(config, file_path, exc, corrupt=True)
+            continue
+        body = record.get("body") if isinstance(record, dict) and isinstance(record.get("body"), dict) else record
+        if not isinstance(body, dict) or not body.get("run_id") or not body.get("result"):
+            move_pending_completion_to_failed(config, file_path, RuntimeError("pending completion is missing run_id or result"), corrupt=True)
+            continue
+        try:
+            touch_pending_completion(file_path, record, "")
+            submit_completion_with_retry(config, body)
+            delete_pending_completion(file_path)
+            print(f"edge-node: replayed pending completion for run {body.get('run_id')}", flush=True)
+        except AgentBusHttpError as exc:
+            touch_pending_completion(file_path, record, str(exc))
+            if exc.status_code not in (401, 403) and exc.status_code < 500 and not is_registration_lost(exc):
+                move_pending_completion_to_failed(config, file_path, exc)
+                continue
+            raise
+        except Exception as exc:
+            touch_pending_completion(file_path, record, str(exc))
+            raise
+
+
+def write_pending_completion(config, body):
+    outbox = completion_outbox_dir(config)
+    outbox.mkdir(parents=True, exist_ok=True)
+    file_path = outbox / f"{safe_file_name(body.get('run_id'))}.json"
+    record = {
+        "object": "agent_bus.edge_completion",
+        "version": 1,
+        "node_id": body.get("node_id"),
+        "run_id": body.get("run_id"),
+        "trace_id": body.get("trace_id") or "",
+        "created_at": iso_now(),
+        "attempts": 0,
+        "body": body,
+    }
+    write_json_atomic(file_path, record)
+    return file_path, record
+
+
+def touch_pending_completion(file_path, record, last_error):
+    next_record = dict(record) if isinstance(record, dict) else {}
+    next_record["attempts"] = int(next_record.get("attempts") or 0) + 1
+    next_record["last_attempt_at"] = iso_now()
+    if last_error:
+        next_record["last_error"] = last_error
+    write_json_atomic(file_path, next_record)
+
+
+def list_pending_completion_files(config):
+    outbox = completion_outbox_dir(config)
+    if not outbox.exists():
+        return []
+    return sorted(
+        [item for item in outbox.iterdir() if item.is_file() and item.suffix == ".json"],
+        key=lambda item: item.stat().st_mtime,
+    )
+
+
+def delete_pending_completion(file_path):
+    try:
+        path = Path(file_path)
+        if path.exists():
+            path.unlink()
+    except Exception:
+        pass
+
+
+def move_pending_completion_to_failed(config, file_path, exc, corrupt=False):
+    failed_dir = completion_outbox_dir(config) / "failed"
+    failed_dir.mkdir(parents=True, exist_ok=True)
+    target = failed_dir / f"{Path(file_path).stem}.{int(time.time() * 1000)}.json"
+    try:
+        record = json.loads(Path(file_path).read_text(encoding="utf-8")) if Path(file_path).exists() else {}
+        if not isinstance(record, dict):
+            record = {}
+        record["failed_at"] = iso_now()
+        record["failed_reason"] = "corrupt_pending_completion" if corrupt else "permanent_completion_error"
+        record["last_error"] = str(exc)
+        write_json_atomic(target, record)
+        if Path(file_path).exists():
+            Path(file_path).unlink()
+    except Exception:
+        try:
+            Path(file_path).replace(target)
+        except Exception:
+            pass
+    print(f"edge-node: moved pending completion {Path(file_path).name} to failed outbox: {exc}", file=sys.stderr, flush=True)
+
+
+def completion_outbox_dir(config):
+    return Path(config.get("completionOutboxDir") or (Path(config.get("dataDir") or ".agent-bus") / "edge-completions")).expanduser().resolve()
+
+
+def write_json_atomic(file_path, value):
+    file_path = Path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = file_path.with_name(f"{file_path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
+    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(file_path)
+
+
+def safe_file_name(value):
+    text = "".join(char if char.isalnum() or char in "._-" else "_" for char in str(value or "unknown"))
+    return (text[:180] or "unknown")
+
+
+def iso_now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def post(config, pathname, body):
     data = json.dumps(body).encode("utf-8")
     req = Request(endpoint(config["gatewayUrl"], pathname), data=data, method="POST")
@@ -462,7 +612,7 @@ def post(config, pathname, body):
     if config.get("token"):
         req.add_header("authorization", "Bearer " + config["token"])
     try:
-        with urlopen(req, timeout=max(10, (config.get("pollTimeoutMs", 25000) / 1000) + 10)) as res:
+        with urlopen(req, timeout=post_timeout_seconds(config, pathname, body)) as res:
             raw = res.read().decode("utf-8")
             return json.loads(raw) if raw.strip() else {}
     except HTTPError as exc:
@@ -474,6 +624,24 @@ def post(config, pathname, body):
         except Exception:
             pass
         raise AgentBusHttpError(exc.code, message) from exc
+
+
+def post_timeout_seconds(config, pathname, body):
+    if pathname == "/edge/poll":
+        timeout_ms = int(body.get("timeout_ms") or config.get("pollTimeoutMs", 25000)) + int(config.get("pollRequestGraceMs", 5000))
+    else:
+        timeout_ms = int(config.get("requestTimeoutMs", 60000))
+    return bounded_seconds(timeout_ms, 1000, 10 * 60 * 1000, 60000)
+
+
+def bounded_seconds(value_ms, minimum_ms, maximum_ms, fallback_ms):
+    try:
+        numeric = int(value_ms)
+    except (TypeError, ValueError):
+        numeric = fallback_ms
+    if numeric <= 0:
+        numeric = fallback_ms
+    return min(max(numeric, minimum_ms), maximum_ms) / 1000
 
 
 class AgentBusHttpError(RuntimeError):

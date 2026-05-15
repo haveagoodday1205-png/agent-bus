@@ -351,7 +351,7 @@ Copy one edge config onto each machine and run `edge-node.mjs connect --config .
 - Code machine: use `edge.120.example.json` as a starting point for Codex.
 - Model gateway machine: use `edge.178.example.json` as a starting point for an OpenAI-compatible backend.
 
-For unstable links, tune `pollTimeoutMs`, `pollRequestGraceMs`, and `requestTimeoutMs` in the edge config. The edge waits for long-poll work, adds a small grace window, and then treats a half-open gateway request as transient so the reconnect loop can continue.
+For unstable links, tune `pollTimeoutMs`, `pollRequestGraceMs`, and `requestTimeoutMs` in the edge config. The edge waits for long-poll work, adds a small grace window, and then treats a half-open gateway request as transient so the reconnect loop can continue. Node and Python edges also persist completed run results under `completionOutboxDir` until the central gateway accepts them, so a brief outage does not lose the final answer.
 
 Each edge node sends:
 

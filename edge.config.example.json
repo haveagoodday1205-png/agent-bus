@@ -9,6 +9,7 @@
   "idleDelayMs": 1000,
   "defaultTimeoutMs": 600000,
   "dataDir": "./data/edge",
+  "completionOutboxDir": "./data/edge/edge-completions",
   "agents": [
     {
       "id": "local-echo",

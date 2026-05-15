@@ -227,6 +227,7 @@ Usage:
   agent-bus room inspect room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus room doctor room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json]
   agent-bus room follow-up room_xxx [--agents a,b] [--dry-run] --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room event-log room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--reports-only] [--tail 50]
   agent-bus room export room_xxx --format markdown --out room.md
   agent-bus room export room_xxx --reports-only --out room-summary.md
   agent-bus room export room_xxx --format json --out room.json --no-redact
@@ -2632,6 +2633,26 @@ async function room(args) {
     process.stdout.write(text);
     return;
   }
+  if (["event-log", "events", "timeline", "tail"].includes(action)) {
+    const roomId = requiredPositional(args, 1, "room id");
+    const roomData = await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args });
+    const exportData = args.includes("--no-redact") ? roomData : redactRoomExport(roomData);
+    const reportsOnly = args.includes("--reports-only") || args.includes("--summary");
+    const bundle = roomEventBundle(exportData, { reportsOnly });
+    const explicitTail = optionValue(args, "--tail");
+    const limit = args.includes("--all")
+      ? 0
+      : positiveIntegerOption(optionValue(args, "--limit") || explicitTail, 0, 10000);
+    const log = roomEventLog(bundle, {
+      limit,
+      tail: action === "tail" || explicitTail !== undefined,
+      reverse: args.includes("--reverse"),
+      full: args.includes("--full") || args.includes("--no-truncate")
+    });
+    if (args.includes("--json")) return printJson(log);
+    process.stdout.write(formatRoomEventLog(log));
+    return;
+  }
   if (action === "replay") {
     const input = optionValue(args, "--in") || optionValue(args, "--input") || requiredPositional(args, 1, "event bundle path");
     const format = optionValue(args, "--format") || (args.includes("--markdown") ? "markdown" : "json");
@@ -4492,6 +4513,134 @@ function validateRoomEventBundle(bundle, options = {}) {
     sequence_end: events.length,
     counts
   };
+}
+
+function roomEventLog(bundle, options = {}) {
+  const validation = validateRoomEventBundle(bundle);
+  const generatedAt = new Date().toISOString();
+  const allEntries = bundle.events.map((event) => roomEventLogEntry(event, {
+    full: options.full === true
+  }));
+  const total = allEntries.length;
+  const limit = Math.max(0, Number(options.limit || 0));
+  const limited = limit > 0 && total > limit;
+  let entries = limited
+    ? options.tail === true ? allEntries.slice(-limit) : allEntries.slice(0, limit)
+    : allEntries;
+  if (options.reverse === true) entries = [...entries].reverse();
+  return {
+    object: "agent_bus.room_event_log",
+    protocol: bundle.protocol || "agent-bus.v1",
+    generated_at: generatedAt,
+    source: bundle.object || "unknown",
+    reports_only: bundle.reports_only === true,
+    export_metadata: bundle.export_metadata || null,
+    room: bundle.room || {},
+    counts: bundle.counts || validation.counts,
+    total_events: total,
+    shown_events: entries.length,
+    omitted_events: Math.max(0, total - entries.length),
+    truncated: limited,
+    window: limited ? options.tail === true ? "tail" : "head" : "all",
+    order: options.reverse === true ? "reverse_chronological" : "chronological",
+    entries
+  };
+}
+
+function roomEventLogEntry(event, options = {}) {
+  const payload = event.payload || {};
+  const content = roomEventLogContent(event);
+  const contentPreview = options.full === true ? content : truncateOneLine(content, 180);
+  const entry = {
+    sequence: event.sequence ?? null,
+    at: event.at || "",
+    type: event.type || "",
+    actor: event.actor || "system",
+    room_id: event.room_id || "",
+    ...(event.run_id ? { run_id: event.run_id } : {}),
+    ...(event.node_id ? { node_id: event.node_id } : {}),
+    ...(event.agent_id ? { agent_id: event.agent_id } : {}),
+    summary: roomEventLogSummary(event, contentPreview),
+    payload_keys: Object.keys(payload).sort()
+  };
+  if (contentPreview) entry.content_preview = contentPreview;
+  if (payload.agent_id && !entry.agent_id) entry.agent_id = payload.agent_id;
+  if (payload.node_id && !entry.node_id) entry.node_id = payload.node_id;
+  if (payload.status) entry.status = payload.status;
+  if (payload.stream) entry.stream = payload.stream;
+  if (payload.exit_code !== undefined) entry.exit_code = payload.exit_code;
+  return entry;
+}
+
+function roomEventLogContent(event) {
+  const payload = event?.payload || {};
+  if (typeof payload.content === "string") return payload.content;
+  if (typeof payload.text === "string") return payload.text;
+  if (typeof payload.goal === "string") return payload.goal;
+  if (typeof payload.title === "string") return payload.title;
+  return "";
+}
+
+function roomEventLogSummary(event, contentPreview = "") {
+  const payload = event?.payload || {};
+  const run = event?.run_id ? ` ${event.run_id}` : "";
+  const agent = payload.agent_id || event?.agent_id || event?.actor || "";
+  const node = payload.node_id || event?.node_id || "";
+  if (event.type === "room.created") {
+    const agents = Array.isArray(payload.agents) && payload.agents.length ? `; agents=${payload.agents.join(",")}` : "";
+    return `created room "${payload.title || event.room_id || "untitled"}"${agents}`;
+  }
+  if (event.type === "room.message.added") {
+    return `message from ${payload.speaker || event.actor || "unknown"}${contentPreview ? `: ${contentPreview}` : ""}`;
+  }
+  if (event.type === "room.report.added") {
+    return `REPORT from ${event.actor || "unknown"}${contentPreview ? `: ${contentPreview}` : ""}`;
+  }
+  if (event.type === "room.blackboard.updated") {
+    return `BLACKBOARD from ${event.actor || "unknown"}${contentPreview ? `: ${contentPreview}` : ""}`;
+  }
+  if (event.type === "room.status.changed") {
+    return `room status -> ${payload.status || "unknown"}`;
+  }
+  if (event.type === "run.queued") {
+    return `queued run${run} for ${agent || "unknown"}${node ? ` on ${node}` : ""}`;
+  }
+  if (event.type === "run.started") {
+    return `started run${run} for ${agent || "unknown"}${node ? ` on ${node}` : ""}`;
+  }
+  if (event.type === "run.output") {
+    const bytes = Buffer.byteLength(payload.text || "", "utf8");
+    return `${payload.stream || "output"} ${bytes}B from ${agent || event.actor || "unknown"}${contentPreview ? `: ${contentPreview}` : ""}`;
+  }
+  if (event.type === "run.completed" || event.type === "run.failed") {
+    const status = payload.status || (event.type === "run.completed" ? "completed" : "failed");
+    const stdoutBytes = payload.stdout_bytes ?? 0;
+    const stderrBytes = payload.stderr_bytes ?? 0;
+    return `${status} run${run} for ${agent || "unknown"} exit=${payload.exit_code ?? "unknown"} stdout=${stdoutBytes}B stderr=${stderrBytes}B`;
+  }
+  return `${event.type || "event"} by ${event.actor || "system"}${contentPreview ? `: ${contentPreview}` : ""}`;
+}
+
+function formatRoomEventLog(log) {
+  const room = log.room || {};
+  const lines = [];
+  lines.push(`Agent Bus room event log: ${room.id || "-"}`);
+  lines.push(`Title: ${room.title || "untitled"}`);
+  lines.push(`Status: ${room.status || "unknown"}; events: ${log.shown_events}/${log.total_events}; reports-only: ${log.reports_only ? "yes" : "no"}; order: ${log.order || "chronological"}`);
+  if (log.truncated) {
+    lines.push(`Window: ${log.window}; omitted: ${log.omitted_events}. Use --all for the full log or --tail N for the latest events.`);
+  }
+  lines.push("");
+  for (const entry of log.entries || []) {
+    const seq = entry.sequence === null || entry.sequence === undefined ? "----" : String(entry.sequence).padStart(4, "0");
+    const run = entry.run_id ? ` run=${entry.run_id}` : "";
+    lines.push(`${seq} ${entry.at || "-"} ${entry.type || "event"} actor=${entry.actor || "system"}${run} :: ${entry.summary || ""}`);
+  }
+  if (!log.entries?.length) lines.push("(no events)");
+  lines.push("");
+  lines.push(`Export bundle: agent-bus room export ${room.id || "ROOM_ID"} --format events --out room-events.json`);
+  lines.push("Replay bundle: agent-bus room replay --in room-events.json --format markdown");
+  return `${lines.join("\n")}\n`;
 }
 
 function replayRoomEvents(bundle) {

@@ -7,8 +7,9 @@ This example is the shortest full Agent Bus proof:
 3. register two deterministic command agents
 4. create a room and let one agent delegate to the other
 5. inspect the room
-6. export an event bundle
-7. replay the bundle offline into JSON and Markdown
+6. render a human event log
+7. export an event bundle
+8. replay the bundle offline into JSON and Markdown
 
 It does not call any model provider and does not need API keys.
 
@@ -37,6 +38,7 @@ Artifacts:
 - command adapters receive room tasks
 - `REPORT`, `BLACKBOARD`, `@agent-id`, and `DONE` directives are parsed
 - room inspection exposes operator/debug state
+- `room event-log` renders a readable room timeline and JSON event-log object
 - event bundles include contiguous `sequence` values
 - event bundles include `export_metadata`
 - replay preserves export metadata and counts completed runs/reports

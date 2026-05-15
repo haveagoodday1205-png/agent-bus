@@ -170,6 +170,14 @@ async function main() {
   const replayMarkdown = await runCliText(["room", "replay", "--in", bundlePath, "--format", "markdown"]);
   assert(replayMarkdown.includes("# Agent Bus Room Replay:"), "room replay markdown did not render a title");
   assert(replayMarkdown.includes("Worker verified"), "room replay markdown did not include the worker report");
+  const eventLog = await runCliJson(["room", "event-log", completed.id, "--json", "--gateway", gateway, "--token", adminToken]);
+  assert(eventLog.object === "agent_bus.room_event_log", "room event-log did not return an event log object");
+  assert(eventLog.room?.id === completed.id, "room event-log returned the wrong room id");
+  assert(eventLog.entries?.length === bundle.events.length, "room event-log should show all events by default");
+  assert(eventLog.entries?.some((entry) => entry.type === "room.report.added" && /Worker verified/.test(entry.summary || "")), "room event-log did not include the worker report");
+  const eventLogText = await runCliText(["room", "event-log", completed.id, "--tail", "6", "--gateway", gateway, "--token", adminToken]);
+  assert(eventLogText.includes("Agent Bus room event log:"), "room event-log text did not render a title");
+  assert(eventLogText.includes("run.completed"), "room event-log text did not include run completion");
 
   fs.writeFileSync(replayPath, `${JSON.stringify(replay, null, 2)}\n`);
   fs.writeFileSync(replayMarkdownPath, replayMarkdown);
@@ -191,6 +199,7 @@ async function main() {
     sequence_end: bundle.export_metadata.sequence_end,
     replay_counts: replay.counts,
     inspect_summary: inspection.analysis.summary,
+    event_log_entries: eventLog.entries.length,
     artifacts: outDir ? {
       event_bundle: bundlePath,
       replay_json: replayPath,

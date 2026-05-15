@@ -25,6 +25,7 @@ const jsFiles = [
   "mock-openai-backend.mjs",
   "windows-openai-proxy.mjs",
   "sdk/js/agent-bus-sdk.mjs",
+  "scripts/demo-zero-token.mjs",
   "scripts/demo-local.mjs",
   "scripts/demo-starter.mjs",
   "scripts/demo-agent-model.mjs",
@@ -86,6 +87,7 @@ try {
   const python = process.env.AGENT_BUS_PYTHON || process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py", "sdk/python/agent_bus_sdk.py", "sdk/python/__init__.py", "examples/room-agent-python/room_agent.py", "examples/python-agent-model/agent_model_example.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
+  step("zero-token local demo", process.execPath, ["scripts/demo-zero-token.mjs", "--json"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
   step("diagnostics redaction smoke", process.execPath, ["scripts/diagnostics-redaction-smoke.mjs", "--json"]);

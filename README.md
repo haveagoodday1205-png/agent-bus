@@ -25,6 +25,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - OpenAI-compatible routing: expose selected model aliases behind one authenticated gateway.
 - Central plugins: optional Telegram Bot notifications can report central startup, edge registration, run completion, and room completion.
 - Zero-dependency core: the Node.js and Python gateway/edge entrypoints use only standard libraries.
+- Zero-token playground: `agent-bus demo zero-token` starts a private local gateway plus two fake room agents so anyone can see Agent Bus coordinate without API keys, Telegram, remote machines, or model quota.
 - Offline verification: `agent-bus smoke --offline` validates the packaged room path without model calls or external services.
 - Golden-path demo: `npm run demo:no-quota-room-replay -- --json` starts local central/edge services, runs deterministic room agents, exports events, replays them, and inspects the room without model calls.
 - Replay fixture gate: `npm run fixture:room-replay` verifies a stable public room event bundle through the CLI, JS SDK, and Python SDK without starting a gateway or spending model quota.
@@ -57,7 +58,7 @@ Pick the smallest path that proves what you need before adding real models or pr
 
 | Time | Goal | Commands | Proves |
 | --- | --- | --- | --- |
-| 2 minutes | Local no-secret proof | `agent-bus smoke --offline` or `npm run demo:no-quota-room-replay -- --json` | Central/edge registration, rooms, reports, blackboard, event export, replay |
+| 2 minutes | Local no-secret proof | `agent-bus demo zero-token` or `npm run demo:zero-token` | Central/edge registration, two fake agents, room delegation, reports, blackboard, DONE, no model calls |
 | 10 minutes | First remote assistant node | `agent-bus setup central --service auto`, `agent-bus pair create`, `agent-bus setup edge --code ... --auto --service auto`, `agent-bus status` | A private machine can connect outbound and become an addressable agent |
 | 15 minutes | Telegram operator bot | `agent-bus setup telegram --chat-id ... --service auto --set-commands`, `agent-bus plugin telegram doctor --transport poller` | Mobile control, contextual buttons, process threads, room creation, poller/webhook health |
 
@@ -75,11 +76,12 @@ agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
 If you are evaluating Agent Bus for the first time, start with the offline checks before configuring real machines, GitHub, Telegram, or model providers:
 
 ```bash
+npm run demo:zero-token
 npm run smoke:offline
 npm run demo:no-quota-room-replay -- --json
 ```
 
-This path starts only temporary local services with fake tokens and deterministic command agents. It proves central/edge registration, room delegation, directive parsing, room inspection, event export, and offline replay without API keys or model quota. It does not prove that a real model provider, remote SSH/systemd deployment, or production auth policy is ready for your environment.
+This path starts only temporary local services with fake tokens and deterministic command agents. The zero-token playground is the friendliest first run: it proves central/edge registration, two fake agents, room delegation, `REPORT`, `BLACKBOARD`, `@agent-id`, and `DONE` without API keys or model quota. The deeper smoke and replay checks add room inspection, event export, and offline replay. They do not prove that a real model provider, remote SSH/systemd deployment, or production auth policy is ready for your environment.
 
 Run the local smoke test:
 
@@ -90,9 +92,14 @@ npm run smoke
 Run a local demo from the installed CLI or checkout:
 
 ```bash
+# Run the zero-token playground: central + edge + two fake agents,
+# room delegation, REPORT/BLACKBOARD capture, DONE, and no model calls.
+agent-bus demo
+agent-bus demo zero-token
+npm run demo:zero-token
+
 # Run the starter kit: central + edge + two toy agents, room delegation,
 # agent:<id> Chat Completions/Responses, and a reports-only export.
-agent-bus demo
 agent-bus demo starter
 npm run demo:starter
 

@@ -205,6 +205,7 @@ Usage:
   agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
   agent-bus smoke --offline
   agent-bus demo
+  agent-bus demo zero-token
   agent-bus demo room
   agent-bus demo starter
   agent-bus demo agent-model
@@ -265,8 +266,12 @@ Environment:
 }
 
 function demo(args) {
-  const target = args[0] || "starter";
-  const extra = stripCliOnlyArgs(args.slice(1));
+  const first = args[0] || "";
+  const target = first && !first.startsWith("-") ? first : "zero-token";
+  const extra = stripCliOnlyArgs(first && !first.startsWith("-") ? args.slice(1) : args);
+  if (["zero-token", "zerotoken", "playground", "fake-agents"].includes(target)) {
+    return runScript("scripts/demo-zero-token.mjs", extra);
+  }
   if (target === "starter" || target === "quickstart" || target === "golden") {
     return runScript("scripts/demo-starter.mjs", extra);
   }
@@ -282,7 +287,7 @@ function demo(args) {
   if (target === "local" || target === "pairing" || target === "remote-assistant") {
     return runScript("scripts/demo-local.mjs", extra);
   }
-  throw new Error("Usage: agent-bus demo starter|room|agent-model|issue|local");
+  throw new Error("Usage: agent-bus demo zero-token|starter|room|agent-model|issue|local");
 }
 
 async function serve(args) {

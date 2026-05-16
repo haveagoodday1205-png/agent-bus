@@ -34,6 +34,8 @@ Agent Bus connects agents to agents.
 最近主线关键提交：
 
 ```text
+aec60bb Reference private deployment handoff
+d2505ac Add project handoff document
 8184870 Add conformance artifact validation
 b231d66 Add conformance CI workflow
 c5a3ad9 Add conformance certification artifacts
@@ -42,6 +44,158 @@ c5a3ad9 Add conformance certification artifacts
 bcacb44 Add room event log timeline
 bd50997 Add zero-token local demo
 43e6dc4 Persist Python edge completions
+```
+
+## 当前公开运行快照
+
+这部分是给下一个对话直接接手用的公开版运行状态。真实 IP、SSH key 路径、Central admin token、edge token、模型 API key 不在这里记录；本机私有文件 `LOCAL_DEPLOYMENT.md` 里有完整连接方法。
+
+私有 Central 验证机：
+
+```text
+nickname: 178 / private Central validation host
+repo: /root/agent-bus-public
+central service: agent-bus-central.service
+central env: /etc/agent-bus/central.env
+central config: /root/agent-bus/central.config.json
+local gateway on that host: http://127.0.0.1:8788
+last full verification commit: aec60bb Reference private deployment handoff
+last full verification command: node scripts/release-check.mjs --json -> ok: true
+```
+
+最后一次公开安全状态摘要：
+
+```text
+Central health: ok
+online nodes: 2
+online agents: 4
+registered nodes: 10
+registered agents: 5
+queued runs: 0
+active rooms: 0
+active runs: 0
+duplicate agent ids: 0
+readiness: ready
+```
+
+当前在线节点和 agent：
+
+```text
+cn-120
+  codex-120
+    ping_status: reachable
+    activity: idle
+    last_run_status: completed
+
+hk-202
+  openclaw-hk
+    ping_status: reachable
+    activity: idle
+    last_run_status: completed
+
+  hermes-hk
+    ping_status: reachable
+    activity: idle
+    last_run_status: completed
+
+  claudecode-hk
+    ping_status: not_configured
+    activity: idle
+    last_run_status: completed
+```
+
+已注册但当前 stale 的历史测试节点：
+
+```text
+gateway-178
+hk-no-model-sandbox
+hk-sandbox-33877671
+hk-sandbox-34059901
+hk-sandbox-34263627
+hk-sandbox-34672383
+hk-sandbox-35239264
+scoped-edge-live-test
+```
+
+其中 `hk-no-model-sandbox` 曾注册过 `no-model-relay-hk`，当前只作为历史测试记录，不要当在线目标调度。
+
+当前 Central model router 摘要：
+
+```text
+modelRouter.enabled: true
+modelRouter.agentModels: true
+modelRouter.allowEdgeAgentModels: true
+
+backend ids:
+  sub2api-178
+  cliproxyapi-178
+
+agent-backed virtual models:
+  agent:codex-120
+  agent:openclaw-hk
+  agent:hermes-hk
+  agent:claudecode-hk
+```
+
+Telegram plugin 当前公开状态：
+
+```text
+plugins.telegramBot.enabled: false
+plugins.telegramBot.control: false
+```
+
+最近值得参考的 rooms：
+
+```text
+room_9490391c-5c81-4f4a-bc83-c308d6619ba7
+  status: paused
+  agents: claudecode-hk, hermes-hk, openclaw-hk
+  reports: 5
+  purpose: 之前多 agent 长讨论/推进项目的房间，可作为上下文参考，不一定要恢复。
+
+room_b0d93f77-70d1-4319-bbe8-fdc330d927be
+  status: completed
+  agents: hermes-hk, openclaw-hk
+  reports: 30
+  purpose: 较长的 Hermes/OpenClaw 项目讨论结果，可用 room event-log/reports 回看。
+```
+
+公开安全的远程接手命令模板：
+
+```bash
+cd /root/agent-bus-public
+git pull --ff-only origin main
+node scripts/release-check.mjs --json
+
+set -a && . /etc/agent-bus/central.env && set +a
+node agent-bus.mjs status \
+  --gateway http://127.0.0.1:8788 \
+  --token "$AGENT_BUS_TOKEN" \
+  --json \
+  --room-detail-limit 10
+```
+
+开一个新的多 agent 讨论 room 的模板：
+
+```bash
+cd /root/agent-bus-public
+set -a && . /etc/agent-bus/central.env && set +a
+
+node agent-bus.mjs room create \
+  --gateway http://127.0.0.1:8788 \
+  --token "$AGENT_BUS_TOKEN" \
+  --title "agentbus-next-development" \
+  --goal "继续推进 Agent Bus。请 hermes-hk、openclaw-hk、claudecode-hk 分析下一步最重要的产品化、稳定性和开源生态工作，给出可执行建议。不要提交代码，只输出 REPORT 和 BLACKBOARD，最后 DONE。" \
+  --agents hermes-hk,openclaw-hk,claudecode-hk \
+  --wake-agents hermes-hk,openclaw-hk,claudecode-hk \
+  --max-steps 6 \
+  --no-auto-rotate
+```
+
+如需让 120 上的 Codex 一起加入，把 agents 改为：
+
+```text
+codex-120,hermes-hk,openclaw-hk,claudecode-hk
 ```
 
 ## 部署形态
@@ -107,7 +261,7 @@ agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
 
 ## 当前验证状态
 
-最新提交 `8184870` 已完成：
+最近完整验证的代码提交 `aec60bb` 已完成：
 
 - 本地 `agent-bus protocol certify --json --artifact-dir <temp>` 通过。
 - 本地 `agent-bus protocol validate-result --artifact-dir <temp> --json` 通过。

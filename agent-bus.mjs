@@ -196,6 +196,8 @@ async function main() {
 function printHelp() {
   console.log(`agent-bus
 
+A good first run is: agent-bus demo zero-token
+
 Usage:
   agent-bus init central [--out central.config.json] [--force]
   agent-bus init edge [--out edge.config.json] [--preset echo|codex|openclaw|hermes|claudecode|ollama] [--force]

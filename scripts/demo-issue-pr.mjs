@@ -6,11 +6,17 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const node = process.execPath;
+const args = process.argv.slice(2);
+const jsonOut = args.includes("--json");
 const procs = [];
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-issue-demo-"));
 
 main().catch((err) => {
-  console.error(err.stack || err.message || String(err));
+  if (jsonOut) {
+    console.log(JSON.stringify({ ok: false, error: err.message || String(err) }, null, 2));
+  } else {
+    console.error(err.stack || err.message || String(err));
+  }
   process.exitCode = 1;
 }).finally(() => {
   for (const child of procs.reverse()) {
@@ -23,7 +29,6 @@ async function main() {
   const python = findPython();
   if (!python) throw new Error("Issue-to-PR demo requires Python 3.10+ for the room gateway.");
 
-  const args = process.argv.slice(2);
   const port = await freePort();
   const token = "sk-issue-demo-token-000000";
   const gateway = `http://127.0.0.1:${port}`;
@@ -32,11 +37,20 @@ async function main() {
   const edgeConfig = path.join(tempDir, "edge.config.json");
   const agentScript = path.join(tempDir, "issue-demo-agent.mjs");
   const issue = loadIssue(args);
+  const artifacts = {
+    issue: path.join(outDir, "issue.md"),
+    report: path.join(outDir, "agent-bus-issue-demo-report.md"),
+    events: path.join(outDir, "agent-bus-issue-demo-events.json"),
+    replay: path.join(outDir, "agent-bus-issue-demo-replay.md"),
+    patch: path.join(outDir, "agent-bus-issue-demo.patch"),
+    prDraft: path.join(outDir, "agent-bus-issue-demo-pr.md"),
+    summary: path.join(outDir, "README.md")
+  };
 
   fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, "issue.md"), issue.markdown);
-  fs.writeFileSync(path.join(outDir, "agent-bus-issue-demo.patch"), demoPatch(issue));
-  fs.writeFileSync(path.join(outDir, "agent-bus-issue-demo-pr.md"), demoPrDraft(issue));
+  fs.writeFileSync(artifacts.issue, issue.markdown);
+  fs.writeFileSync(artifacts.patch, demoPatch(issue));
+  fs.writeFileSync(artifacts.prDraft, demoPrDraft(issue));
 
   fs.writeFileSync(centralConfig, `${JSON.stringify({
     host: "127.0.0.1",
@@ -73,9 +87,9 @@ async function main() {
     ]
   }, null, 2)}\n`);
 
-  console.log("Agent Bus issue-to-PR flagship demo");
-  console.log("Maturity note: proves local room handoffs plus report/event replay/patch/PR-draft artifacts; does not contact GitHub, create branches/commits, open a real PR, or run real model tools yet.");
-  console.log("1. Starting a private local gateway");
+  step("Agent Bus issue-to-PR flagship demo");
+  step("Maturity note: proves local room handoffs plus report/event replay/patch/PR-draft artifacts; does not contact GitHub, create branches/commits, open a real PR, or run real model tools yet.");
+  step("1. Starting a private local gateway");
   start(python, [path.join(root, "central_gateway.py")], {
     AGENT_BUS_CONFIG: centralConfig,
     AGENT_BUS_TOKEN: token,
@@ -85,7 +99,7 @@ async function main() {
   });
   await waitForJson(`${gateway}/health`);
 
-  console.log("2. Starting a local edge with planner/coder/reviewer demo agents");
+  step("2. Starting a local edge with planner/coder/reviewer demo agents");
   start(node, [path.join(root, "edge-node.mjs"), "connect", "--config", edgeConfig], {
     AGENT_BUS_CONFIG: edgeConfig,
     AGENT_BUS_GATEWAY_URL: gateway,
@@ -93,7 +107,7 @@ async function main() {
   });
   await waitForAgents(gateway, token, ["demo-planner", "demo-coder", "demo-reviewer"]);
 
-  console.log("3. Creating an issue room and waking the planner");
+  step("3. Creating an issue room and waking the planner");
   const room = await requestJson(`${gateway}/rooms`, {
     method: "POST",
     headers: authJsonHeaders(token),
@@ -115,18 +129,34 @@ async function main() {
   });
 
   const completed = await waitForRoomComplete(gateway, token, room.id);
-  console.log(`4. Room completed: ${completed.id}`);
-  for (const report of completed.reports || []) {
-    console.log(`   REPORT from ${report.speaker}: ${report.content}`);
+  step(`4. Room completed: ${completed.id}`);
+  if (!jsonOut) {
+    for (const report of completed.reports || []) {
+      console.log(`   REPORT from ${report.speaker}: ${report.content}`);
+    }
   }
 
-  console.log("5. Writing shareable room artifacts");
-  await runCli(["room", "export", completed.id, "--reports-only", "--out", path.join(outDir, "agent-bus-issue-demo-report.md"), "--gateway", gateway, "--token", token]);
-  await runCli(["room", "export", completed.id, "--format", "events", "--out", path.join(outDir, "agent-bus-issue-demo-events.json"), "--gateway", gateway, "--token", token]);
-  await runCli(["room", "replay", "--in", path.join(outDir, "agent-bus-issue-demo-events.json"), "--format", "markdown", "--out", path.join(outDir, "agent-bus-issue-demo-replay.md")]);
+  step("5. Writing shareable room artifacts");
+  await runCli(["room", "export", completed.id, "--reports-only", "--out", artifacts.report, "--gateway", gateway, "--token", token]);
+  await runCli(["room", "export", completed.id, "--format", "events", "--out", artifacts.events, "--gateway", gateway, "--token", token]);
+  await runCli(["room", "replay", "--in", artifacts.events, "--format", "markdown", "--out", artifacts.replay]);
+
+  writeDemoSummary(artifacts.summary, {
+    artifacts,
+    completed,
+    issue,
+    outDir
+  });
+
+  const result = issueDemoResult({ artifacts, completed, issue, outDir });
+  if (jsonOut) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
   console.log(`   wrote ${outDir}`);
-  console.log("Demo complete. The directory contains issue, report, event replay, patch, and PR draft artifacts.");
+  console.log(`   summary: ${artifacts.summary}`);
+  console.log("Demo complete. The directory contains a README, issue, report, event replay, patch, and PR draft artifacts.");
 }
 
 function demoAgent(id, role, capabilities, agentScript) {
@@ -226,6 +256,105 @@ function demoPrDraft(issue) {
   ].join("\n");
 }
 
+function writeDemoSummary(file, { artifacts, completed, issue, outDir }) {
+  const reports = Array.isArray(completed.reports) ? completed.reports : [];
+  const notes = Array.isArray(completed.blackboard?.notes) ? completed.blackboard.notes : [];
+  const artifactRows = [
+    ["Demo index", artifacts.summary],
+    ["Source issue", artifacts.issue],
+    ["Reports-only room export", artifacts.report],
+    ["Room event bundle", artifacts.events],
+    ["Offline replay", artifacts.replay],
+    ["Patch draft", artifacts.patch],
+    ["PR draft", artifacts.prDraft]
+  ];
+  const lines = [
+    "# Agent Bus Issue-to-PR Demo",
+    "",
+    "This directory was generated by `agent-bus demo issue`. It is designed as a share-safe local proof that a GitHub-style issue can move through an Agent Bus room from planner to coder to reviewer and leave patch/PR artifacts behind without contacting GitHub or a model provider.",
+    "",
+    "## Result",
+    "",
+    "| Check | Result |",
+    "| --- | --- |",
+    `| Mode | ${tableValue("local no-quota demo")} |`,
+    `| Output directory | ${tableValue(path.basename(outDir))} |`,
+    `| Room status | ${tableValue(completed.status || "unknown")} |`,
+    `| Agents | ${tableValue("demo-planner -> demo-coder -> demo-reviewer")} |`,
+    `| Reports captured | ${reports.length} |`,
+    `| Blackboard notes | ${notes.length} |`,
+    `| Patch draft | ${fs.existsSync(artifacts.patch) ? "written" : "missing"} |`,
+    `| PR draft | ${fs.existsSync(artifacts.prDraft) ? "written" : "missing"} |`,
+    "",
+    "## Source Issue",
+    "",
+    issue.markdown.trim(),
+    "",
+    "## Demo Evidence",
+    "",
+    ...reports.map((report) => `- REPORT from ${report.speaker || "agent"}: ${oneLine(report.content)}`),
+    ...notes.map((note) => `- BLACKBOARD from ${note.speaker || "agent"}: ${oneLine(note.content)}`),
+    "",
+    "## Artifacts",
+    "",
+    ...artifactRows.map(([label, target]) => `- ${label}: [${path.basename(target)}](${path.basename(target)})`),
+    "",
+    "## What This Proves",
+    "",
+    "- A private local Central and Edge can coordinate three room agents.",
+    "- Planner, coder, and reviewer handoffs work through `@agent-id` directives.",
+    "- `REPORT`, `BLACKBOARD`, and `DONE` directives become inspectable room evidence.",
+    "- Room export, event replay, patch draft, and PR draft artifacts can be generated without model quota.",
+    "",
+    "## Current Boundary",
+    "",
+    "This demo does not read live GitHub issues, create branches or commits, open a real PR, run real model tools, or replace maintainer review. If you used `--issue-file` or `--issue` with private text, review the generated artifacts before sharing them.",
+    ""
+  ];
+  fs.writeFileSync(file, `${lines.join("\n")}\n`);
+}
+
+function issueDemoResult({ artifacts, completed, issue, outDir }) {
+  const reports = Array.isArray(completed.reports) ? completed.reports : [];
+  const notes = Array.isArray(completed.blackboard?.notes) ? completed.blackboard.notes : [];
+  return {
+    ok: true,
+    mode: "issue-to-pr-demo",
+    quota: "no_model_calls",
+    github: "not_contacted",
+    model_provider: "not_contacted",
+    title: issue.title,
+    out_dir: outDir,
+    room_id: completed.id,
+    room_status: completed.status,
+    agents: ["demo-planner", "demo-coder", "demo-reviewer"],
+    reports: reports.length,
+    blackboard_notes: notes.length,
+    artifacts: {
+      summary: artifacts.summary,
+      issue: artifacts.issue,
+      report: artifacts.report,
+      events: artifacts.events,
+      replay: artifacts.replay,
+      patch: artifacts.patch,
+      pr_draft: artifacts.prDraft
+    }
+  };
+}
+
+function step(message) {
+  if (!jsonOut) console.log(message);
+}
+
+function oneLine(value, limit = 220) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
+}
+
+function tableValue(value) {
+  return String(value || "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+}
+
 function start(command, args, env = {}) {
   const child = spawn(command, args, {
     cwd: root,
@@ -235,9 +364,11 @@ function start(command, args, env = {}) {
   });
   child.stdout.on("data", (chunk) => {
     const text = chunk.toString("utf8");
-    if (/listening|connected/.test(text)) process.stdout.write(`   ${text}`);
+    if (!jsonOut && /listening|connected/.test(text)) process.stdout.write(`   ${text}`);
   });
-  child.stderr.on("data", (chunk) => process.stderr.write(chunk));
+  child.stderr.on("data", (chunk) => {
+    if (!jsonOut) process.stderr.write(chunk);
+  });
   procs.push(child);
   return child;
 }

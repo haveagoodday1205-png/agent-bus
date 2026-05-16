@@ -28,7 +28,7 @@ agent-bus demo issue
 
 `agent-bus demo agent-model` is the fastest demo for the model-replacement path: it starts a temporary gateway plus command edge, exposes `agent:model-agent`, calls Chat Completions and Responses with one cache scope, and proves both calls reuse the same derived Agent Bus session key without contacting a model provider.
 
-`agent-bus demo issue` is the local flagship demo skeleton: it starts planner/coder/reviewer fake agents, turns a GitHub-style issue into a room, and writes shareable report, event replay, patch, and PR draft artifacts without contacting GitHub or a model provider.
+`agent-bus demo issue` is the local flagship demo skeleton: it starts planner/coder/reviewer fake agents, turns a GitHub-style issue into a room, and writes a shareable artifact folder with a `README.md`, reports-only room export, event replay, patch draft, and PR draft without contacting GitHub or a model provider. Pass `--json` to emit machine-readable result paths for CI.
 
 Maturity note: the demo proves the no-quota room workflow, agent handoff directives, reports-only export, event replay, patch artifact, and PR draft artifact. It does not yet prove live GitHub issue ingestion, branch creation, commits, opening a real PR, real model/tool execution, or maintainer approval flow.
 

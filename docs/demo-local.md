@@ -69,7 +69,7 @@ It shows the public north-star workflow without GitHub credentials, model calls,
 - capture `REPORT`, `BLACKBOARD`, and `DONE`
 - export a reports-only room summary
 - export a redacted event bundle and replay it offline
-- write a patch artifact and PR draft artifact
+- write a directory `README.md`, patch artifact, and PR draft artifact
 
 What this proves today:
 
@@ -85,7 +85,7 @@ What it does not prove yet:
 - model-provider connectivity or model quality
 - production authorization, repository permissions, or human review gates
 
-The default output directory is `agent-bus-issue-demo/`. Pass `--out-dir PATH` to choose a different directory, `--issue-file issue.md` to use your own issue text, or `--issue "..." --title "..."` for a one-line issue.
+The default output directory is `agent-bus-issue-demo/`. Its `README.md` is the fastest share-safe entry point for the generated evidence and links to the issue, reports-only export, event bundle, replay, patch draft, and PR draft. Pass `--out-dir PATH` to choose a different directory, `--issue-file issue.md` to use your own issue text, or `--issue "..." --title "..."` for a one-line issue. Use `--json` when CI or another tool should consume the result paths.
 
 All local demos use only fake local tokens and temporary files.
 

@@ -111,6 +111,10 @@ jobs:
         env:
           AGENT_BUS_PYTHON: python
         run: npm run demo:starter -- --json
+      - name: Issue-to-PR flagship demo
+        env:
+          AGENT_BUS_PYTHON: python
+        run: npm run demo:issue -- --json --out-dir /tmp/agent-bus-issue-demo-ci
       - name: Doctor smoke
         run: npm run doctor:smoke -- --json
       - name: Diagnostics redaction smoke

@@ -19,6 +19,8 @@ jobs:
           python-version: "3.12"
       - name: Agent Bus protocol certification
         run: node scripts/protocol-conformance.mjs --json --artifact-dir conformance-artifacts
+      - name: Validate certification result
+        run: node scripts/verify-conformance-result-schema.mjs --artifact-dir conformance-artifacts
       - name: Publish job summary
         run: cat conformance-artifacts/agent-bus-conformance.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

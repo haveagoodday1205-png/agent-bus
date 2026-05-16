@@ -16,7 +16,8 @@ npm install -g agent-bus-cli
 agent-bus --help
 agent-bus smoke --offline
 agent-bus protocol conformance --json
-agent-bus protocol conformance --artifact-dir conformance-artifacts
+agent-bus protocol certify
+agent-bus protocol validate-result --artifact-dir conformance-artifacts
 agent-bus protocol conformance --profile adapter-command --agent-command "./my-agent" --agent-id my-agent --json
 agent-bus demo room
 agent-bus demo agent-model

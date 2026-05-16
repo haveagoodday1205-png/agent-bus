@@ -17,18 +17,26 @@ try {
   const releaseWorkflow = read(".github/workflows/release.yml");
   const adapterDoc = read("docs/adapter-conformance-ci.md");
   const protocolDoc = read("docs/protocol-v1.md");
+  const resultSchema = JSON.parse(read("docs/protocol-conformance-result.schema.json"));
   const pkg = JSON.parse(read("package.json"));
 
   check("protocol:certify script", /protocol-conformance\.mjs --artifact-dir conformance-artifacts/.test(pkg.scripts?.["protocol:certify"] || ""), "package.json exposes artifact-producing certification");
+  check("protocol:certify:check script", /verify-conformance-result-schema\.mjs --artifact-dir conformance-artifacts/.test(pkg.scripts?.["protocol:certify:check"] || ""), "package.json exposes certification artifact validation");
   check("conformance workflow command", conformanceWorkflow.includes("node scripts/protocol-conformance.mjs --json --artifact-dir conformance-artifacts"), "workflow runs certification");
+  check("conformance workflow validates result", conformanceWorkflow.includes("node scripts/verify-conformance-result-schema.mjs --artifact-dir conformance-artifacts"), "workflow validates certification JSON");
   check("conformance workflow artifact upload", conformanceWorkflow.includes("actions/upload-artifact@v4") && conformanceWorkflow.includes("conformance-artifacts/"), "workflow uploads artifacts");
   check("release workflow builds artifacts", releaseWorkflow.includes("node scripts/protocol-conformance.mjs --json --artifact-dir dist/conformance"), "release workflow builds conformance artifacts");
+  check("release workflow validates result", releaseWorkflow.includes("node scripts/verify-conformance-result-schema.mjs --artifact-dir dist/conformance"), "release workflow validates certification JSON");
   for (const artifact of requiredArtifacts) {
     check(`release asset ${artifact}`, releaseWorkflow.includes(`dist/conformance/${artifact}`), `release uploads ${artifact}`);
     check(`adapter doc ${artifact}`, adapterDoc.includes(artifact), `adapter doc names ${artifact}`);
   }
+  check("result schema profile enum", resultSchema.properties?.profile?.enum?.includes("adapter-command"), "result schema covers adapter-command profile");
+  check("result schema quota enum", resultSchema.properties?.quota?.enum?.includes("no_model_calls"), "result schema covers no-quota certification");
   check("adapter workflow template", adapterDoc.includes("--profile adapter-command") && adapterDoc.includes("AGENT_BUS_ADAPTER_COMMAND"), "adapter doc includes external command workflow");
+  check("adapter workflow validates result", adapterDoc.includes("agent-bus protocol validate-result --artifact-dir conformance-artifacts"), "adapter doc validates generated result JSON");
   check("protocol doc links adapter CI", protocolDoc.includes("docs/adapter-conformance-ci.md"), "protocol docs link adapter CI");
+  check("protocol doc links result schema", protocolDoc.includes("docs/protocol-conformance-result.schema.json"), "protocol docs link conformance result schema");
 
   const result = { ok: checks.every((item) => item.ok), quota: "no_model_calls", checks };
   print(result);

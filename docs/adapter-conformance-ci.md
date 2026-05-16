@@ -19,6 +19,7 @@ agent-bus protocol conformance \
   --agent-id my-agent \
   --artifact-dir conformance-artifacts \
   --json
+agent-bus protocol validate-result --artifact-dir conformance-artifacts
 ```
 
 Artifacts:
@@ -26,6 +27,8 @@ Artifacts:
 - `conformance-artifacts/agent-bus-conformance.json`
 - `conformance-artifacts/agent-bus-conformance.md`
 - `conformance-artifacts/agent-bus-conformance-badge.json`
+
+The result JSON follows `docs/protocol-conformance-result.schema.json`. Use `agent-bus protocol validate-result --artifact-dir conformance-artifacts` to check the generated JSON, Markdown report, and Shields badge before publishing them.
 
 The default reference profile makes no model calls. The `adapter-command` profile may spend quota if your command calls a model.
 
@@ -65,6 +68,8 @@ jobs:
             --agent-id my-agent \
             --artifact-dir conformance-artifacts \
             --json
+      - name: Validate conformance result
+        run: agent-bus protocol validate-result --artifact-dir conformance-artifacts
       - name: Publish job summary
         run: cat conformance-artifacts/agent-bus-conformance.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

@@ -15,6 +15,7 @@ Machine-readable schema:
 
 ```text
 docs/protocol-v1.schema.json
+docs/protocol-conformance-result.schema.json
 ```
 
 Minimal adapter example:
@@ -35,6 +36,7 @@ Offline verification:
 npm run protocol:check
 npm run protocol:conformance
 npm run protocol:certify
+npm run protocol:certify:check
 npm run compat:check
 ```
 
@@ -43,6 +45,8 @@ npm run compat:check
 - `agent-bus-conformance.json`: raw machine-readable result
 - `agent-bus-conformance.md`: Markdown certification report
 - `agent-bus-conformance-badge.json`: Shields endpoint badge JSON
+
+`agent-bus protocol certify` is the installed-CLI equivalent. `agent-bus protocol validate-result --artifact-dir conformance-artifacts` and `npm run protocol:certify:check` validate the generated JSON result, Markdown report, and Shields badge against the documented result shape; CI/release workflows run the same check before publishing the artifacts.
 
 Third-party command adapters can run the same gateway and edge contract around their own executable:
 

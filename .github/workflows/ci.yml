@@ -60,6 +60,8 @@ jobs:
           node --check scripts/npm-install-smoke.mjs
           node --check scripts/offline-smoke.mjs
           node --check scripts/verify-protocol-v1.mjs
+          node --check scripts/protocol-conformance.mjs
+          node --check scripts/verify-conformance-result-schema.mjs
           node --check scripts/verify-package.mjs
           node --check scripts/verify-portable-release.mjs
           node --check scripts/release-check.mjs
@@ -103,6 +105,8 @@ jobs:
         run: npm run portable:check
       - name: Protocol v1 check
         run: npm run protocol:check
+      - name: Conformance result schema check
+        run: node scripts/verify-conformance-result-schema.mjs --json
       - name: Starter kit demo
         env:
           AGENT_BUS_PYTHON: python

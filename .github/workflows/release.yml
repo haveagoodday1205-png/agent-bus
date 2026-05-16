@@ -28,6 +28,7 @@ jobs:
         run: |
           mkdir -p dist/conformance
           node scripts/protocol-conformance.mjs --json --artifact-dir dist/conformance
+          node scripts/verify-conformance-result-schema.mjs --artifact-dir dist/conformance
       - name: Build portable bundle
         run: |
           echo "VERSION=$(node -p 'require("./package.json").version')" >> "$GITHUB_ENV"

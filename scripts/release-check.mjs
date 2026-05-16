@@ -68,6 +68,7 @@ const jsFiles = [
   "scripts/npm-install-smoke.mjs",
   "scripts/verify-protocol-v1.mjs",
   "scripts/protocol-conformance.mjs",
+  "scripts/verify-conformance-result-schema.mjs",
   "scripts/verify-package.mjs",
   "scripts/verify-portable-release.mjs",
   "scripts/release-check.mjs",
@@ -95,6 +96,7 @@ try {
   requireFile(path.join(conformanceArtifactDir, "agent-bus-conformance.json"));
   requireFile(path.join(conformanceArtifactDir, "agent-bus-conformance.md"));
   requireFile(path.join(conformanceArtifactDir, "agent-bus-conformance-badge.json"));
+  step("conformance result schema", process.execPath, ["scripts/verify-conformance-result-schema.mjs", "--artifact-dir", conformanceArtifactDir, "--json"]);
   fs.rmSync(conformanceArtifactDir, { recursive: true, force: true });
   const helloAgentCommand = `${quoteCommandArg(process.execPath)} ${quoteCommandArg(path.join(root, "examples", "hello-agent", "hello-agent.mjs"))}`;
   step("protocol adapter-command conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json", "--profile", "adapter-command", "--agent-command", helloAgentCommand, "--agent-id", "adapter-conformance"]);

@@ -210,6 +210,8 @@ Usage:
   agent-bus smoke --offline
   agent-bus protocol check
   agent-bus protocol conformance [--json] [--artifact-dir DIR]
+  agent-bus protocol certify [--json] [--artifact-dir DIR]
+  agent-bus protocol validate-result --artifact-dir conformance-artifacts
   agent-bus demo
   agent-bus demo zero-token
   agent-bus demo room
@@ -307,7 +309,15 @@ function protocol(args) {
   if (["conformance", "conform", "compat", "compatibility"].includes(action)) {
     return runScript("scripts/protocol-conformance.mjs", extra);
   }
-  throw new Error("Usage: agent-bus protocol check|conformance [--json]");
+  if (["certify", "certification", "certificate", "artifacts", "badge"].includes(action)) {
+    const hasArtifactTarget = hasAnyOption(extra, ["--artifact-dir", "--artifacts", "--result-out", "--json-out", "--report-out", "--markdown-out", "--badge-out"]);
+    const certifyArgs = hasArtifactTarget ? extra : ["--artifact-dir", "conformance-artifacts", ...extra];
+    return runScript("scripts/protocol-conformance.mjs", certifyArgs);
+  }
+  if (["validate-result", "result-check", "certify-check", "certification-check"].includes(action)) {
+    return runScript("scripts/verify-conformance-result-schema.mjs", extra);
+  }
+  throw new Error("Usage: agent-bus protocol check|conformance|certify|validate-result [--json]");
 }
 
 async function serve(args) {
@@ -6493,6 +6503,10 @@ function booleanOption(args, positive, negative) {
   if (args.includes(negative)) return false;
   if (args.includes(positive)) return true;
   return undefined;
+}
+
+function hasAnyOption(args, names) {
+  return names.some((name) => args.includes(name));
 }
 
 function positiveIntegerOption(value, fallback, max) {

@@ -30,7 +30,7 @@ npm run release:check
 
 `release:check` runs syntax checks, Python compile checks, diagnostics redaction smoke, Docker Compose preflight smoke, offline room smoke, central restart smoke, duplicate-complete smoke, Python-edge heartbeat smoke, stale-room autonomy smoke, room supervisor smoke, npm package verification, portable bundle verification, and release-note generation without calling paid model providers.
 
-`protocol:certify` writes the Agent Bus v1 conformance JSON, Markdown report, and Shields badge JSON. The release workflow publishes these files beside the portable archives so downstream adapter authors can compare against the canonical project certification.
+`protocol:certify` writes the Agent Bus v1 conformance JSON, Markdown report, and Shields badge JSON. `protocol:certify:check` validates the generated artifact set against `docs/protocol-conformance-result.schema.json`. The release workflow publishes these files beside the portable archives so downstream adapter authors can compare against the canonical project certification.
 
 `compat:check` starts a temporary gateway and `examples/hello-agent` edge, then verifies registration, scoped edge discovery, `agent:<id>` Chat Completions, `agent:<id>` Responses, and room directive parsing without calling paid model providers. The CI workflow runs this smoke on Ubuntu, Windows, and macOS so adapter regressions are caught before release.
 
@@ -81,6 +81,7 @@ After the workflow finishes, verify the public release page includes:
 - `agent-bus-conformance.json`.
 - `agent-bus-conformance.md`.
 - `agent-bus-conformance-badge.json`.
+- conformance artifacts that pass `agent-bus protocol validate-result --artifact-dir <release-conformance-dir>`.
 - generated release notes from `npm run release:notes`, with `CHANGELOG.md` used as the human-edited summary source and the first-run room demo called out explicitly.
 - this install matrix, or a link back to this checklist.
 

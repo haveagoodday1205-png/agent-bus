@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/protocol-conformance-result.schema.json",
+  "title": "Agent Bus Protocol Conformance Result",
+  "description": "Machine-readable result artifact emitted by `agent-bus protocol conformance` and `agent-bus protocol certify`.",
+  "type": "object",
+  "required": ["ok", "mode", "protocol", "profile", "quota", "generated_at", "checks"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "mode": { "const": "protocol_conformance" },
+    "protocol": {
+      "type": "string",
+      "pattern": "^agent-bus\\.v[0-9]+$"
+    },
+    "profile": {
+      "enum": ["local-reference-agent", "adapter-command"]
+    },
+    "quota": {
+      "type": "string",
+      "enum": ["no_model_calls", "depends_on_agent_command", "unknown"]
+    },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "gateway": {
+      "type": "string",
+      "pattern": "^https?://"
+    },
+    "node_id": { "$ref": "#/$defs/identifier" },
+    "agent_id": { "$ref": "#/$defs/identifier" },
+    "agent_command_provided": { "type": "boolean" },
+    "room_id": { "$ref": "#/$defs/identifier" },
+    "room_status": {
+      "enum": ["active", "running", "finishing", "completed", "paused"]
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "summary": { "$ref": "#/$defs/summary" },
+    "artifacts": { "$ref": "#/$defs/artifacts" },
+    "artifact_error": { "type": "string" },
+    "error": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "ok": { "const": true } },
+        "required": ["ok"]
+      },
+      "then": {
+        "required": ["gateway", "node_id", "agent_id", "room_id", "room_status", "summary"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "ok": { "const": false } },
+        "required": ["ok"]
+      },
+      "then": {
+        "required": ["error"]
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "check": {
+      "type": "object",
+      "required": ["id", "ok", "detail"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "ok": { "type": "boolean" },
+        "detail": { "type": "string" },
+        "data": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "summary": {
+      "type": "object",
+      "required": ["checks"],
+      "properties": {
+        "checks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reports": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blackboard_notes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_log_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event_bundle_events": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "replay_completed_runs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "string",
+          "minLength": 1
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "badge": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

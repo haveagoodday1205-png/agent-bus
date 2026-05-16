@@ -737,6 +737,7 @@ Health checks are stored in `runs.jsonl` too. Stored stdout/stderr and snapshots
 - [Roadmap](docs/roadmap.md)
 - [Deployment](docs/deployment.md)
 - [Community and Growth](docs/community.md)
+- [Project Handoff](docs/project-handoff.md)
 - [Web Console](docs/console.md)
 - [Windows Client](docs/windows-client.md)
 - [Security](SECURITY.md)

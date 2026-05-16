@@ -49,6 +49,7 @@ const messages = {
     chatCompletions: "Chat Completions",
     checking: "checking",
     clear: "Clear",
+    copy: "Copy",
     copied: "copied",
     copyStatus: "Copy Status",
     events: "Events",
@@ -239,6 +240,7 @@ const messages = {
     chatCompletions: "Chat Completions",
     checking: "检查中",
     clear: "清空",
+    copy: "复制",
     copied: "已复制",
     copyStatus: "复制状态命令",
     events: "事件",
@@ -797,10 +799,48 @@ function renderReadinessPanel() {
     <div class="readiness-actions">
       <strong>${escapeHtml(t("nextActions"))}</strong>
       ${actions.length
-        ? `<ul>${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join("")}</ul>`
+        ? `<ul>${actions.map(renderNextAction).join("")}</ul>`
         : `<span>${escapeHtml(t("noNextActions"))}</span>`}
     </div>
   `;
+  wireReadinessActionCopy(panel);
+}
+
+function renderNextAction(action) {
+  const command = nextActionCommand(action);
+  if (!command) return `<li>${escapeHtml(action)}</li>`;
+  return `
+    <li class="next-action-item">
+      <span>${escapeHtml(action)}</span>
+      <code>${escapeHtml(command)}</code>
+      <button type="button" class="copy-action-button" data-copy-command="${escapeHtml(command)}">${escapeHtml(t("copy"))}</button>
+    </li>
+  `;
+}
+
+function nextActionCommand(action) {
+  const text = String(action || "").trim();
+  const colonCommand = text.match(/:\s*(agent-bus\s+.+)$/);
+  if (colonCommand) return trimNextActionCommand(colonCommand[1]);
+
+  const withCommand = text.match(/\bwith\s+(agent-bus\s+.+)$/);
+  if (withCommand) return trimNextActionCommand(withCommand[1]);
+
+  const runCommand = text.match(/^Run\s+(agent-bus\s+.+?)(?:\s+on\s+the\s+edge\s+host\b|[.;]\s*$)/);
+  if (runCommand) return trimNextActionCommand(runCommand[1]);
+
+  const fullCommand = text.match(/^(agent-bus\s+.+)$/);
+  return fullCommand ? trimNextActionCommand(fullCommand[1]) : "";
+}
+
+function trimNextActionCommand(command) {
+  return String(command || "").trim().replace(/[.;]\s*$/, "");
+}
+
+function wireReadinessActionCopy(panel) {
+  for (const button of panel.querySelectorAll("[data-copy-command]")) {
+    button.addEventListener("click", () => copyTextToClipboard(button.dataset.copyCommand || "", button));
+  }
 }
 
 function readinessMessage(readiness) {
@@ -929,14 +969,20 @@ function withGatewayToken(command, gateway) {
 async function copyStatusCommand() {
   const command = quickstartCommandText().split("\n").find((line) => line.startsWith("agent-bus status"));
   if (!command) return;
+  await copyTextToClipboard(command, $("quickstartCommands"));
+}
+
+async function copyTextToClipboard(text, fallbackElement = null) {
+  const value = String(text || "");
+  if (!value) return;
   try {
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(command);
+      await navigator.clipboard.writeText(value);
     } else {
-      $("quickstartCommands").focus();
+      fallbackElement?.focus?.();
     }
   } catch {
-    $("quickstartCommands").focus();
+    fallbackElement?.focus?.();
   }
   logEvent(t("copied"));
 }

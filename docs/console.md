@@ -9,7 +9,7 @@ https://YOUR-GATEWAY-DOMAIN/agent-bus/console/
 
 The console can:
 
-- Show a quickstart checklist plus central readiness, active-room counts, and next-action guidance from `GET /v1/agent-bus/status`.
+- Show a quickstart checklist plus central readiness, active-room counts, and next-action guidance from `GET /v1/agent-bus/status`, including copy buttons for command-level next actions.
 - When stale queued room work is reported, include copyable `room inspect`, guarded `room recover --yes`, and explicit `room pause` commands in the quickstart command box with the current gateway and redacted token placeholders.
 - Create, audit, and revoke scoped edge tokens while copying ready-to-run `agent-bus setup edge --gateway ... --token ...` join commands.
 - Create short-lived pair codes and copy safer `agent-bus setup edge --gateway ... --code ...` onboarding commands for another machine.

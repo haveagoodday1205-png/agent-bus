@@ -509,6 +509,37 @@ tbody tr:last-child td {
   padding-left: 18px;
 }
 
+.readiness-actions li.next-action-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(102, 112, 133, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.next-action-item span,
+.next-action-item code {
+  grid-column: 1 / -1;
+}
+
+.next-action-item code {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.08);
+  color: var(--text);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.copy-action-button {
+  min-height: 30px;
+  padding: 0 10px;
+  justify-self: start;
+}
+
 .check-row {
   display: grid;
   grid-template-columns: 58px minmax(96px, 0.6fr) minmax(140px, 1fr);

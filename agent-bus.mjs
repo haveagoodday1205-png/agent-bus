@@ -725,6 +725,7 @@ function defaultTelegramCommands() {
     ["agent", "Set, toggle, or clear process agents"],
     ["rooms", "List Agent Bus rooms"],
     ["room", "Inspect or create rooms, set agents and steps"],
+    ["goal", "Create a room from the current room draft"],
     ["run", "Queue one task for a specific agent"]
   ].map(([command, description]) => ({ command, description }));
 }
@@ -1909,7 +1910,9 @@ function presetAgents() {
       role: "executor",
       enabled: true,
       adapter: "echo",
-      capabilities: ["shell", "files"]
+      capabilities: ["shell", "files"],
+      permission_profile: "local-demo",
+      allowed_wake_targets: ["local-echo"]
     }],
     codex: [codexAgent("codex", "codex-local", { script: process.platform === "win32" ? "" : "./scripts/codex-agent-bus.sh" })],
     openclaw: [openclawAgent("./scripts/openclaw-agent-bus.sh")],
@@ -2460,6 +2463,8 @@ function codexAgent(commandPath, id = "codex-local", options = {}) {
     enabled: true,
     adapter: "command",
     capabilities: ["code", "review", "shell", "files"],
+    permission_profile: "coder",
+    allowed_wake_targets: [],
     pingUrl: "https://api.openai.com/v1/models",
     runCommand: script
       ? `CODEX_COMMAND=${quoteCommand(commandPath)} bash ${quoteCommand(script)}`
@@ -2476,6 +2481,8 @@ function openclawAgent(commandPath, id = "openclaw-local", options = {}) {
     enabled: true,
     adapter: "command",
     capabilities: ["shell", "files", "browser", "cron", "skills"],
+    permission_profile: "operator-browser",
+    allowed_wake_targets: [],
     pingUrl: "https://YOUR-MODEL-GATEWAY/v1/models",
     runCommand: options.rawCommand
       ? command
@@ -2494,6 +2501,8 @@ function hermesAgent(commandPath, id = "hermes-local", options = {}) {
     enabled: true,
     adapter: "command",
     capabilities: ["skills", "memory", "shell", "webhook", "cron"],
+    permission_profile: "research-readonly",
+    allowed_wake_targets: [],
     pingUrl: "https://YOUR-MODEL-GATEWAY/v1/models",
     runCommand: script
       ? `HERMES_COMMAND=${quoteCommand(commandPath)} ${quoteCommand(script)}`
@@ -2510,6 +2519,8 @@ function claudeCodeAgent(commandPath, id = "claudecode-local", options = {}) {
     enabled: true,
     adapter: "command",
     capabilities: ["code", "review", "shell", "files", "agent"],
+    permission_profile: "coder",
+    allowed_wake_targets: [],
     healthCommand: `${quoteCommand(commandPath)} --version`,
     runCommand: script
       ? `CLAUDECODE_COMMAND=${quoteCommand(commandPath)} ${quoteCommand(script)}`
@@ -5224,6 +5235,7 @@ function summarizeStatus({
   const agentConflicts = agentIdConflicts(agentList);
   const onlineAgents = agentList.filter((agent) => agent.status === "online");
   const reachableAgents = agentList.filter((agent) => agent.ping_status === "reachable");
+  const permissionObservations = permissionObservationSummary(agentList);
   const activeRooms = roomList.filter(isActiveRoom);
   const heartbeatIntervalByAgentId = agentHeartbeatIntervalById(nodeList);
   const nodeById = new Map(
@@ -5268,6 +5280,7 @@ function summarizeStatus({
       orphaned_running_runs: runSummary.orphanedRunningRuns.length,
       duplicate_agent_ids: agentConflicts.length
     },
+    permission_observations: permissionObservations,
     nodes: nodeList.map((node) => ({
       id: node.node_id || node.id || "unknown",
       status: node.status || "unknown",
@@ -5296,6 +5309,11 @@ function summarizeStatus({
       return {
         id: agent.id,
         status: agent.status || "unknown",
+        node_id: agent.node_id || agent.nodeId || null,
+        kind: agent.kind || null,
+        role: agent.role || null,
+        capabilities: Array.isArray(agent.capabilities) ? agent.capabilities : [],
+        ...agentObservationFields(agent),
         ping_status: pingStatus,
         last_run_status: lastRunStatus,
         last_seen_at: lastSeenAt,
@@ -5472,6 +5490,13 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
   }
   if (!authWarning && Number(s.online_agents || 0) > 0 && Number(s.active_rooms || 0) === 0 && Number(s.queued || 0) === 0) {
     actions.push("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.");
+  }
+  const permissionObservations = result.permission_observations || {};
+  const missingProfiles = Array.isArray(permissionObservations.missing_permission_profile)
+    ? permissionObservations.missing_permission_profile
+    : [];
+  if (!authWarning && missingProfiles.length) {
+    actions.push(`Add permission_profile observation fields to edge configs for ${missingProfiles.slice(0, 3).join(", ")}${missingProfiles.length > 3 ? ", ..." : ""}.`);
   }
   return unique(actions).slice(0, 6);
 }
@@ -5952,6 +5977,72 @@ function unique(values) {
   return Array.from(new Set(values));
 }
 
+function agentObservationFields(agent) {
+  const out = {};
+  for (const [snake, camel] of [
+    ["owner", "owner"],
+    ["runtime", "runtime"],
+    ["permission_profile", "permissionProfile"],
+    ["cost_class", "costClass"],
+    ["latency_class", "latencyClass"]
+  ]) {
+    const value = observationText(agent?.[snake] ?? agent?.[camel]);
+    if (value) out[snake] = value;
+  }
+  for (const [snake, camel] of [
+    ["allowed_rooms", "allowedRooms"],
+    ["allowed_wake_targets", "allowedWakeTargets"]
+  ]) {
+    if (!hasObservationField(agent, snake, camel)) continue;
+    out[snake] = observationList(agent?.[snake] ?? agent?.[camel]);
+  }
+  return out;
+}
+
+function hasObservationField(agent, snake, camel) {
+  if (!agent || typeof agent !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(agent, snake) || Object.prototype.hasOwnProperty.call(agent, camel);
+}
+
+function permissionObservationSummary(agents = []) {
+  const list = Array.isArray(agents) ? agents : [];
+  const missingPermissionProfile = [];
+  const unscopedWakeTargets = [];
+  let withPermissionProfile = 0;
+  let withAllowedWakeTargets = 0;
+  for (const agent of list) {
+    const id = String(agent?.id || "").trim();
+    if (!id) continue;
+    const profile = observationText(agent?.permission_profile ?? agent?.permissionProfile);
+    const hasWakeTargets = hasObservationField(agent, "allowed_wake_targets", "allowedWakeTargets");
+    if (profile) withPermissionProfile += 1;
+    else missingPermissionProfile.push(id);
+    if (hasWakeTargets) withAllowedWakeTargets += 1;
+    else unscopedWakeTargets.push(id);
+  }
+  return {
+    total_agents: list.filter((agent) => String(agent?.id || "").trim()).length,
+    with_permission_profile: withPermissionProfile,
+    missing_permission_profile: missingPermissionProfile,
+    with_allowed_wake_targets: withAllowedWakeTargets,
+    unscoped_wake_targets: unscopedWakeTargets
+  };
+}
+
+function observationText(value) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, 160) : "";
+}
+
+function observationList(value) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return unique(raw.map(observationText).filter(Boolean)).slice(0, 64);
+}
+
 function agentIdConflicts(agents = []) {
   const byId = new Map();
   for (const agent of Array.isArray(agents) ? agents : []) {
@@ -6040,6 +6131,15 @@ function printStatus(result) {
       console.log(`- ${conflict.id}: nodes=${(conflict.nodes || []).join(",") || "-"} count=${conflict.count || 0}`);
     }
   }
+  if (result.permission_observations?.total_agents) {
+    const p = result.permission_observations;
+    console.log("\nPermission observations:");
+    console.log(`- permission_profile: ${p.with_permission_profile || 0}/${p.total_agents || 0} agents`);
+    console.log(`- allowed_wake_targets: ${p.with_allowed_wake_targets || 0}/${p.total_agents || 0} agents`);
+    if (p.missing_permission_profile?.length) {
+      console.log(`- missing permission_profile: ${p.missing_permission_profile.slice(0, 8).join(",")}${p.missing_permission_profile.length > 8 ? ",..." : ""}`);
+    }
+  }
   if (result.nodes?.length) {
     console.log("\nNodes:");
     for (const node of result.nodes) {
@@ -6059,7 +6159,16 @@ function printStatus(result) {
       const staleRunning = agent.stale_running_runs?.length ? ` stale_running=${agent.stale_running_runs.map((item) => item.id).join(",")}` : "";
       const staleQueued = agent.stale_queued_runs?.length ? ` stale_queued=${agent.stale_queued_runs.map((item) => item.id).join(",")}` : "";
       const orphanedRunning = agent.orphaned_running_runs?.length ? ` orphaned_running=${agent.orphaned_running_runs.map((item) => item.id).join(",")}` : "";
-      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${seen}${active}${run}${heartbeatEvery}${staleRunning}${staleQueued}${orphanedRunning}`);
+      const profile = ` profile=${agent.permission_profile || "unprofiled"}`;
+      const wakeTargetValues = Array.isArray(agent.allowed_wake_targets)
+        ? agent.allowed_wake_targets
+        : Array.isArray(agent.allowedWakeTargets)
+          ? agent.allowedWakeTargets
+          : [];
+      const wakeTargets = hasObservationField(agent, "allowed_wake_targets", "allowedWakeTargets")
+        ? ` wake_targets=${wakeTargetValues.length ? wakeTargetValues.join(",") : "none"}`
+        : "";
+      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${profile}${wakeTargets}${seen}${active}${run}${heartbeatEvery}${staleRunning}${staleQueued}${orphanedRunning}`);
     }
   }
   if (result.rooms.length) {
@@ -6082,6 +6191,8 @@ function ollamaAgent(commandPath, model, id = "ollama-local") {
     enabled: true,
     adapter: "command",
     capabilities: ["local-model", "chat", "private"],
+    permission_profile: "local-model",
+    allowed_wake_targets: [],
     pingUrl: "http://127.0.0.1:11434/api/tags",
     runCommand: `${quoteCommand(commandPath)} run ${quoteCommand(model || "llama3.1")} ${messageArgument()}`
   };

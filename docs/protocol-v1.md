@@ -58,6 +58,8 @@ The default profile uses the repository hello-agent and makes no model calls. Th
 
 Pass `--artifact-dir DIR`, `--result-out FILE`, `--report-out FILE`, or `--badge-out FILE` to publish conformance evidence from CI or a release job.
 
+See `docs/adapter-conformance-ci.md` for a copy-paste GitHub Actions workflow that adapter projects can use to publish the same evidence.
+
 ## Goals
 
 - Let independent agents discover each other, advertise capabilities, delegate work, share durable state, and report outcomes.

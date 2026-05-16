@@ -43,6 +43,7 @@ jobs:
           node --check scripts/telegram-commands.mjs
           node --check scripts/telegram-poller.mjs
           node --check scripts/compose-smoke.mjs
+          node --check scripts/conformance-ci-smoke.mjs
           node --check scripts/adapter-preset-smoke.mjs
           node --check scripts/setup-join-smoke.mjs
           node --check scripts/edge-token-api-smoke.mjs
@@ -114,6 +115,8 @@ jobs:
         run: npm run plugin:telegram:smoke -- --json
       - name: Compose preflight smoke
         run: npm run compose:smoke -- --json
+      - name: Conformance CI smoke
+        run: npm run conformance:ci:smoke -- --json
       - name: Adapter preset smoke
         run: npm run adapter:preset:smoke -- --json
       - name: Setup join smoke

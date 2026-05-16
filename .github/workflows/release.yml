@@ -24,6 +24,10 @@ jobs:
           npm run release:check
           npm run portable:check:zip
           node smoke-test.mjs
+      - name: Build conformance artifacts
+        run: |
+          mkdir -p dist/conformance
+          node scripts/protocol-conformance.mjs --json --artifact-dir dist/conformance
       - name: Build portable bundle
         run: |
           echo "VERSION=$(node -p 'require("./package.json").version')" >> "$GITHUB_ENV"
@@ -36,6 +40,9 @@ jobs:
           test -s "dist/agent-bus-v${VERSION}-portable.zip"
           test -s "dist/agent-bus-v${VERSION}-portable.manifest.json"
           test -s dist/SHA256SUMS
+          test -s dist/conformance/agent-bus-conformance.json
+          test -s dist/conformance/agent-bus-conformance.md
+          test -s dist/conformance/agent-bus-conformance-badge.json
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,6 +52,9 @@ jobs:
             "dist/agent-bus-v${VERSION}-portable.zip" \
             "dist/agent-bus-v${VERSION}-portable.manifest.json" \
             "dist/SHA256SUMS" \
+            "dist/conformance/agent-bus-conformance.json" \
+            "dist/conformance/agent-bus-conformance.md" \
+            "dist/conformance/agent-bus-conformance-badge.json" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Agent Bus $GITHUB_REF_NAME" \
             --generate-notes \

@@ -39,6 +39,7 @@ const jsFiles = [
   "scripts/telegram-commands.mjs",
   "scripts/telegram-poller.mjs",
   "scripts/compose-smoke.mjs",
+  "scripts/conformance-ci-smoke.mjs",
   "scripts/adapter-preset-smoke.mjs",
   "scripts/setup-join-smoke.mjs",
   "scripts/edge-token-api-smoke.mjs",
@@ -103,6 +104,7 @@ try {
   step("diagnostics redaction smoke", process.execPath, ["scripts/diagnostics-redaction-smoke.mjs", "--json"]);
   step("telegram plugin smoke", process.execPath, ["scripts/telegram-plugin-smoke.mjs", "--json"]);
   step("compose preflight smoke", process.execPath, ["scripts/compose-smoke.mjs", "--json"]);
+  step("conformance CI smoke", process.execPath, ["scripts/conformance-ci-smoke.mjs", "--json"]);
   step("adapter preset smoke", process.execPath, ["scripts/adapter-preset-smoke.mjs", "--json"]);
   step("setup join smoke", process.execPath, ["scripts/setup-join-smoke.mjs", "--json"]);
   step("edge token API smoke", process.execPath, ["scripts/edge-token-api-smoke.mjs", "--json"]);

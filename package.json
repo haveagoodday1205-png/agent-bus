@@ -46,6 +46,7 @@
     "diagnostics:redaction:smoke": "node scripts/diagnostics-redaction-smoke.mjs",
     "plugin:telegram:smoke": "node scripts/telegram-plugin-smoke.mjs",
     "compose:smoke": "node scripts/compose-smoke.mjs",
+    "conformance:ci:smoke": "node scripts/conformance-ci-smoke.mjs",
     "adapter:preset:smoke": "node scripts/adapter-preset-smoke.mjs",
     "setup:join:smoke": "node scripts/setup-join-smoke.mjs",
     "edge-token:smoke": "node scripts/edge-token-api-smoke.mjs",

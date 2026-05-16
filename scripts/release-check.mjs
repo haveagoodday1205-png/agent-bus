@@ -102,6 +102,16 @@ try {
   step("protocol adapter-command conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json", "--profile", "adapter-command", "--agent-command", helloAgentCommand, "--agent-id", "adapter-conformance"]);
   step("zero-token local demo", process.execPath, ["scripts/demo-zero-token.mjs", "--json"]);
   step("starter kit demo", process.execPath, ["scripts/demo-starter.mjs", "--json"]);
+  const issueDemoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-issue-demo-output-"));
+  const issueDemoDir = path.join(issueDemoRoot, "demo");
+  step("issue-to-PR flagship demo", process.execPath, ["scripts/demo-issue-pr.mjs", "--json", "--out-dir", issueDemoDir]);
+  requireFile(path.join(issueDemoDir, "README.md"));
+  requireFile(path.join(issueDemoDir, "agent-bus-issue-demo-report.md"));
+  requireFile(path.join(issueDemoDir, "agent-bus-issue-demo-events.json"));
+  requireFile(path.join(issueDemoDir, "agent-bus-issue-demo-replay.md"));
+  requireFile(path.join(issueDemoDir, "agent-bus-issue-demo.patch"));
+  requireFile(path.join(issueDemoDir, "agent-bus-issue-demo-pr.md"));
+  fs.rmSync(issueDemoRoot, { recursive: true, force: true });
   step("doctor smoke", process.execPath, ["scripts/doctor-smoke.mjs", "--json"]);
   step("diagnostics redaction smoke", process.execPath, ["scripts/diagnostics-redaction-smoke.mjs", "--json"]);
   step("telegram plugin smoke", process.execPath, ["scripts/telegram-plugin-smoke.mjs", "--json"]);

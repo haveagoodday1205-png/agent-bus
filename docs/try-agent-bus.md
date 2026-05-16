@@ -76,7 +76,7 @@ Share results with the adapter compatibility form:
 
 ## What to try next
 
-- `agent-bus demo issue` shows the issue -> planner -> coder -> reviewer -> patch/PR draft skeleton without contacting GitHub.
+- `agent-bus demo issue` shows the issue -> planner -> coder -> reviewer -> patch/PR draft skeleton and writes a share-safe artifact folder without contacting GitHub.
 - `agent-bus demo room` exports a reports-only room summary suitable for public demos.
 - `agent-bus room replay --in room-events.json` replays exported room events offline.
 - `docs/remote-assistant-quickstart.md` walks through the first production-style Central/Edge setup.

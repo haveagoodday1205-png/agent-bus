@@ -6187,8 +6187,6 @@ def telegram_handle_command(config, plugin, control, text, chat_id=None):
         return telegram_rooms_command(config, chat_id, rest)
     if is_command and command == "room":
         return telegram_room_command(config, chat_id, rest)
-    if is_command and command == "goal":
-        return telegram_goal_command(config, chat_id, rest)
     if not is_command:
         if telegram_room_draft_active(config, chat_id):
             return telegram_room_start_command(config, chat_id, text)
@@ -6497,7 +6495,6 @@ def telegram_help_text(prefix=""):
         "/rooms - list Agent Bus rooms",
         "/room <room-id> - inspect, wake, or pause a room",
         "/room new - draft a room, multi-select agents, and set max steps",
-        "/goal <goal> - create a room from the current room draft",
         "@agent-id message - add or target an agent for this message",
         "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled",
     ])
@@ -6636,16 +6633,6 @@ def telegram_room_new_command(config, chat_id, goal=""):
         "command": "room_draft",
         "reply": telegram_room_draft_text(draft),
     }
-
-
-def telegram_goal_command(config, chat_id, goal=""):
-    if not str(goal or "").strip():
-        draft = write_telegram_room_draft(config, chat_id, telegram_room_draft(config, chat_id))
-        return {
-            "command": "room_draft",
-            "reply": telegram_room_draft_text(draft),
-        }
-    return telegram_room_start_command(config, chat_id, goal)
 
 
 def telegram_room_agent_command(config, chat_id, parts):

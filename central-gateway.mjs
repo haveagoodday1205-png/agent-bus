@@ -2799,7 +2799,6 @@ function telegramHandleCommand(config, plugin, control, text, chatId = "") {
   if (isCommand && command === "agents") return { command, reply: telegramAgentsText() };
   if (isCommand && command === "rooms") return telegramRoomsCommand(config, chatId, rest);
   if (isCommand && command === "room") return telegramRoomCommand(config, chatId, rest);
-  if (isCommand && command === "goal") return telegramGoalCommand(config, chatId, rest);
   if (!isCommand) {
     if (telegramRoomDraftActive(config, chatId)) {
       return telegramRoomStartCommand(config, chatId, text);
@@ -3103,7 +3102,6 @@ function telegramHelpText(prefix = "") {
     "/rooms - list Agent Bus rooms",
     "/room <room-id> - inspect, wake, or pause a room",
     "/room new - draft a room, multi-select agents, and set max steps",
-    "/goal <goal> - create a room from the current room draft",
     "@agent-id message - add or target an agent for this message",
     "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled"
   ].filter(Boolean).join("\n");
@@ -3215,14 +3213,6 @@ function telegramRoomNewCommand(config, chatId, goal = "") {
   writeTelegramRoomDraft(config, chatId, draft);
   if (String(goal || "").trim()) return telegramRoomStartCommand(config, chatId, goal);
   return { command: "room_draft", reply: telegramRoomDraftText(draft) };
-}
-
-function telegramGoalCommand(config, chatId, goal = "") {
-  if (!String(goal || "").trim()) {
-    const draft = writeTelegramRoomDraft(config, chatId, telegramRoomDraft(config, chatId));
-    return { command: "room_draft", reply: telegramRoomDraftText(draft) };
-  }
-  return telegramRoomStartCommand(config, chatId, goal);
 }
 
 function telegramRoomAgentCommand(config, chatId, parts = []) {

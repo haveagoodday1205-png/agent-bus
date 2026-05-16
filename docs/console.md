@@ -17,7 +17,6 @@ The console can:
 - Show advertised agent permission profiles, allowed wake targets, and profile coverage as observation-only readiness hints.
 - Select agents and submit tasks.
 - Preview routing decisions.
-- Copy `agent-bus goal "..." --agents ...` from the quickstart panel to start the same selected-agent room flow from a terminal.
 - Poll thread, room, run, report, blackboard, and stdout/stderr results.
 - Open a room trace from the room detail view, look up trace ids, and export trace JSON.
 - Export a reports-only room summary with reports, blackboard notes, run metadata, and trace id while omitting the room goal, full messages, and run output by default.

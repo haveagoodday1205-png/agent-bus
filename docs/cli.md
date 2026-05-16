@@ -350,11 +350,10 @@ The registered command menu includes:
 /agent
 /rooms
 /room
-/goal
 /run agent-id task
 ```
 
-Telegram buttons are contextual instead of being attached to every reply. `/status` and `/help` show a compact menu, `/new`, `/agents`, and `/agent` show multi-select agent buttons for the active process, `/resume` shows process/thread buttons, and `/rooms` shows room buttons. `/room new` starts a room draft with multi-select agent buttons plus step presets; send the room goal as the next plain message, use `/room start <goal>`, or use the shorter `/goal <goal>` command to create the room. Telegram callback queries go through the same webhook handler as typed commands; dry-run mode records the `reply_markup` in `notifications.jsonl` so deployments can test the UX without contacting Telegram.
+Telegram buttons are contextual instead of being attached to every reply. `/status` and `/help` show a compact menu, `/new`, `/agents`, and `/agent` show multi-select agent buttons for the active process, `/resume` shows process/thread buttons, and `/rooms` shows room buttons. `/room new` starts a room draft with multi-select agent buttons plus step presets; send the room goal as the next plain message, or use `/room start <goal>` to create the room. Telegram callback queries go through the same webhook handler as typed commands; dry-run mode records the `reply_markup` in `notifications.jsonl` so deployments can test the UX without contacting Telegram.
 
 Set `control.conversation.enabled: true` or `AGENT_BUS_TELEGRAM_CONVERSATION_ENABLED=true` when plain Telegram messages should behave like a chat with Agent Bus. Use `control.conversation.agentId`, `control.conversation.agents`, `AGENT_BUS_TELEGRAM_CONVERSATION_AGENT`, or `AGENT_BUS_TELEGRAM_CONVERSATION_AGENTS` to pin the chat to Hermes, OpenClaw, Codex, or another agent; otherwise Central uses normal Agent Bus routing.
 
@@ -381,7 +380,6 @@ Room creation is separate from the active Telegram process/thread. Use `/room ne
 /room agent toggle openclaw-hk
 /room steps 10
 /room start investigate the onboarding bug and report a fix plan
-/goal investigate the onboarding bug and report a fix plan
 ```
 
 The first plain message names the process, `/resume` lists or switches prior Telegram processes, `/agent` sets or adds process agents, and a leading `@agent-id` targets that message while adding the agent to the active process. Agent replies are prefixed with `[agent-id]` so multi-agent Telegram replies stay attributable.
@@ -443,11 +441,6 @@ agent-bus agents
 Rooms are durable AI-to-AI workspaces. Use them to wake several agents, keep a shared blackboard, and export the transcript for demos or debugging.
 
 ```bash
-agent-bus goal "Inspect the release and report blockers." \
-  --gateway https://YOUR-DOMAIN/agent-bus \
-  --token ... \
-  --agents codex-120,hermes-hk,openclaw-hk
-
 agent-bus room create \
   --gateway https://YOUR-DOMAIN/agent-bus \
   --token ... \
@@ -483,8 +476,6 @@ agent-bus trace export trace_xxx --format markdown --out trace.md --gateway http
 ```
 
 Room exports include the room goal, reports, blackboard notes, runs, and messages. Add `--reports-only` to omit the room goal, full messages, and run output for public demos or issue summaries. Gateway responses are already redacted, and the CLI adds another pass over common token-like strings by default. Use `--no-redact` only to disable that extra client-side pass for private archives, and review any export before sharing it for private prompts, logs, domains, and internal machine names.
-
-`agent-bus goal "..." --agents a,b` is shorthand for `agent-bus room create --goal "..." --agents a,b`. It defaults `--wake-agents` to the first selected agent so the room starts moving immediately; pass `--no-wake` when you only want to create the room.
 
 `agent-bus room event-log ROOM_ID` renders the same snapshot-derived event model as a readable timeline, with `--tail N`, `--reverse`, `--json`, `--reports-only`, and `--no-redact` options for operator debugging and issue attachments. `--format events` writes a room event bundle (`agent_bus.room_event_bundle`) derived from the room snapshot. Events include contiguous `sequence` numbers and the bundle includes `export_metadata` with source, generated time, reports-only mode, event count, and sequence range. It is designed for durable demos, bug reports, and SDK compatibility fixtures: `agent-bus room replay --in room-events.json` can rebuild a deterministic summary without contacting a gateway or model provider.
 

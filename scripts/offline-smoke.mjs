@@ -231,10 +231,6 @@ async function main() {
   assert(cliRoomHealthText.includes("Recovery actions:"), "CLI room health text did not render recovery actions");
   const cliRooms = await runCliJson(["room", "list", "--gateway", base, "--token", token]);
   assert(Array.isArray(cliRooms) && cliRooms.some((item) => item.id === finalRoom.id), "CLI room list did not include the smoke room");
-  const cliGoalRoom = await runCliJson(["goal", "Verify top-level goal shortcut.", "--agents", "offline-agent", "--max-steps", "1", "--no-auto-rotate", "--gateway", base, "--token", token]);
-  assert(cliGoalRoom.goal === "Verify top-level goal shortcut.", "CLI goal shortcut did not map the positional goal text");
-  const cliGoalFinalRoom = await waitForRoomComplete(base, token, cliGoalRoom.id);
-  assert(cliGoalFinalRoom.runs?.some((item) => item.agent_id === "offline-agent" && item.status === "completed"), "CLI goal shortcut did not wake and complete the first selected agent");
   const cliNodes = await runCliJson(["nodes", "--gateway", base, "--token", token]);
   assert(Array.isArray(cliNodes) && cliNodes.some((item) => item.node_id === "offline-smoke-node"), "CLI nodes did not include the smoke node");
   assert(cliNodes.some((item) => item.node_id === "offline-smoke-node" && /^edge_session_/.test(item.edge_session_id || "")), "CLI nodes did not expose edge_session_id");

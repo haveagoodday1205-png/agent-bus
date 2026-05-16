@@ -1,0 +1,46 @@
+name: Zero-token demo feedback
+description: Tell us what happened when you tried the no-secret Agent Bus demo.
+title: "[Demo feedback]: "
+labels: ["feedback", "demo", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for trying the no-secret path. Please do not post tokens, private hosts, SSH paths, model keys, or private prompts.
+  - type: dropdown
+    id: command
+    attributes:
+      label: Command used
+      options:
+        - npx agent-bus-cli@latest demo zero-token
+        - npm run demo:zero-token
+        - agent-bus demo zero-token
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened?
+      description: Did the demo complete? If not, where did it stop?
+      placeholder: The demo reached room export, but I was not sure what REPORT meant.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, terminal, Node.js version, and install method.
+      placeholder: macOS 15, zsh, Node 22, npx
+    validations:
+      required: true
+  - type: textarea
+    id: confusing
+    attributes:
+      label: Most confusing step
+      description: What should be clearer for the next first-time user?
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted output
+      description: Paste only the relevant output after removing private data.
+      render: shell

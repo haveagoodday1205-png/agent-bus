@@ -1,0 +1,46 @@
+name: Adapter compatibility report
+description: Share conformance results for an Agent Bus adapter or runtime.
+title: "[Adapter]: "
+labels: ["adapter", "compatibility", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Use this when you tested an adapter with the Agent Bus conformance runner. Do not include tokens, private endpoints, or model keys.
+  - type: input
+    id: adapter
+    attributes:
+      label: Adapter or runtime
+      placeholder: my-local-agent, Claude Code wrapper, Ollama bridge
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Conformance command
+      description: Redact private paths or arguments.
+      render: shell
+      placeholder: agent-bus protocol conformance --profile adapter-command --agent-command "./my-agent" --agent-id my-agent --artifact-dir conformance-artifacts
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Pass
+        - Partial pass
+        - Fail
+        - Could not run
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Artifacts or summary
+      description: Attach reviewed artifacts or paste the redacted JSON/Markdown summary.
+      render: json
+  - type: textarea
+    id: notes
+    attributes:
+      label: Compatibility notes
+      description: What adapter behavior, platform detail, or protocol gap should maintainers know about?

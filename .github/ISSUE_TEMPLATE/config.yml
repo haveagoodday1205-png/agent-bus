@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Try Agent Bus
+    url: https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/try-agent-bus.md
+    about: No-secret demo, first remote node, and adapter-author trial paths.
   - name: Good first issues
     url: https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/good-first-issues.md
     about: Starter tasks that do not need private infrastructure or live model calls.

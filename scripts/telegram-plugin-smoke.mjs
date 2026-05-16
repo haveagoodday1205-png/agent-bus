@@ -131,14 +131,14 @@ async function main() {
   const pollerCallback = await runPollerCallbackSmoke(gateway, webhookSecret, telegramChatId, "/status", dataDir);
   assert(pollerCallback.ok === true && pollerCallback.handled === 1, "telegram poller did not forward callback query");
   assert(pollerCallback.allowedUpdates.includes("callback_query"), "telegram poller did not request callback_query updates");
-  assert(pollerCallback.commands.includes("room") && pollerCallback.commands.includes("goal"), "telegram poller --set-commands did not register /room and /goal");
+  assert(pollerCallback.commands.includes("room"), "telegram poller --set-commands did not register /room");
   const commandMenu = await runTelegramCommandMenuSmoke();
-  assert(commandMenu.ok === true && commandMenu.commands.includes("room") && commandMenu.commands.includes("goal"), "telegram command menu smoke did not register /room and /goal");
+  assert(commandMenu.ok === true && commandMenu.commands.includes("room"), "telegram command menu smoke did not register /room");
   const doctorSmoke = await runTelegramDoctorSmoke(gateway, adminToken, telegramChatId, webhookSecret);
   assert(doctorSmoke.ok === true && doctorSmoke.transport === "poller", "telegram doctor smoke did not pass in poller mode");
   assert(doctorSmoke.webhook_probe === "pass", "telegram doctor did not pass the diagnostic webhook probe");
   const setupSmoke = await runTelegramSetupSmoke(gateway, telegramChatId, webhookSecret, dataDir);
-  assert(setupSmoke.ok === true && setupSmoke.commands.includes("room") && setupSmoke.commands.includes("goal"), "telegram setup smoke did not write env/service and register commands");
+  assert(setupSmoke.ok === true && setupSmoke.commands.includes("room"), "telegram setup smoke did not write env/service and register commands");
   const setupRestrictionSmoke = await runTelegramSetupRequiresChatSmoke(gateway, dataDir);
   assert(setupRestrictionSmoke.ok === true, "telegram setup should refuse unrestricted control envs by default");
   const agentsWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/agents");
@@ -247,15 +247,6 @@ async function main() {
   const draftRoomTask = await pollTask(gateway, edgeToken);
   assert(draftRoomTask.task?.agent_id === "telegram-smoke-helper", "telegram-created room did not wake the first selected agent");
   await completeRun(gateway, edgeToken, draftRoomTask.task.run_id, "REPORT: Telegram-created room dry-run ok.\nDONE\n");
-  const goalDraftWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/goal");
-  assert(goalDraftWebhook.command === "room_draft", "telegram /goal without text did not open a room draft");
-  await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room agent toggle telegram-smoke-agent");
-  const goalWebhook = await telegramWebhook(gateway, webhookSecret, telegramChatId, "/goal Ship the next Agent Bus milestone step by step.");
-  assert(goalWebhook.command === "room" && /Created room/.test(goalWebhook.reply || ""), "telegram /goal did not create a room");
-  assert(goalWebhook.room?.agents?.includes("telegram-smoke-agent"), `telegram /goal room did not keep selected agents: ${JSON.stringify(goalWebhook.room)}`);
-  const goalRoomTask = await pollTask(gateway, edgeToken);
-  assert(goalRoomTask.task?.agent_id === "telegram-smoke-agent", "telegram /goal did not wake the selected agent");
-  await completeRun(gateway, edgeToken, goalRoomTask.task.run_id, "REPORT: Telegram /goal room dry-run ok.\nDONE\n");
   const nodeGateway = await nodeGatewayPluginSmoke();
 
   const result = {
@@ -270,7 +261,7 @@ async function main() {
     doctor_checks: doctorSmoke.checks,
     setup_files: setupSmoke.files,
     setup_restriction: setupRestrictionSmoke.error,
-    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command, roomStartWebhook.command, goalDraftWebhook.command, goalWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command, roomStartWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,

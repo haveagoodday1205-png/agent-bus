@@ -893,8 +893,8 @@ function quickstartCommandText() {
     `${t("statusCommand")}:`,
     `agent-bus status --gateway ${gateway} --token ***`,
     "",
-    "Goal:",
-    `agent-bus goal "Check current Agent Bus status and report next action." --gateway ${gateway} --token *** --agents ${agents}`
+    "Room:",
+    `agent-bus room create --gateway ${gateway} --token *** --agents ${agents} --goal "Check current Agent Bus status and report next action."`
   ];
   const recoveryCommands = recoveryCommandLines(gateway);
   if (recoveryCommands.length) {

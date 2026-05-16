@@ -7,10 +7,16 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const node = process.execPath;
 const args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) {
+  printHelp();
+  process.exit(0);
+}
 const jsonOut = args.includes("--json");
 const procs = [];
 const childLogs = new WeakMap();
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-zero-token-demo-"));
+const FEEDBACK_URL = "https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=zero_token_demo.yml";
+const TRY_DOCS_URL = "https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/try-agent-bus.md";
 
 main().catch((err) => {
   if (jsonOut) {
@@ -150,7 +156,14 @@ async function main() {
     reports: reports.length,
     blackboard_notes: notes.length,
     completed_agents: completedAgentIds.size,
-    worker_done: true
+    worker_done: true,
+    feedback_url: FEEDBACK_URL,
+    try_docs_url: TRY_DOCS_URL,
+    next_commands: [
+      "agent-bus demo issue",
+      "agent-bus demo room",
+      "agent-bus smoke --offline"
+    ]
   };
 
   if (jsonOut) {
@@ -159,8 +172,9 @@ async function main() {
   }
 
   step("Exporting a reports-only shareable summary");
-  const reportPath = uniqueOutputPath(path.join(process.cwd(), "agent-bus-zero-token-report.md"));
+  const reportPath = zeroTokenReportPath();
   await runCli(["room", "export", finalRoom.id, "--reports-only", "--out", reportPath, "--gateway", gateway, "--token", adminToken]);
+  appendZeroTokenReport(reportPath, result, { reports, notes });
 
   console.log("");
   console.log("Agent Bus zero-token playground passed");
@@ -172,6 +186,20 @@ async function main() {
     console.log(`REPORT from ${report.speaker}: ${report.content}`);
   }
   console.log(`Reports-only export: ${reportPath}`);
+  console.log(`Feedback: ${FEEDBACK_URL}`);
+}
+
+function printHelp() {
+  console.log(`Usage: agent-bus demo zero-token [--json] [--out-dir DIR] [--report-out FILE]
+
+Runs a private local Central plus Edge with fake agents. No API keys, model
+quota, Telegram bot, SSH, or remote machines are used.
+
+Options:
+  --json             Print a machine-readable result without writing a report.
+  --out-dir DIR      Write the share-safe report in DIR.
+  --report-out FILE  Write the share-safe report to FILE.
+`);
 }
 
 function writeFakeAgent(file) {
@@ -407,6 +435,72 @@ function uniqueOutputPath(basePath) {
     if (!fs.existsSync(candidate)) return candidate;
   }
   throw new Error(`Could not find an unused report path near ${basePath}`);
+}
+
+function optionValue(values, name) {
+  const index = values.indexOf(name);
+  if (index < 0 || index + 1 >= values.length) return "";
+  return values[index + 1];
+}
+
+function zeroTokenReportPath() {
+  const explicit = optionValue(args, "--report-out") || optionValue(args, "--out");
+  if (explicit) {
+    const target = path.resolve(explicit);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    return target;
+  }
+  const outDir = optionValue(args, "--out-dir") || process.cwd();
+  const dir = path.resolve(outDir);
+  fs.mkdirSync(dir, { recursive: true });
+  return uniqueOutputPath(path.join(dir, "agent-bus-zero-token-report.md"));
+}
+
+function appendZeroTokenReport(reportPath, result, details = {}) {
+  const agents = result.agents?.ids || [];
+  const reports = Array.isArray(details.reports) ? details.reports : [];
+  const notes = Array.isArray(details.notes) ? details.notes : [];
+  const lines = [
+    "",
+    "## Zero-token Demo Result",
+    "",
+    "| Check | Result |",
+    "| --- | --- |",
+    `| Mode | ${result.mode} |`,
+    `| Model quota | ${result.quota} |`,
+    `| Model router | ${result.model_router} |`,
+    `| Agents online | ${result.agents.online}/${result.agents.expected} (${agents.join(", ")}) |`,
+    `| Room status | ${result.room_status} |`,
+    `| Reports captured | ${result.reports} |`,
+    `| Blackboard notes | ${result.blackboard_notes} |`,
+    `| Completed agents | ${result.completed_agents} |`,
+    `| Worker DONE | ${result.worker_done ? "yes" : "no"} |`,
+    "",
+    "This report is intended for public feedback. It omits the room goal, full messages, run output, tokens, model keys, private hosts, SSH paths, and provider configuration.",
+    "",
+    "## Demo Evidence",
+    "",
+    ...reports.map((report) => `- REPORT from ${report.speaker || "agent"}: ${oneLine(report.content)}`),
+    ...notes.map((note) => `- BLACKBOARD from ${note.speaker || "agent"}: ${oneLine(note.content)}`),
+    "",
+    "## What To Try Next",
+    "",
+    "- `agent-bus demo issue` shows the issue -> planner -> coder -> reviewer -> patch/PR draft skeleton without contacting GitHub.",
+    "- `agent-bus demo room` exports a reports-only AI-to-AI room summary.",
+    "- `agent-bus smoke --offline` runs the packaged no-quota smoke path.",
+    "",
+    "## Feedback",
+    "",
+    `Open zero-token demo feedback: ${FEEDBACK_URL}`,
+    `Try Agent Bus guide: ${TRY_DOCS_URL}`,
+    ""
+  ];
+  fs.appendFileSync(reportPath, `${lines.join("\n")}\n`);
+}
+
+function oneLine(value, limit = 220) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
 }
 
 function quoteCommandArg(value) {

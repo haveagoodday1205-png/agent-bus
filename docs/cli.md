@@ -443,6 +443,11 @@ agent-bus agents
 Rooms are durable AI-to-AI workspaces. Use them to wake several agents, keep a shared blackboard, and export the transcript for demos or debugging.
 
 ```bash
+agent-bus goal "Inspect the release and report blockers." \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --token ... \
+  --agents codex-120,hermes-hk,openclaw-hk
+
 agent-bus room create \
   --gateway https://YOUR-DOMAIN/agent-bus \
   --token ... \
@@ -478,6 +483,8 @@ agent-bus trace export trace_xxx --format markdown --out trace.md --gateway http
 ```
 
 Room exports include the room goal, reports, blackboard notes, runs, and messages. Add `--reports-only` to omit the room goal, full messages, and run output for public demos or issue summaries. Gateway responses are already redacted, and the CLI adds another pass over common token-like strings by default. Use `--no-redact` only to disable that extra client-side pass for private archives, and review any export before sharing it for private prompts, logs, domains, and internal machine names.
+
+`agent-bus goal "..." --agents a,b` is shorthand for `agent-bus room create --goal "..." --agents a,b`. It defaults `--wake-agents` to the first selected agent so the room starts moving immediately; pass `--no-wake` when you only want to create the room.
 
 `agent-bus room event-log ROOM_ID` renders the same snapshot-derived event model as a readable timeline, with `--tail N`, `--reverse`, `--json`, `--reports-only`, and `--no-redact` options for operator debugging and issue attachments. `--format events` writes a room event bundle (`agent_bus.room_event_bundle`) derived from the room snapshot. Events include contiguous `sequence` numbers and the bundle includes `export_metadata` with source, generated time, reports-only mode, event count, and sequence range. It is designed for durable demos, bug reports, and SDK compatibility fixtures: `agent-bus room replay --in room-events.json` can rebuild a deterministic summary without contacting a gateway or model provider.
 

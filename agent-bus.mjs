@@ -174,6 +174,10 @@ async function main() {
     await room(argv.slice(1));
     return;
   }
+  if (command === "goal") {
+    await goal(argv.slice(1));
+    return;
+  }
   if (command === "trace" || command === "traces") {
     await trace(argv.slice(1));
     return;
@@ -227,6 +231,7 @@ Usage:
   agent-bus service systemd --mode edge --config /opt/agent-bus/edge.config.json --agent-bus-path /usr/bin/agent-bus
   agent-bus probe --config edge.config.json
   agent-bus edge-agents --config edge.config.json
+  agent-bus goal "Check deployment and report blockers" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room memory room_xxx --query "cache decision" --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -2852,6 +2857,53 @@ async function room(args) {
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
   throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|doctor|follow-up|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
+}
+
+function goal(args) {
+  return room(goalRoomCreateArgs(args));
+}
+
+function goalRoomCreateArgs(args = []) {
+  const valueOptions = new Set([
+    "--agents",
+    "--config",
+    "--gateway",
+    "--goal",
+    "--max-steps",
+    "--maxSteps",
+    "--message",
+    "--title",
+    "--token",
+    "--trace",
+    "--trace-id",
+    "--wake-agents"
+  ]);
+  const passthrough = [];
+  const positional = [];
+  const disableWake = args.includes("--no-wake");
+  for (let index = 0; index < args.length; index += 1) {
+    const item = args[index];
+    if (item === "--no-wake") continue;
+    if (String(item || "").startsWith("--")) {
+      passthrough.push(item);
+      if (valueOptions.has(item) && index + 1 < args.length) {
+        passthrough.push(args[index + 1]);
+        index += 1;
+      }
+      continue;
+    }
+    positional.push(item);
+  }
+  if (!optionValue(passthrough, "--goal") && !optionValue(passthrough, "--message")) {
+    const goalText = positional.join(" ").trim();
+    if (!goalText) throw new Error('Usage: agent-bus goal "Check deployment" --agents agent-a,agent-b [--no-wake].');
+    passthrough.unshift("--goal", goalText);
+  }
+  const agents = csvOption(passthrough, "--agents");
+  if (!disableWake && agents.length && !optionValue(passthrough, "--wake-agents")) {
+    passthrough.push("--wake-agents", agents[0]);
+  }
+  return ["create", ...passthrough];
 }
 
 function formatRoomMemory(value, options = {}) {

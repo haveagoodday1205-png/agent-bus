@@ -1,6 +1,8 @@
 # Agent Bus
 
 [![ci](https://github.com/haveagoodday1205-png/agent-bus/actions/workflows/ci.yml/badge.svg)](https://github.com/haveagoodday1205-png/agent-bus/actions/workflows/ci.yml)
+[![conformance](https://github.com/haveagoodday1205-png/agent-bus/actions/workflows/conformance.yml/badge.svg)](https://github.com/haveagoodday1205-png/agent-bus/actions/workflows/conformance.yml)
+[![npm](https://img.shields.io/npm/v/agent-bus-cli)](https://www.npmjs.com/package/agent-bus-cli)
 [![release](https://img.shields.io/github/v/release/haveagoodday1205-png/agent-bus)](https://github.com/haveagoodday1205-png/agent-bus/releases)
 
 A lightweight distributed agent and OpenAI-compatible model router for connecting Codex, Hermes, OpenClaw, Claude Code, and custom model gateways across machines.

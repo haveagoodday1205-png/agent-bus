@@ -94,9 +94,53 @@ function publicAgents(config) {
       enabled: agent.enabled !== false,
       adapter: agent.adapter || "command",
       capabilities: agent.capabilities || [],
+      ...agentObservationFields(agent),
       ...(runHeartbeatIntervalMs ? { run_heartbeat_interval_ms: runHeartbeatIntervalMs } : {}),
       health: agentHealth(config, agent)
     }));
+}
+
+function agentObservationFields(agent) {
+  const out = {};
+  const textFields = [
+    ["owner", "owner"],
+    ["runtime", "runtime"],
+    ["permission_profile", "permissionProfile"],
+    ["cost_class", "costClass"],
+    ["latency_class", "latencyClass"]
+  ];
+  for (const [snake, camel] of textFields) {
+    const value = optionalText(agent?.[snake] ?? agent?.[camel]);
+    if (value) out[snake] = value;
+  }
+  const listFields = [
+    ["allowed_rooms", "allowedRooms"],
+    ["allowed_wake_targets", "allowedWakeTargets"]
+  ];
+  for (const [snake, camel] of listFields) {
+    if (!hasObservationField(agent, snake, camel)) continue;
+    out[snake] = optionalStringList(agent?.[snake] ?? agent?.[camel]);
+  }
+  return out;
+}
+
+function hasObservationField(agent, snake, camel) {
+  if (!agent || typeof agent !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(agent, snake) || Object.prototype.hasOwnProperty.call(agent, camel);
+}
+
+function optionalText(value) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, 160) : "";
+}
+
+function optionalStringList(value) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return Array.from(new Set(raw.map(optionalText).filter(Boolean))).slice(0, 64);
 }
 
 function agentHealth(config, agent) {

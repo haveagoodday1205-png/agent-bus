@@ -592,7 +592,8 @@ function normalizeAgent(nodeId, agent) {
     kind: agent.kind || "agent",
     role: agent.role || "worker",
     enabled: agent.enabled !== false,
-    capabilities: agent.capabilities || []
+    capabilities: agent.capabilities || [],
+    ...agentObservationFields(agent)
   };
   const heartbeatIntervalMs = Number(agent.run_heartbeat_interval_ms || agent.runHeartbeatIntervalMs || 0);
   if (Number.isFinite(heartbeatIntervalMs) && heartbeatIntervalMs > 0) item.run_heartbeat_interval_ms = Math.round(heartbeatIntervalMs);
@@ -617,11 +618,53 @@ function publicNodeAgent(agent) {
     kind: agent.kind,
     role: agent.role,
     enabled: agent.enabled !== false,
-    capabilities: agent.capabilities || []
+    capabilities: agent.capabilities || [],
+    ...agentObservationFields(agent)
   };
   const heartbeatIntervalMs = Number(agent.run_heartbeat_interval_ms || 0);
   if (Number.isFinite(heartbeatIntervalMs) && heartbeatIntervalMs > 0) item.run_heartbeat_interval_ms = Math.round(heartbeatIntervalMs);
   return item;
+}
+
+function agentObservationFields(agent) {
+  const out = {};
+  for (const [snake, camel] of [
+    ["owner", "owner"],
+    ["runtime", "runtime"],
+    ["permission_profile", "permissionProfile"],
+    ["cost_class", "costClass"],
+    ["latency_class", "latencyClass"]
+  ]) {
+    const value = optionalObservationText(agent?.[snake] ?? agent?.[camel]);
+    if (value) out[snake] = value;
+  }
+  for (const [snake, camel] of [
+    ["allowed_rooms", "allowedRooms"],
+    ["allowed_wake_targets", "allowedWakeTargets"]
+  ]) {
+    if (!hasObservationField(agent, snake, camel)) continue;
+    out[snake] = optionalObservationList(agent?.[snake] ?? agent?.[camel]);
+  }
+  return out;
+}
+
+function hasObservationField(agent, snake, camel) {
+  if (!agent || typeof agent !== "object") return false;
+  return Object.prototype.hasOwnProperty.call(agent, snake) || Object.prototype.hasOwnProperty.call(agent, camel);
+}
+
+function optionalObservationText(value) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, 160) : "";
+}
+
+function optionalObservationList(value) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return [...new Set(raw.map(optionalObservationText).filter(Boolean))].slice(0, 64);
 }
 
 function publicNodes() {
@@ -686,6 +729,7 @@ function publicStatus(config) {
   const activeRooms = rooms.filter(statusIsActiveRoom);
   const runSummary = statusRoomRunSummary(activeRooms);
   const recoveryHints = statusRecoveryHints(runSummary.staleQueuedRuns);
+  const permissionObservations = permissionObservationSummary(agents);
   const busyAgentIds = new Set(runSummary.liveByAgent.keys());
   for (const room of activeRooms) {
     if (Array.isArray(room.runs)) continue;
@@ -710,6 +754,7 @@ function publicStatus(config) {
       active_runs: runSummary.liveRuns.length,
       stale_queued_runs: runSummary.staleQueuedRuns.length
     },
+    permission_observations: permissionObservations,
     nodes: nodes.map(statusNodeItem),
     agents: agents.map((agent) => statusAgentItem(agent, activeRooms, runSummary)),
     rooms: rooms.slice(0, 8).map(statusRoomItem),
@@ -819,6 +864,11 @@ function statusAgentItem(agent, activeRooms, runSummary) {
   return {
     id: agent.id,
     status: agent.status || "unknown",
+    node_id: agent.node_id || null,
+    kind: agent.kind || null,
+    role: agent.role || null,
+    capabilities: agent.capabilities || [],
+    ...agentObservationFields(agent),
     ping_status: agent.ping_status || agent.health?.ping_status || "unknown",
     last_run_status: agent.last_run_status || agent.health?.last_run_status || null,
     last_seen_at: agent.last_seen_at || agent.node_last_seen_at || null,
@@ -937,11 +987,40 @@ function statusNextActions(result) {
   if (Number(s.online_agents || 0) > 0 && Number(s.active_rooms || 0) === 0 && Number(s.queued || 0) === 0) {
     actions.push("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.");
   }
+  const missingProfiles = Array.isArray(result.permission_observations?.missing_permission_profile)
+    ? result.permission_observations.missing_permission_profile
+    : [];
+  if (missingProfiles.length) actions.push(`Add permission_profile observation fields to edge configs for ${missingProfiles.slice(0, 3).join(", ")}${missingProfiles.length > 3 ? ", ..." : ""}.`);
   return statusUnique(actions).slice(0, 6);
 }
 
 function statusUnique(values) {
   return [...new Set(values.filter((value) => value != null))];
+}
+
+function permissionObservationSummary(agents = []) {
+  const list = Array.isArray(agents) ? agents : [];
+  const missingPermissionProfile = [];
+  const unscopedWakeTargets = [];
+  let withPermissionProfile = 0;
+  let withAllowedWakeTargets = 0;
+  for (const agent of list) {
+    const id = String(agent?.id || "").trim();
+    if (!id) continue;
+    const profile = optionalObservationText(agent?.permission_profile ?? agent?.permissionProfile);
+    const hasWakeTargets = hasObservationField(agent, "allowed_wake_targets", "allowedWakeTargets");
+    if (profile) withPermissionProfile += 1;
+    else missingPermissionProfile.push(id);
+    if (hasWakeTargets) withAllowedWakeTargets += 1;
+    else unscopedWakeTargets.push(id);
+  }
+  return {
+    total_agents: list.filter((agent) => String(agent?.id || "").trim()).length,
+    with_permission_profile: withPermissionProfile,
+    missing_permission_profile: missingPermissionProfile,
+    with_allowed_wake_targets: withAllowedWakeTargets,
+    unscoped_wake_targets: unscopedWakeTargets
+  };
 }
 
 function agentBusManifest(config) {
@@ -2720,6 +2799,7 @@ function telegramHandleCommand(config, plugin, control, text, chatId = "") {
   if (isCommand && command === "agents") return { command, reply: telegramAgentsText() };
   if (isCommand && command === "rooms") return telegramRoomsCommand(config, chatId, rest);
   if (isCommand && command === "room") return telegramRoomCommand(config, chatId, rest);
+  if (isCommand && command === "goal") return telegramGoalCommand(config, chatId, rest);
   if (!isCommand) {
     if (telegramRoomDraftActive(config, chatId)) {
       return telegramRoomStartCommand(config, chatId, text);
@@ -3023,6 +3103,7 @@ function telegramHelpText(prefix = "") {
     "/rooms - list Agent Bus rooms",
     "/room <room-id> - inspect, wake, or pause a room",
     "/room new - draft a room, multi-select agents, and set max steps",
+    "/goal <goal> - create a room from the current room draft",
     "@agent-id message - add or target an agent for this message",
     "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled"
   ].filter(Boolean).join("\n");
@@ -3134,6 +3215,14 @@ function telegramRoomNewCommand(config, chatId, goal = "") {
   writeTelegramRoomDraft(config, chatId, draft);
   if (String(goal || "").trim()) return telegramRoomStartCommand(config, chatId, goal);
   return { command: "room_draft", reply: telegramRoomDraftText(draft) };
+}
+
+function telegramGoalCommand(config, chatId, goal = "") {
+  if (!String(goal || "").trim()) {
+    const draft = writeTelegramRoomDraft(config, chatId, telegramRoomDraft(config, chatId));
+    return { command: "room_draft", reply: telegramRoomDraftText(draft) };
+  }
+  return telegramRoomStartCommand(config, chatId, goal);
 }
 
 function telegramRoomAgentCommand(config, chatId, parts = []) {

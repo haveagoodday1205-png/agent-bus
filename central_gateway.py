@@ -813,6 +813,7 @@ def normalize_agents(node_id, agents):
             "role": agent.get("role", "worker"),
             "enabled": agent.get("enabled", True) is not False,
             "capabilities": agent.get("capabilities") or [],
+            **agent_observation_fields(agent),
         }
         try:
             heartbeat_interval_ms = int(agent.get("run_heartbeat_interval_ms") or agent.get("runHeartbeatIntervalMs") or 0)
@@ -857,6 +858,7 @@ def public_node_agent(agent):
         "role": agent.get("role"),
         "enabled": agent.get("enabled") is not False,
         "capabilities": agent.get("capabilities") or [],
+        **agent_observation_fields(agent),
     }
     try:
         heartbeat_interval_ms = int(agent.get("run_heartbeat_interval_ms") or 0)
@@ -865,6 +867,54 @@ def public_node_agent(agent):
     if heartbeat_interval_ms > 0:
         item["run_heartbeat_interval_ms"] = heartbeat_interval_ms
     return item
+
+
+def agent_observation_fields(agent):
+    out = {}
+    for snake, camel in [
+        ("owner", "owner"),
+        ("runtime", "runtime"),
+        ("permission_profile", "permissionProfile"),
+        ("cost_class", "costClass"),
+        ("latency_class", "latencyClass"),
+    ]:
+        value = optional_observation_text(agent.get(snake) if agent.get(snake) is not None else agent.get(camel))
+        if value:
+            out[snake] = value
+    for snake, camel in [
+        ("allowed_rooms", "allowedRooms"),
+        ("allowed_wake_targets", "allowedWakeTargets"),
+    ]:
+        if not has_observation_field(agent, snake, camel):
+            continue
+        out[snake] = optional_observation_list(agent.get(snake) if agent.get(snake) is not None else agent.get(camel))
+    return out
+
+
+def has_observation_field(agent, snake, camel):
+    return isinstance(agent, dict) and (snake in agent or camel in agent)
+
+
+def optional_observation_text(value):
+    text = str(value or "").strip()
+    return text[:160] if text else ""
+
+
+def optional_observation_list(value):
+    if isinstance(value, list):
+        raw = value
+    elif isinstance(value, str):
+        raw = value.split(",")
+    else:
+        raw = []
+    out = []
+    for item in raw:
+        text = optional_observation_text(item)
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= 64:
+            break
+    return out
 
 
 def node_is_online(node):
@@ -1017,6 +1067,7 @@ def public_status(config):
     active_rooms = [room for room in rooms if status_is_active_room(room)]
     run_summary = status_room_run_summary(active_rooms)
     recovery_hints = status_recovery_hints(run_summary["stale_queued_runs"])
+    permission_observations = permission_observation_summary(agents)
     busy_agent_ids = set(run_summary["live_by_agent"].keys())
     for room in active_rooms:
         if isinstance(room.get("runs"), list):
@@ -1042,6 +1093,7 @@ def public_status(config):
             "stale_queued_runs": len(run_summary["stale_queued_runs"]),
             "duplicate_agent_ids": len(conflicts),
         },
+        "permission_observations": permission_observations,
         "nodes": [status_node_item(node) for node in nodes],
         "agents": [status_agent_item(agent, active_rooms, run_summary) for agent in agents],
         "agent_id_conflicts": conflicts,
@@ -1192,6 +1244,11 @@ def status_agent_item(agent, active_rooms, run_summary):
     return {
         "id": agent_id,
         "status": agent.get("status") or "unknown",
+        "node_id": agent.get("node_id"),
+        "kind": agent.get("kind"),
+        "role": agent.get("role"),
+        "capabilities": agent.get("capabilities") or [],
+        **agent_observation_fields(agent),
         "ping_status": agent.get("ping_status") or health.get("ping_status") or "unknown",
         "last_run_status": agent.get("last_run_status") or health.get("last_run_status"),
         "last_seen_at": agent.get("last_seen_at") or agent.get("node_last_seen_at"),
@@ -1334,7 +1391,42 @@ def status_next_actions(result):
         actions.append(f"Inspect stale room work: {result['recovery_hints'][0]['inspect_command']}")
     if int(summary.get("online_agents") or 0) > 0 and int(summary.get("active_rooms") or 0) == 0 and int(summary.get("queued") or 0) == 0:
         actions.append("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.")
+    missing_profiles = (result.get("permission_observations") or {}).get("missing_permission_profile") or []
+    if missing_profiles:
+        preview = ", ".join(missing_profiles[:3])
+        suffix = ", ..." if len(missing_profiles) > 3 else ""
+        actions.append(f"Add permission_profile observation fields to edge configs for {preview}{suffix}.")
     return status_unique(actions)[:6]
+
+
+def permission_observation_summary(agents):
+    missing_permission_profile = []
+    unscoped_wake_targets = []
+    with_permission_profile = 0
+    with_allowed_wake_targets = 0
+    total = 0
+    for agent in agents or []:
+        agent_id = str((agent or {}).get("id") or "").strip()
+        if not agent_id:
+            continue
+        total += 1
+        profile = optional_observation_text(agent.get("permission_profile") if agent.get("permission_profile") is not None else agent.get("permissionProfile"))
+        has_wake_targets = has_observation_field(agent, "allowed_wake_targets", "allowedWakeTargets")
+        if profile:
+            with_permission_profile += 1
+        else:
+            missing_permission_profile.append(agent_id)
+        if has_wake_targets:
+            with_allowed_wake_targets += 1
+        else:
+            unscoped_wake_targets.append(agent_id)
+    return {
+        "total_agents": total,
+        "with_permission_profile": with_permission_profile,
+        "missing_permission_profile": missing_permission_profile,
+        "with_allowed_wake_targets": with_allowed_wake_targets,
+        "unscoped_wake_targets": unscoped_wake_targets,
+    }
 
 
 def status_unique(values):
@@ -6095,6 +6187,8 @@ def telegram_handle_command(config, plugin, control, text, chat_id=None):
         return telegram_rooms_command(config, chat_id, rest)
     if is_command and command == "room":
         return telegram_room_command(config, chat_id, rest)
+    if is_command and command == "goal":
+        return telegram_goal_command(config, chat_id, rest)
     if not is_command:
         if telegram_room_draft_active(config, chat_id):
             return telegram_room_start_command(config, chat_id, text)
@@ -6403,6 +6497,7 @@ def telegram_help_text(prefix=""):
         "/rooms - list Agent Bus rooms",
         "/room <room-id> - inspect, wake, or pause a room",
         "/room new - draft a room, multi-select agents, and set max steps",
+        "/goal <goal> - create a room from the current room draft",
         "@agent-id message - add or target an agent for this message",
         "Plain text - chat with the configured Agent Bus agent when conversation mode is enabled",
     ])
@@ -6541,6 +6636,16 @@ def telegram_room_new_command(config, chat_id, goal=""):
         "command": "room_draft",
         "reply": telegram_room_draft_text(draft),
     }
+
+
+def telegram_goal_command(config, chat_id, goal=""):
+    if not str(goal or "").strip():
+        draft = write_telegram_room_draft(config, chat_id, telegram_room_draft(config, chat_id))
+        return {
+            "command": "room_draft",
+            "reply": telegram_room_draft_text(draft),
+        }
+    return telegram_room_start_command(config, chat_id, goal)
 
 
 def telegram_room_agent_command(config, chat_id, parts):

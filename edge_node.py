@@ -80,9 +80,58 @@ def public_agents(config):
         "enabled": agent.get("enabled", True) is not False,
         "adapter": agent.get("adapter", "command"),
         "capabilities": agent.get("capabilities") or [],
+        **agent_observation_fields(agent),
         **({"run_heartbeat_interval_ms": heartbeat_interval_ms} if heartbeat_interval_ms > 0 else {}),
         "health": agent_health(config, agent),
     } for agent in config["agents"] if agent.get("enabled", True) is not False]
+
+
+def agent_observation_fields(agent):
+    out = {}
+    for snake, camel in [
+        ("owner", "owner"),
+        ("runtime", "runtime"),
+        ("permission_profile", "permissionProfile"),
+        ("cost_class", "costClass"),
+        ("latency_class", "latencyClass"),
+    ]:
+        value = optional_text(agent.get(snake) if agent.get(snake) is not None else agent.get(camel))
+        if value:
+            out[snake] = value
+    for snake, camel in [
+        ("allowed_rooms", "allowedRooms"),
+        ("allowed_wake_targets", "allowedWakeTargets"),
+    ]:
+        if not has_observation_field(agent, snake, camel):
+            continue
+        out[snake] = optional_string_list(agent.get(snake) if agent.get(snake) is not None else agent.get(camel))
+    return out
+
+
+def has_observation_field(agent, snake, camel):
+    return isinstance(agent, dict) and (snake in agent or camel in agent)
+
+
+def optional_text(value):
+    text = str(value or "").strip()
+    return text[:160] if text else ""
+
+
+def optional_string_list(value):
+    if isinstance(value, list):
+        raw = value
+    elif isinstance(value, str):
+        raw = value.split(",")
+    else:
+        raw = []
+    out = []
+    for item in raw:
+        text = optional_text(item)
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= 64:
+            break
+    return out
 
 
 def agent_health(config, agent):

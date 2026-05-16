@@ -41,6 +41,8 @@ const messages = {
     broadcast: "broadcast",
     busy: "busy",
     capabilities: "Capabilities",
+    permissionProfile: "Permission",
+    wakeTargets: "Wake Targets",
     cacheScope: "Cache Scope",
     cacheScopePlaceholder: "Optional stable key for agent:<id> calls",
     chatPlaceholder: "Send a message through /v1/chat/completions",
@@ -202,6 +204,7 @@ const messages = {
     unknown: "unknown",
     unreachable: "unreachable",
     not_configured: "not configured",
+    none: "none",
     waiting: "waiting..."
     ,
     nextActions: "Next Actions",
@@ -228,6 +231,8 @@ const messages = {
     broadcast: "广播给全部",
     busy: "忙碌",
     capabilities: "能力",
+    permissionProfile: "权限",
+    wakeTargets: "唤醒目标",
     cacheScope: "缓存作用域",
     cacheScopePlaceholder: "agent:<id> 调用的可选稳定键",
     chatPlaceholder: "通过 /v1/chat/completions 发送消息",
@@ -389,6 +394,7 @@ const messages = {
     unknown: "未知",
     unreachable: "不可达",
     not_configured: "未配置",
+    none: "无",
     waiting: "等待中...",
     nextActions: "下一步",
     noNextActions: "暂无待处理动作。",
@@ -660,6 +666,7 @@ function renderAgents() {
       <td><span class="status ${escapeHtml(activity)}">${escapeHtml(statusText(activity))}</span></td>
       <td>${escapeHtml(agent.kind || "-")}</td>
       <td>${escapeHtml(agent.role || "-")}</td>
+      <td>${permissionProfileHtml(agent)}</td>
       <td>${(agent.capabilities || []).map((cap) => `<span class="pill">${escapeHtml(cap)}</span>`).join("")}</td>
       <td>${escapeHtml(agent.node_last_seen_at || "-")}</td>
     `;
@@ -671,10 +678,36 @@ function renderAgents() {
   }
 }
 
-function rowMessage(message) {
+function permissionProfileHtml(agent) {
+  const profile = agent.permission_profile || agent.permissionProfile || "";
+  const wakeTargets = Array.isArray(agent.allowed_wake_targets)
+    ? agent.allowed_wake_targets
+    : Array.isArray(agent.allowedWakeTargets)
+      ? agent.allowedWakeTargets
+      : [];
+  const rooms = Array.isArray(agent.allowed_rooms)
+    ? agent.allowed_rooms
+    : Array.isArray(agent.allowedRooms)
+      ? agent.allowedRooms
+      : [];
+  const hasWakeTargets = hasOwn(agent, "allowed_wake_targets") || hasOwn(agent, "allowedWakeTargets");
+  const hasRooms = hasOwn(agent, "allowed_rooms") || hasOwn(agent, "allowedRooms");
+  const lines = [
+    `<span class="status ${profile ? "online" : "paused"}">${escapeHtml(profile || "unprofiled")}</span>`
+  ];
+  if (hasWakeTargets) lines.push(`<div class="muted">${escapeHtml(t("wakeTargets"))}: ${escapeHtml(wakeTargets.length ? wakeTargets.join(", ") : t("none"))}</div>`);
+  if (hasRooms) lines.push(`<div class="muted">${escapeHtml(t("rooms"))}: ${escapeHtml(rooms.length ? rooms.join(", ") : t("none"))}</div>`);
+  return lines.join("");
+}
+
+function hasOwn(value, key) {
+  return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function rowMessage(message, colSpan = 10) {
   const tr = document.createElement("tr");
   const td = document.createElement("td");
-  td.colSpan = 9;
+  td.colSpan = colSpan;
   td.className = "muted";
   td.textContent = message;
   tr.append(td);
@@ -685,9 +718,7 @@ function renderNodes() {
   const tbody = $("nodesTable");
   tbody.textContent = "";
   if (!state.nodes.length) {
-    const tr = rowMessage(t("noNodes"));
-    tr.firstElementChild.colSpan = 4;
-    tbody.append(tr);
+    tbody.append(rowMessage(t("noNodes"), 4));
     return;
   }
   for (const node of state.nodes) {
@@ -795,6 +826,7 @@ function quickstartChecks() {
   const onlineAgents = state.agents.filter((agent) => String(agent.status || agent.node_status || "").toLowerCase() === "online");
   const activeRooms = state.rooms.filter((room) => ["active", "running", "finishing"].includes(String(room.status || "").toLowerCase()));
   const telegram = state.manifest?.plugins?.telegramBot;
+  const permission = state.status?.permission_observations || permissionObservationsFromAgents();
   return [
     {
       label: t("gateway"),
@@ -832,12 +864,26 @@ function quickstartChecks() {
       detail: `${state.models.length} ${t("models")}`
     },
     {
+      label: t("permissionProfile"),
+      ok: Number(permission.total_agents || 0) > 0 && Number(permission.with_permission_profile || 0) === Number(permission.total_agents || 0),
+      warn: Number(permission.total_agents || 0) > 0,
+      detail: `${permission.with_permission_profile || 0}/${permission.total_agents || 0} permission_profile`
+    },
+    {
       label: t("telegramBot"),
       ok: Boolean(telegram?.enabled && (telegram.configured || telegram.dry_run)),
       warn: Boolean(telegram?.enabled),
       detail: telegram ? (telegram.enabled ? `${telegram.configured ? t("configured") : t("not_configured")}${telegram.dry_run ? ` / ${t("dry_run")}` : ""}` : t("disabled")) : t("unknown")
     }
   ];
+}
+
+function permissionObservationsFromAgents() {
+  const agents = state.agents || [];
+  return {
+    total_agents: agents.length,
+    with_permission_profile: agents.filter((agent) => agent.permission_profile || agent.permissionProfile).length
+  };
 }
 
 function quickstartCommandText() {

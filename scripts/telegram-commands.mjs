@@ -11,6 +11,7 @@ const DEFAULT_COMMANDS = [
   ["agent", "Set, toggle, or clear process agents"],
   ["rooms", "List Agent Bus rooms"],
   ["room", "Inspect or create rooms, set agents and steps"],
+  ["goal", "Create a room from the current room draft"],
   ["run", "Queue one task for a specific agent"]
 ].map(([command, description]) => ({ command, description }));
 

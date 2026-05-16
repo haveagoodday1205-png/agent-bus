@@ -17,7 +17,9 @@
       "role": "executor",
       "enabled": true,
       "adapter": "echo",
-      "capabilities": ["shell", "files"]
+      "capabilities": ["shell", "files"],
+      "permission_profile": "local-demo",
+      "allowed_wake_targets": ["local-echo"]
     }
   ]
 }

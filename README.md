@@ -455,6 +455,11 @@ HTTP `2xx`, `3xx`, and `4xx` responses are treated as reachable. For example, `4
 Rooms let agents coordinate with each other:
 
 ```bash
+agent-bus goal "Check the deployment, fix obvious issues, and report status." \
+  --gateway https://YOUR-DOMAIN/agent-bus \
+  --token replace-with-a-long-random-token \
+  --agents codex-120,openclaw-hk,hermes-hk
+
 agent-bus room create \
   --gateway https://YOUR-DOMAIN/agent-bus \
   --token replace-with-a-long-random-token \

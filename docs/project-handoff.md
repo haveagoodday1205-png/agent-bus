@@ -1,6 +1,6 @@
 # Agent Bus Project Handoff
 
-更新时间：2026-05-16
+更新时间：2026-05-17
 
 这份文档给后续维护者、远程 agent、开源贡献者接手用。它只记录公开仓库可以安全共享的信息；服务器 IP、SSH key、Telegram token、npm token、模型 API key、真实 Central admin token 等敏感信息必须放在私有运维笔记或 secret store，不能提交到仓库。
 
@@ -30,10 +30,19 @@ Agent Bus connects agents to agents.
 - 支持 conformance/certification：可生成 JSON、Markdown、Shields badge，并验证 artifact set。
 - 支持 SDK：`sdk/js/` 和 `sdk/python/` 覆盖 discovery、rooms、agent-backed model calls、room replay。
 - 支持 no-quota demos/smokes：大量测试不需要真实模型 key 或私有服务器。
+- README、`agent-bus --help`、`docs/try-agent-bus.md` 已把 `agent-bus demo zero-token` 作为公开首跑路径。
+- `agent-bus demo zero-token` 会写出 share-safe Markdown report，方便新用户附到 GitHub feedback issue。
+- GitHub issue templates 已覆盖 zero-token demo feedback、adapter compatibility、first remote node feedback。
 
 最近主线关键提交：
 
 ```text
+f8105de Write shareable zero-token demo reports
+53a70cf Surface first-run demo in help
+3617819 Improve public trial feedback path
+10179be Use goal shortcut in console quickstart (superseded by 3617819)
+c25ef2e Add CLI goal room shortcut (superseded by 3617819)
+c4710e3 Expose permission observations and Telegram goal shortcut (permission observations retained; goal shortcut superseded)
 aec60bb Reference private deployment handoff
 d2505ac Add project handoff document
 8184870 Add conformance artifact validation
@@ -45,6 +54,12 @@ bcacb44 Add room event log timeline
 bd50997 Add zero-token local demo
 43e6dc4 Persist Python edge completions
 ```
+
+当前公开 UX 决策：
+
+- 顶层 `agent-bus goal` 和 Telegram `/goal` shortcut 已从公开入口撤回，避免在 room 操作和旗舰 demo 成熟前过早承诺“自动目标执行”体验。
+- 当前公开主入口应继续使用 `agent-bus demo zero-token`、`agent-bus room create --goal ...`、`agent-bus demo issue`、conformance runner、adapter compatibility report。
+- 对外叙事优先强调 Agent Bus 的核心：自托管 Central/Edge、agent discovery、agent-to-agent rooms、model router、可审计 report/export/replay。
 
 ## 当前公开运行快照
 
@@ -397,20 +412,21 @@ Release / CI：
 
 建议按这个顺序推进，避免功能越来越多但入口不够清晰：
 
-1. First-run polish：让 `agent-bus demo`、`setup central`、`setup edge`、`status` 的成功路径更短、更像一个产品。
+1. Setup/status polish：继续打磨 `setup central`、`setup edge`、`status` 的成功提示、失败解释、doctor 指引和可复制命令。
 2. Web console 优化：把当前 Central 状态、agent health、room timeline、trace、recovery hints 做成更可读的操作台。
-3. Permission profiles：落地 `permission_profile`、`allowed_wake_targets`、room-level policy，先做观察和警告，再做硬拦截。
-4. Flagship demo：把 `agent-bus demo issue` 推到“三个不同 agent 通过 room 完成一个 PR draft/patch/review”的公开演示。
-5. Adapter ecosystem：鼓励第三方 adapter 项目复制 `docs/adapter-conformance-ci.md`，发布 Agent Bus compatible badge。
-6. Durable event storage：从 snapshot-derived event bundle 继续推进到真正 append-only event source，并为未来数据库迁移留接口。
-7. Installer/packaging：继续优化 portable bundle、Windows/macOS/Linux service templates，降低非开发者部署门槛。
+3. Telegram room/process UX：继续改善 `/room new`、agent 多选、process/thread 切换、room wake/pause/retry 的按钮体验。
+4. Permission profiles：继续推进 `permission_profile`、`allowed_wake_targets`、`allowed_rooms`、owner/runtime/cost/latency 等观察字段，先做提示和警告，再做硬拦截。
+5. Flagship demo：把 `agent-bus demo issue` 推到“三个不同 agent 通过 room 完成一个 PR draft/patch/review”的公开演示，但不要急着承诺真实 GitHub PR 创建。
+6. Adapter ecosystem：鼓励第三方 adapter 项目复制 `docs/adapter-conformance-ci.md`，发布 Agent Bus compatible badge，并把 compatibility issue 模板用起来。
+7. Durable event storage：从 snapshot-derived event bundle 继续推进到真正 append-only event source，并为未来数据库迁移留接口。
+8. Installer/packaging：继续优化 portable bundle、Windows/macOS/Linux service templates，降低非开发者部署门槛。
 
 ## 开源协作建议
 
 让别人看到并参与项目，优先做这些：
 
 - README 第一屏继续强调“Agent Bus connects agents to agents”。
-- 保持 no-quota demos 绿，这会降低贡献门槛。
+- 保持 no-quota demos 绿，并继续让 zero-token report 更适合作为公开反馈附件。
 - 把 `docs/good-first-issues.md` 中的任务拆成 GitHub Issues。
 - 在 release notes 里突出 conformance badge、Telegram operator bot、edge-to-edge model replacement。
 - 给 adapter 作者一个明确入口：`examples/hello-agent/` + `docs/adapter-conformance-ci.md`。

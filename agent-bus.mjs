@@ -209,7 +209,7 @@ Usage:
   agent-bus diagnostics bundle --config edge.config.json --out diagnostics.json
   agent-bus smoke --offline
   agent-bus protocol check
-  agent-bus protocol conformance [--json]
+  agent-bus protocol conformance [--json] [--artifact-dir DIR]
   agent-bus demo
   agent-bus demo zero-token
   agent-bus demo room

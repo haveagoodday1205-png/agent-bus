@@ -30,7 +30,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - Golden-path demo: `npm run demo:no-quota-room-replay -- --json` starts local central/edge services, runs deterministic room agents, exports events, replays them, and inspects the room without model calls.
 - Replay fixture gate: `npm run fixture:room-replay` verifies a stable public room event bundle through the CLI, JS SDK, and Python SDK without starting a gateway or spending model quota.
 - Compatibility verification: `npm run compat:check` starts a temporary gateway plus `examples/hello-agent` and validates registration, `agent:<id>` chat/responses calls, and room directives without spending model quota.
-- Protocol conformance: `agent-bus protocol conformance --json` runs the no-quota v1 contract gate for discovery, scoped edge auth, agent-backed model calls, room directives, event-log, event export, and replay. Adapter authors can test their own command with `agent-bus protocol conformance --profile adapter-command --agent-command "./my-agent" --agent-id my-agent --json`.
+- Protocol conformance: `agent-bus protocol conformance --json` runs the no-quota v1 contract gate for discovery, scoped edge auth, agent-backed model calls, room directives, event-log, event export, and replay. Add `--artifact-dir conformance-artifacts` or run `npm run protocol:certify` to write JSON, Markdown, and Shields badge artifacts. Adapter authors can test their own command with `agent-bus protocol conformance --profile adapter-command --agent-command "./my-agent" --agent-id my-agent --json`.
 
 Start with `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `docs/protocol-v1.md` for the emerging stable protocol contract, `docs/trust-boundaries.md` plus `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
 
@@ -146,6 +146,7 @@ Contributors can verify package and install paths before publishing or tagging:
 ```bash
 npm run release:check
 npm run protocol:conformance
+npm run protocol:certify
 npm run fixture:room-replay
 npm run compat:check
 npm run pack:check

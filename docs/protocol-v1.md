@@ -34,8 +34,15 @@ Offline verification:
 ```bash
 npm run protocol:check
 npm run protocol:conformance
+npm run protocol:certify
 npm run compat:check
 ```
+
+`npm run protocol:certify` writes a shareable artifact set into `conformance-artifacts/`:
+
+- `agent-bus-conformance.json`: raw machine-readable result
+- `agent-bus-conformance.md`: Markdown certification report
+- `agent-bus-conformance-badge.json`: Shields endpoint badge JSON
 
 Third-party command adapters can run the same gateway and edge contract around their own executable:
 
@@ -48,6 +55,8 @@ agent-bus protocol conformance \
 ```
 
 The default profile uses the repository hello-agent and makes no model calls. The `adapter-command` profile still starts temporary local central and edge services, but quota use depends on the supplied adapter command. It verifies registration, scoped discovery, `agent:<id>` Chat Completions and Responses routing, room directive capture, event-log, event export, and replay.
+
+Pass `--artifact-dir DIR`, `--result-out FILE`, `--report-out FILE`, or `--badge-out FILE` to publish conformance evidence from CI or a release job.
 
 ## Goals
 

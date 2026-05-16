@@ -92,7 +92,8 @@
     "release:preflight": "node scripts/release-preflight.mjs",
     "smoke:npm-install": "node scripts/npm-install-smoke.mjs",
     "protocol:check": "node scripts/verify-protocol-v1.mjs",
-    "protocol:conformance": "node scripts/protocol-conformance.mjs"
+    "protocol:conformance": "node scripts/protocol-conformance.mjs",
+    "protocol:certify": "node scripts/protocol-conformance.mjs --artifact-dir conformance-artifacts"
   },
   "engines": {
     "node": ">=20"

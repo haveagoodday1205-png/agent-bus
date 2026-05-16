@@ -13,14 +13,20 @@ const procs = [];
 const childLogs = new WeakMap();
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-protocol-conformance-"));
 const checks = [];
+const artifactPaths = conformanceArtifactPaths(args);
 
 main().catch((err) => {
   const result = {
     ok: false,
     mode: "protocol_conformance",
+    protocol: "agent-bus.v1",
+    profile: conformanceProfileFromArgs(args),
+    quota: "unknown",
+    generated_at: new Date().toISOString(),
     error: err.message || String(err),
     checks
   };
+  writeConformanceArtifactsSafely(result);
   if (jsonOut) {
     console.log(JSON.stringify(result, null, 2));
   } else {
@@ -258,6 +264,7 @@ async function main() {
     protocol: "agent-bus.v1",
     profile,
     quota: referenceAgent ? "no_model_calls" : "depends_on_agent_command",
+    generated_at: new Date().toISOString(),
     gateway,
     node_id: nodeId,
     agent_id: agentId,
@@ -274,6 +281,7 @@ async function main() {
       replay_completed_runs: replay.counts.completed_runs
     }
   };
+  writeConformanceArtifactsSafely(result);
 
   if (jsonOut) {
     console.log(JSON.stringify(result, null, 2));
@@ -301,6 +309,92 @@ function pass(id, detail, data = {}) {
 
 function step(message) {
   if (!jsonOut) console.log(message);
+}
+
+function writeConformanceArtifactsSafely(result) {
+  if (!artifactPaths) return;
+  const artifacts = artifactSummary(artifactPaths);
+  result.artifacts = artifacts;
+  try {
+    writeConformanceArtifacts(result, artifactPaths);
+  } catch (err) {
+    result.artifact_error = err.message || String(err);
+  }
+}
+
+function conformanceArtifactPaths(argv) {
+  const artifactDir = optionValue(argv, "--artifact-dir") || optionValue(argv, "--artifacts") || "";
+  const resultOut = optionValue(argv, "--result-out") || optionValue(argv, "--json-out") || "";
+  const reportOut = optionValue(argv, "--report-out") || optionValue(argv, "--markdown-out") || "";
+  const badgeOut = optionValue(argv, "--badge-out") || "";
+  if (!artifactDir && !resultOut && !reportOut && !badgeOut) return null;
+  const dir = artifactDir ? path.resolve(artifactDir) : "";
+  const paths = {};
+  if (artifactDir || resultOut) paths.result = path.resolve(resultOut || path.join(dir, "agent-bus-conformance.json"));
+  if (artifactDir || reportOut) paths.report = path.resolve(reportOut || path.join(dir, "agent-bus-conformance.md"));
+  if (artifactDir || badgeOut) paths.badge = path.resolve(badgeOut || path.join(dir, "agent-bus-conformance-badge.json"));
+  return paths;
+}
+
+function artifactSummary(paths) {
+  return Object.fromEntries(Object.entries(paths).map(([name, file]) => [name, path.resolve(file)]));
+}
+
+function writeConformanceArtifacts(result, paths) {
+  for (const file of Object.values(paths)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  }
+  if (paths.result) fs.writeFileSync(paths.result, `${JSON.stringify(result, null, 2)}\n`);
+  if (paths.report) fs.writeFileSync(paths.report, formatConformanceReport(result));
+  if (paths.badge) fs.writeFileSync(paths.badge, `${JSON.stringify(conformanceBadge(result), null, 2)}\n`);
+}
+
+function formatConformanceReport(result) {
+  const status = result.ok ? "PASS" : "FAIL";
+  const lines = [
+    "# Agent Bus Conformance Report",
+    "",
+    `- Status: ${status}`,
+    `- Protocol: ${result.protocol || "agent-bus.v1"}`,
+    `- Profile: ${result.profile || "unknown"}`,
+    `- Agent: ${result.agent_id || "-"}`,
+    `- Node: ${result.node_id || "-"}`,
+    `- Room: ${result.room_id || "-"}`,
+    `- Quota: ${result.quota || "unknown"}`,
+    `- Generated: ${result.generated_at || new Date().toISOString()}`,
+    "",
+    "## Checks",
+    "",
+    "| Check | Result | Detail |",
+    "| --- | --- | --- |"
+  ];
+  for (const check of result.checks || []) {
+    lines.push(`| ${markdownCell(check.id || "-")} | ${check.ok ? "PASS" : "FAIL"} | ${markdownCell(check.detail || "")} |`);
+  }
+  if (result.error) {
+    lines.push("", "## Error", "", `\`\`\`text\n${String(result.error).trim()}\n\`\`\``);
+  }
+  lines.push(
+    "",
+    "## Badge",
+    "",
+    "The generated `agent-bus-conformance-badge.json` file uses the Shields endpoint schema and can be published by a repo, static host, or release artifact."
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function conformanceBadge(result) {
+  const profile = String(result.profile || "unknown").replace(/^local-reference-agent$/, "reference");
+  return {
+    schemaVersion: 1,
+    label: "agent bus",
+    message: result.ok ? `${result.protocol || "v1"} ${profile} passing` : "conformance failing",
+    color: result.ok ? "brightgreen" : "red"
+  };
+}
+
+function markdownCell(value) {
+  return String(value || "").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
 }
 
 function start(command, commandArgs, env = {}) {
@@ -517,6 +611,16 @@ function normalizeProfile(value, externalCommand) {
     return "adapter-command";
   }
   throw new Error(`Unknown protocol conformance profile: ${value}`);
+}
+
+function conformanceProfileFromArgs(argv) {
+  const externalCommand = optionValue(argv, "--agent-command") || optionValue(argv, "--command") || "";
+  const profile = optionValue(argv, "--profile") || optionValue(argv, "--mode") || "";
+  try {
+    return normalizeProfile(profile, externalCommand);
+  } catch {
+    return profile || (externalCommand ? "adapter-command" : "local-reference-agent");
+  }
 }
 
 function delay(ms) {

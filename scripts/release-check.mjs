@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -88,7 +89,12 @@ try {
   const python = process.env.AGENT_BUS_PYTHON || process.env.PYTHON || resolveCommand("python3") || resolveCommand("python") || (process.platform === "win32" ? "python" : "python3");
   step("python py_compile", python, ["-m", "py_compile", "central_gateway.py", "edge_node.py", "sdk/python/agent_bus_sdk.py", "sdk/python/__init__.py", "examples/room-agent-python/room_agent.py", "examples/python-agent-model/agent_model_example.py"]);
   step("protocol v1 verification", process.execPath, ["scripts/verify-protocol-v1.mjs"]);
-  step("protocol conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json"]);
+  const conformanceArtifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-conformance-artifacts-"));
+  step("protocol conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json", "--artifact-dir", conformanceArtifactDir]);
+  requireFile(path.join(conformanceArtifactDir, "agent-bus-conformance.json"));
+  requireFile(path.join(conformanceArtifactDir, "agent-bus-conformance.md"));
+  requireFile(path.join(conformanceArtifactDir, "agent-bus-conformance-badge.json"));
+  fs.rmSync(conformanceArtifactDir, { recursive: true, force: true });
   const helloAgentCommand = `${quoteCommandArg(process.execPath)} ${quoteCommandArg(path.join(root, "examples", "hello-agent", "hello-agent.mjs"))}`;
   step("protocol adapter-command conformance", process.execPath, ["scripts/protocol-conformance.mjs", "--json", "--profile", "adapter-command", "--agent-command", helloAgentCommand, "--agent-id", "adapter-conformance"]);
   step("zero-token local demo", process.execPath, ["scripts/demo-zero-token.mjs", "--json"]);
@@ -190,6 +196,10 @@ function resolveCommand(command) {
     }
   }
   return "";
+}
+
+function requireFile(file) {
+  if (!fs.existsSync(file)) throw new Error(`Expected release artifact was not created: ${file}`);
 }
 
 function releaseStepEnv(overrides = {}) {

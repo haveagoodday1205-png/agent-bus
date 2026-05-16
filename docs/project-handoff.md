@@ -266,6 +266,7 @@ Release / CI：
 
 这些内容不要写进公开仓库，但私有交接必须保存：
 
+- 本机已另建 `LOCAL_DEPLOYMENT.md` 记录当前测试连接机器、SSH 命令、Central 路径、在线节点和接手命令；该文件在 `.gitignore` 中，不能强制提交。
 - Central 公网域名、反代路径、systemd service 名称、env 文件位置。
 - Edge 节点清单、各自 agent id、runtime、工作目录、service 名称。
 - SSH 连接方法和 key 管理方式。

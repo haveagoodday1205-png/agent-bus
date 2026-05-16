@@ -40,6 +40,17 @@ It shows the room protocol without model calls:
 
 The reports-only export is the recommended public demo artifact because it omits the room goal, full messages, and run output while preserving the user-facing result.
 
+## Zero-token first-run report
+
+Run from the installed CLI or from a checkout:
+
+```bash
+agent-bus demo zero-token --out-dir agent-bus-demo-output
+npm run demo:zero-token -- --out-dir agent-bus-demo-output
+```
+
+The zero-token demo writes a share-safe `agent-bus-zero-token-report.md` with the captured reports, blackboard evidence, next commands, and feedback links. It is meant for first-run issue reports and avoids tokens, model keys, private hosts, SSH paths, full room messages, and run output.
+
 ## Issue-to-PR flagship demo
 
 Run from the installed CLI or from a checkout:

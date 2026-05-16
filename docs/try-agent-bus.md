@@ -12,6 +12,12 @@ Run from any machine with Node.js 20+:
 npx agent-bus-cli@latest demo zero-token
 ```
 
+The demo writes `agent-bus-zero-token-report.md` in the current directory. To keep the generated report in a dedicated folder:
+
+```bash
+npx agent-bus-cli@latest demo zero-token --out-dir agent-bus-demo-output
+```
+
 Or run from a checkout:
 
 ```bash
@@ -26,6 +32,7 @@ This proves:
 - one agent can delegate to another with `@agent-id`
 - `REPORT`, `BLACKBOARD`, and `DONE` directives are captured
 - no model provider, API key, Telegram bot, or remote machine is required
+- a share-safe Markdown report is written for feedback issues
 
 If anything feels confusing, open the zero-token feedback form:
 

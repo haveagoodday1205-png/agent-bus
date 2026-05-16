@@ -17,6 +17,8 @@ The fastest way to understand Agent Bus is to run the zero-token room demo. It s
 npx agent-bus-cli@latest demo zero-token
 ```
 
+The demo writes a share-safe `agent-bus-zero-token-report.md` that you can review and attach to a feedback issue. Use `--out-dir agent-bus-demo-output` to keep the report in a dedicated folder.
+
 From a checkout, run the same path with:
 
 ```bash
@@ -118,9 +120,10 @@ Run a local demo from the installed CLI or checkout:
 
 ```bash
 # Run the zero-token playground: central + edge + two fake agents,
-# room delegation, REPORT/BLACKBOARD capture, DONE, and no model calls.
+# room delegation, REPORT/BLACKBOARD capture, DONE, and a share-safe report.
 agent-bus demo
 agent-bus demo zero-token
+agent-bus demo zero-token --out-dir agent-bus-demo-output
 npm run demo:zero-token
 
 # Run the starter kit: central + edge + two toy agents, room delegation,

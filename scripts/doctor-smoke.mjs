@@ -159,6 +159,7 @@ async function main() {
   const status = JSON.parse(statusJson.stdout);
   assert(status.readiness?.status === "ready", `status readiness mismatch: ${JSON.stringify(status.readiness)}`);
   assert(Array.isArray(status.next_actions), "status omitted next_actions");
+  assert(status.next_actions.some((item) => /agent-bus room create/.test(item) && /doctor-echo/.test(item)), `status next_actions did not include a copyable room command with the online agent id: ${JSON.stringify(status.next_actions)}`);
   assert(status.status_meta?.room_details, "status omitted room detail hydration metadata");
   assert(typeof status.status_meta.room_details.hydrated === "number", "status room detail metadata omitted hydrated count");
   const statusFromCentralConfig = await runCli(["status", "--config", centralConfig, "--json"]);
@@ -173,6 +174,7 @@ async function main() {
   assert(statusViaEdgeConfig.status_meta?.room_access === "limited", `edge config status should mark room access limited: ${JSON.stringify(statusViaEdgeConfig.status_meta)}`);
   assert(statusViaEdgeConfig.warnings?.some((item) => /admin-only/.test(item)), `edge config status did not explain room access limits: ${JSON.stringify(statusViaEdgeConfig.warnings)}`);
   assert(statusViaEdgeConfig.next_actions?.some((item) => /admin token/.test(item)), `edge config status did not suggest an admin token for room details: ${JSON.stringify(statusViaEdgeConfig.next_actions)}`);
+  assert(!statusViaEdgeConfig.next_actions?.some((item) => /agent-bus room create/.test(item)), `edge config status should not suggest room creation when room access is limited: ${JSON.stringify(statusViaEdgeConfig.next_actions)}`);
   const statusHumanFromEdgeConfig = await runCli(["status", "--config", edgeConfig]);
   assert(statusHumanFromEdgeConfig.stdout.includes("admin-only"), "status --config edge.config.json human output omitted the room-access warning");
   const agentsFromEdgeConfig = await runCli(["agents", "--config", edgeConfig]);
@@ -181,6 +183,7 @@ async function main() {
   const centralStatus = await requestJson(`${gateway}/v1/agent-bus/status`, { headers: authJsonHeaders(token) });
   assert(centralStatus.readiness?.status === "ready", `central status readiness mismatch: ${JSON.stringify(centralStatus.readiness)}`);
   assert(Array.isArray(centralStatus.next_actions), "central status omitted next_actions");
+  assert(centralStatus.next_actions.some((item) => /agent-bus room create/.test(item) && /doctor-echo/.test(item)), `central status next_actions did not include a copyable room command with the online agent id: ${JSON.stringify(centralStatus.next_actions)}`);
   const statusHuman = await runCli(["status", "--gateway", gateway, "--token", token]);
   assert(statusHuman.stdout.includes("Readiness:"), "status human output omitted readiness");
   assert(statusHuman.stdout.includes("Next actions:"), "status human output omitted next actions");

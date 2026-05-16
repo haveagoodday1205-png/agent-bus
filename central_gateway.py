@@ -1376,7 +1376,8 @@ def status_next_actions(result):
     if not (result.get("health") or {}).get("ok"):
         actions.append("Check the Central service logs and restart the central process.")
     if int(summary.get("registered_nodes") or 0) == 0:
-        actions.append("Create the first edge join command with agent-bus setup central or the Web Console Edge Join panel.")
+        actions.append("Create the first pair code: agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN --preset echo.")
+        actions.append("Join an edge with that code: agent-bus setup edge --code YOUR_PAIR_CODE --auto --service auto --out edge.config.json.")
     if int(summary.get("nodes") or 0) == 0 and int(summary.get("registered_nodes") or 0) > 0:
         actions.append("Start or restart an edge with agent-bus connect --config edge.config.json.")
     if int(summary.get("nodes") or 0) > 0 and int(summary.get("online_agents") or 0) == 0:
@@ -1390,13 +1391,30 @@ def status_next_actions(result):
     if result.get("recovery_hints"):
         actions.append(f"Inspect stale room work: {result['recovery_hints'][0]['inspect_command']}")
     if int(summary.get("online_agents") or 0) > 0 and int(summary.get("active_rooms") or 0) == 0 and int(summary.get("queued") or 0) == 0:
-        actions.append("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.")
+        actions.append(f"Try a live room: {status_room_create_example(result)}")
     missing_profiles = (result.get("permission_observations") or {}).get("missing_permission_profile") or []
     if missing_profiles:
         preview = ", ".join(missing_profiles[:3])
         suffix = ", ..." if len(missing_profiles) > 3 else ""
         actions.append(f"Add permission_profile observation fields to edge configs for {preview}{suffix}.")
     return status_unique(actions)[:6]
+
+
+def status_room_create_example(result):
+    agent_ids = status_online_agent_ids(result, 2)
+    agents = ",".join(agent_ids) if agent_ids else "agent-a,agent-b"
+    wake_agent = agent_ids[0] if agent_ids else "agent-a"
+    return f"agent-bus room create --goal \"Check Agent Bus connectivity and report status.\" --agents {agents} --wake-agents {wake_agent} --max-steps 4"
+
+
+def status_online_agent_ids(result, limit=2):
+    agents = result.get("agents") if isinstance(result, dict) else []
+    ids = [
+        str(agent.get("id") or "").strip()
+        for agent in agents or []
+        if str(agent.get("status") or "").lower() == "online" and str(agent.get("id") or "").strip()
+    ]
+    return sorted(ids)[:limit]
 
 
 def permission_observation_summary(agents):

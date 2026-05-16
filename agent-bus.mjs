@@ -5454,7 +5454,8 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
     actions.push("Pass --token or set AGENT_BUS_TOKEN to show agents, nodes, rooms, and recovery hints.");
   }
   if (!authWarning && Number(s.registered_nodes || 0) === 0) {
-    actions.push("Create the first edge join command with agent-bus setup central or the Web Console Edge Join panel.");
+    actions.push("Create the first pair code: agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN --preset echo.");
+    actions.push("Join an edge with that code: agent-bus setup edge --code YOUR_PAIR_CODE --auto --service auto --out edge.config.json.");
   }
   if (!authWarning && Number(s.nodes || 0) === 0 && Number(s.registered_nodes || 0) > 0) {
     actions.push("Start or restart an edge with agent-bus connect --config edge.config.json.");
@@ -5489,8 +5490,8 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
     const hint = result.recovery_hints[0];
     actions.push(`Inspect stale room work: ${hint.inspect_command}`);
   }
-  if (!authWarning && Number(s.online_agents || 0) > 0 && Number(s.active_rooms || 0) === 0 && Number(s.queued || 0) === 0) {
-    actions.push("Try a live room with agent-bus room create --goal \"...\" --agents agent-a,agent-b.");
+  if (!authWarning && roomAccess === "full" && Number(s.online_agents || 0) > 0 && Number(s.active_rooms || 0) === 0 && Number(s.queued || 0) === 0) {
+    actions.push(`Try a live room: ${statusRoomCreateExample(result)}`);
   }
   const permissionObservations = result.permission_observations || {};
   const missingProfiles = Array.isArray(permissionObservations.missing_permission_profile)
@@ -5500,6 +5501,21 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
     actions.push(`Add permission_profile observation fields to edge configs for ${missingProfiles.slice(0, 3).join(", ")}${missingProfiles.length > 3 ? ", ..." : ""}.`);
   }
   return unique(actions).slice(0, 6);
+}
+
+function statusRoomCreateExample(result) {
+  const agentIds = statusOnlineAgentIds(result, 2);
+  const agents = agentIds.length ? agentIds.join(",") : "agent-a,agent-b";
+  const wakeAgent = agentIds[0] || "agent-a";
+  return `agent-bus room create --goal "Check Agent Bus connectivity and report status." --agents ${agents} --wake-agents ${wakeAgent} --max-steps 4`;
+}
+
+function statusOnlineAgentIds(result, limit = 2) {
+  return (Array.isArray(result?.agents) ? result.agents : [])
+    .filter((agent) => String(agent?.status || "").toLowerCase() === "online" && String(agent?.id || "").trim())
+    .map((agent) => String(agent.id).trim())
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, limit);
 }
 
 async function hydrateStatusRooms(rooms, args) {

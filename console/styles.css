@@ -366,6 +366,83 @@ tbody tr:last-child td {
   margin: 14px 0;
 }
 
+.room-doctor-panel {
+  display: none;
+}
+
+.room-doctor-panel:not(:empty) {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--blue);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.room-doctor-panel.warn,
+.room-doctor-panel.warning {
+  border-left-color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.room-doctor-panel.error,
+.room-doctor-panel.failed {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.doctor-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.doctor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.doctor-contract {
+  overflow-wrap: anywhere;
+}
+
+.doctor-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.doctor-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(102, 112, 133, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.doctor-action div,
+.doctor-action code {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+
+.doctor-action code {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.08);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .edge-join-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260517-console5" />
+    <link rel="stylesheet" href="./styles.css?v=20260517-console6" />
   </head>
   <body>
     <header class="topbar">
@@ -214,13 +214,15 @@
             <div class="section-head">
               <h2 data-i18n="roomTimeline">Room Timeline</h2>
               <div class="button-row">
-                <button id="roomTraceButton" type="button" data-i18n="trace">Trace</button>
-                <button id="exportRoomButton" type="button" data-i18n="exportSummary">Export Summary</button>
-                <button id="wakeRoomButton" type="button" data-i18n="wakeNext">Wake Next</button>
-                <button id="pauseRoomButton" class="danger-button" type="button" data-i18n="pauseRoom">Pause</button>
+                <button id="roomDoctorButton" type="button" data-i18n="roomDoctor" disabled>Doctor</button>
+                <button id="roomTraceButton" type="button" data-i18n="trace" disabled>Trace</button>
+                <button id="exportRoomButton" type="button" data-i18n="exportSummary" disabled>Export Summary</button>
+                <button id="wakeRoomButton" type="button" data-i18n="wakeNext" disabled>Wake Next</button>
+                <button id="pauseRoomButton" class="danger-button" type="button" data-i18n="pauseRoom" disabled>Pause</button>
               </div>
             </div>
             <div id="roomSummary" class="muted" data-i18n="noRoom">No room selected.</div>
+            <div id="roomDoctor" class="room-doctor-panel"></div>
             <form id="roomMessageForm" class="message-form">
               <label>
                 <span data-i18n="roomMessage">Room Message</span>
@@ -361,6 +363,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260516-console4"></script>
+    <script type="module" src="./app.js?v=20260517-console6"></script>
   </body>
 </html>

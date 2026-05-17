@@ -325,19 +325,56 @@ tbody tr:last-child td {
 
 .rooms-grid {
   display: grid;
-  grid-template-columns: minmax(300px, 0.78fr) minmax(260px, 0.72fr) minmax(460px, 1.35fr);
+  grid-template-columns: minmax(280px, 0.72fr) minmax(520px, 1.45fr) minmax(280px, 0.72fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .tool-surface {
   padding: 16px;
 }
 
-.room-detail-surface {
-  min-height: 560px;
+.room-list-surface {
+  min-height: min(78vh, 900px);
   display: flex;
   flex-direction: column;
+}
+
+.room-detail-surface {
+  min-height: 640px;
+  height: min(78vh, 900px);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.room-detail-surface > .section-head {
+  padding: 16px 16px 10px;
+}
+
+.room-detail-surface #roomSummary {
+  padding: 0 16px 12px;
+}
+
+.room-detail-surface #roomDoctor {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+
+.room-tools-column {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.room-create-surface .form-row {
+  grid-template-columns: 1fr;
+}
+
+.room-inspector-surface {
+  max-height: min(48vh, 520px);
+  overflow: auto;
 }
 
 .form-row {
@@ -374,10 +411,6 @@ tbody tr:last-child td {
 
 .room-detail-surface #roomMessageForm {
   order: 5;
-}
-
-.room-detail-surface #roomReports {
-  order: 6;
 }
 
 .room-doctor-panel {
@@ -693,15 +726,18 @@ tbody tr:last-child td {
 .room-list {
   display: grid;
   gap: 8px;
-  max-height: 680px;
+  flex: 1 1 auto;
+  align-content: start;
+  min-height: 0;
   overflow: auto;
 }
 
 .room-list-item {
   display: grid;
-  gap: 8px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
   width: 100%;
-  min-height: 94px;
+  min-height: 86px;
   padding: 10px;
   text-align: left;
   white-space: normal;
@@ -713,6 +749,24 @@ tbody tr:last-child td {
   background: var(--accent-soft);
 }
 
+.room-list-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #1f6feb;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.room-list-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .room-list-title,
 .room-list-meta {
   display: flex;
@@ -722,13 +776,32 @@ tbody tr:last-child td {
 }
 
 .room-list-title strong,
-.room-list-meta span {
+.room-list-title time,
+.room-list-meta span,
+.room-list-preview {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.room-list-title strong,
+.room-list-preview {
+  white-space: nowrap;
+}
+
+.room-list-title time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.room-list-preview {
+  color: var(--text);
+  font-size: 13px;
+}
+
 .room-list-meta {
+  justify-content: flex-start;
   color: var(--muted);
   font-size: 12px;
 }
@@ -755,6 +828,86 @@ tbody tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+.chat-room-head {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) minmax(180px, auto);
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.chat-room-avatar {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #0f766e;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.chat-room-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chat-room-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.chat-room-title h3 {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
+.chat-room-subtitle,
+.chat-room-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-room-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.chat-room-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chat-room-stats span {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
 .conversation-list,
 .runs-list {
   display: grid;
@@ -768,12 +921,16 @@ tbody tr:last-child td {
 #roomMessages {
   align-content: start;
   flex: 1 1 auto;
-  min-height: 380px;
-  max-height: min(64vh, 760px);
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
   background:
     linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82)),
     repeating-linear-gradient(135deg, rgba(15, 118, 110, 0.08) 0 1px, transparent 1px 26px),
@@ -781,12 +938,10 @@ tbody tr:last-child td {
 }
 
 #roomMessageForm {
-  position: sticky;
-  bottom: 0;
   z-index: 2;
   margin: 0;
-  padding: 12px 0 0;
-  background: linear-gradient(rgba(255, 255, 255, 0), var(--surface) 22%);
+  padding: 12px 16px 14px;
+  background: var(--surface);
 }
 
 #roomMessageForm textarea {
@@ -815,7 +970,7 @@ tbody tr:last-child td {
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 9px;
   align-items: end;
-  max-width: min(820px, 92%);
+  max-width: min(760px, 86%);
 }
 
 .chat-message.is-user {
@@ -979,11 +1134,16 @@ tbody tr:last-child td {
   }
 
   .rooms-grid {
-    grid-template-columns: minmax(280px, 0.9fr) minmax(420px, 1.1fr);
+    grid-template-columns: minmax(280px, 0.75fr) minmax(420px, 1.25fr);
   }
 
   .room-detail-surface {
+    grid-column: auto;
+  }
+
+  .room-tools-column {
     grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1016,6 +1176,25 @@ tbody tr:last-child td {
   .message-form,
   .summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .room-detail-surface {
+    min-height: 620px;
+    height: 72vh;
+  }
+
+  .room-tools-column,
+  .chat-room-head {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-room-stats {
+    justify-content: flex-start;
+  }
+
+  .chat-message,
+  .chat-message.is-user {
+    max-width: 96%;
   }
 
   .tabs {

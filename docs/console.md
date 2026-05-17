@@ -17,7 +17,7 @@ The console can:
 - Show advertised agent permission profiles, allowed wake targets, allowed room scopes, owner/runtime/cost/latency metadata, and profile coverage as observation-only readiness hints.
 - Select agents and submit tasks.
 - Preview routing decisions.
-- Enter a room and read Central's normalized chat-history endpoint (`GET /rooms/{room_id}/chat`) as a group-chat timeline for operator and agent messages.
+- Enter a room through a group-chat layout with a room list, sticky chat composer, room header, and Central's normalized chat-history endpoint (`GET /rooms/{room_id}/chat`) for operator and agent messages.
 - Poll thread, room, run, report, blackboard, and stdout/stderr results.
 - Run room doctor from the room detail view to show stale/failed/contract counts plus copyable recommended commands.
 - Open a room trace from the room detail view, look up trace ids, and export trace JSON.

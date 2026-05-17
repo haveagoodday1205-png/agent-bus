@@ -2596,6 +2596,7 @@ function telegramRoomActionKeyboardRows(room) {
   if (!room?.id) return [];
   const rows = [[telegramCallbackButton("Rooms", "/rooms")]];
   rows.push([telegramCallbackButton("New room", "/room new")]);
+  rows.push([telegramCallbackButton("Doctor", `/room doctor ${room.id}`)]);
   if (telegramActiveRoomStatus(room)) {
     rows.push([
       telegramCallbackButton("Wake next", `/room wake ${room.id}`),
@@ -3194,7 +3195,9 @@ function telegramRoomCommand(config, chatId = "", rest = "") {
     }
     return telegramRoomStartCommand(config, chatId, goal);
   }
-  if (["wake", "resume", "pause"].includes(action)) {
+  if (["doctor", "diagnose", "health"].includes(action)) {
+    query = parts.slice(1).join(" ");
+  } else if (["wake", "resume", "pause"].includes(action)) {
     query = parts.slice(1).join(" ");
   } else if (["show", "open"].includes(action)) {
     action = "show";
@@ -3210,6 +3213,13 @@ function telegramRoomCommand(config, chatId = "", rest = "") {
     };
   }
   const room = readSnapshot(config, "rooms", match.id) || match;
+  if (["doctor", "diagnose", "health"].includes(action)) {
+    return {
+      command: "room",
+      reply: "Room doctor requires the Python central runtime. This Node central can inspect room snapshots only.\n" + telegramRoomDetailText(room),
+      room: telegramRoomSummary(room)
+    };
+  }
   if (action === "pause" || action === "wake" || action === "resume") {
     return {
       command: "room",

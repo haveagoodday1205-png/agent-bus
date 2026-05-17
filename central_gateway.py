@@ -5994,6 +5994,7 @@ def telegram_room_action_keyboard_rows(room):
         return []
     rows = [[telegram_callback_button("Rooms", "/rooms")]]
     rows.append([telegram_callback_button("New room", "/room new")])
+    rows.append([telegram_callback_button("Doctor", f"/room doctor {room_id}")])
     status = str(room.get("status") or "").lower()
     if telegram_active_room_status(room):
         rows.append([
@@ -6594,7 +6595,9 @@ def telegram_room_command(config, chat_id, rest=""):
                 "reply": telegram_room_draft_text(draft),
             }
         return telegram_room_start_command(config, chat_id, goal)
-    if action in ("wake", "resume", "pause"):
+    if action in ("doctor", "diagnose", "health"):
+        query = " ".join(parts[1:]).strip()
+    elif action in ("wake", "resume", "pause"):
         query = " ".join(parts[1:]).strip()
     elif action in ("show", "open"):
         query = " ".join(parts[1:]).strip()
@@ -6609,6 +6612,13 @@ def telegram_room_command(config, chat_id, rest=""):
             "reply": f"No matching Agent Bus room for: {query or rest}",
         }
     room = get_room(config, match["id"])
+    if action in ("doctor", "diagnose", "health"):
+        doctor = room_doctor_api(config, room["id"], {})
+        return {
+            "command": "room",
+            "reply": telegram_room_doctor_text(doctor),
+            "room": room_summary(room),
+        }
     if action == "pause":
         room = pause_room(config, room["id"], {"reason": "Paused from Telegram."})
         return {
@@ -6748,6 +6758,39 @@ def telegram_room_detail_text(room):
         latest = trim(str(reports[-1].get("content") or reports[-1].get("summary") or ""))
         if latest:
             lines.extend(["Latest report:", latest[:800]])
+    return "\n".join(lines)
+
+
+def telegram_room_doctor_text(doctor):
+    room = doctor.get("room") or {}
+    counts = doctor.get("counts") or {}
+    contract = doctor.get("contract") or {}
+    actions = doctor.get("actions") or []
+    lines = [
+        "Agent Bus room doctor",
+        f"Room: {room.get('id') or '-'}",
+        f"Status: {room.get('status') or 'unknown'} ({doctor.get('summary') or 'unknown'}, {doctor.get('severity') or 'info'})",
+        "Counts: "
+        + f"active={counts.get('active_runs', 0)} "
+        + f"stale_queued={counts.get('stale_queued_runs', 0)} "
+        + f"stale_running={counts.get('stale_running_runs', 0)} "
+        + f"failed={counts.get('failed_attempts', 0)} "
+        + f"retryable={counts.get('retryable_failed_agents', 0)} "
+        + f"contract_gaps={counts.get('contract_gap_agents', 0)}",
+        f"Contract: {'complete' if contract.get('complete') else 'gaps: ' + room_contract_gap_text(contract)}",
+    ]
+    if actions:
+        lines.append("Recommended actions:")
+        for action in actions[:4]:
+            label = str(action.get("kind") or action.get("level") or "action")
+            message = trim(str(action.get("message") or ""))[:220]
+            if message:
+                lines.append(f"- {label}: {message}")
+            command = str(action.get("command") or "").strip()
+            if command:
+                lines.append(f"  {command[:420]}")
+    else:
+        lines.append("Recommended actions: none")
     return "\n".join(lines)
 
 

@@ -15,6 +15,7 @@ const state = {
   currentThread: null,
   currentRoomId: null,
   currentRoom: null,
+  currentRoomDoctor: null,
   currentTrace: null,
   roomPolling: null,
   polling: null,
@@ -159,6 +160,8 @@ const messages = {
     roomMessageFailed: "room message failed: {message}",
     roomMessagePlaceholder: "Send a message into the selected room",
     roomMessageSent: "room message sent",
+    roomDoctor: "Doctor",
+    roomDoctorFailed: "room doctor failed: {message}",
     roomLoadFailed: "room load failed: {message}",
     roomTimeline: "Room Timeline",
     pauseRoom: "Pause",
@@ -350,6 +353,8 @@ const messages = {
     roomMessageFailed: "房间消息发送失败：{message}",
     roomMessagePlaceholder: "向当前选中的房间发送消息",
     roomMessageSent: "房间消息已发送",
+    roomDoctor: "诊断",
+    roomDoctorFailed: "房间诊断失败：{message}",
     roomLoadFailed: "房间加载失败：{message}",
     roomTimeline: "房间时间线",
     pauseRoom: "暂停",
@@ -440,6 +445,7 @@ $("loadAgentsButton").addEventListener("click", loadAgents);
 $("loadPluginsButton").addEventListener("click", loadManifest);
 $("loadRoomsButton").addEventListener("click", loadRooms);
 $("roomForm").addEventListener("submit", createRoom);
+$("roomDoctorButton").addEventListener("click", loadCurrentRoomDoctor);
 $("roomTraceButton").addEventListener("click", openCurrentRoomTrace);
 $("exportRoomButton").addEventListener("click", exportCurrentRoomSummary);
 $("wakeRoomButton").addEventListener("click", wakeCurrentRoom);
@@ -1334,9 +1340,30 @@ async function loadRoom(roomId) {
   }
 }
 
+async function loadCurrentRoomDoctor() {
+  if (!state.currentRoomId) return;
+  const panel = $("roomDoctor");
+  panel.className = "room-doctor-panel";
+  panel.textContent = t("waiting");
+  try {
+    const doctor = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/doctor`);
+    state.currentRoomDoctor = doctor;
+    renderRoomDoctor(doctor);
+  } catch (err) {
+    panel.className = "room-doctor-panel failed";
+    panel.textContent = err.message;
+    logEvent(t("roomDoctorFailed", { message: err.message }));
+  }
+}
+
 function renderRoom(room) {
   state.currentRoom = room;
   state.currentRoomId = room.id;
+  if (state.currentRoomDoctor?.room?.id !== room.id) {
+    state.currentRoomDoctor = null;
+    $("roomDoctor").textContent = "";
+    $("roomDoctor").className = "room-doctor-panel";
+  }
   upsertRoom(room);
   $("roomSummary").removeAttribute("data-i18n");
   $("roomSummary").innerHTML = `
@@ -1350,10 +1377,12 @@ function renderRoom(room) {
       <div><span class="metric-label">${escapeHtml(t("trace"))}</span><strong>${escapeHtml(room.trace_id || "-")}</strong></div>
     </div>
   `;
+  $("roomDoctorButton").disabled = !room.id;
   $("pauseRoomButton").disabled = !room.id || ["paused", "completed"].includes(room.status);
   $("wakeRoomButton").disabled = !room.id || room.status === "paused";
   $("roomTraceButton").disabled = !room.trace_id;
   $("exportRoomButton").disabled = !room.id;
+  if (state.currentRoomDoctor) renderRoomDoctor(state.currentRoomDoctor);
   renderRooms();
   updateDashboardStats();
   const messageList = $("roomMessages");
@@ -1429,6 +1458,57 @@ function renderRoom(room) {
     reports.append(node);
   }
   renderOverview();
+}
+
+function renderRoomDoctor(doctor) {
+  const panel = $("roomDoctor");
+  const room = doctor?.room || {};
+  const counts = doctor?.counts || {};
+  const contract = doctor?.contract || {};
+  const actions = Array.isArray(doctor?.actions) ? doctor.actions.slice(0, 5) : [];
+  const severity = String(doctor?.severity || "info").toLowerCase().replace(/[^a-z0-9_-]/g, "") || "info";
+  panel.className = `room-doctor-panel ${severity}`;
+  panel.innerHTML = `
+    <div class="doctor-head">
+      <strong>${escapeHtml(t("roomDoctor"))}</strong>
+      <span class="status ${escapeHtml(severity)}">${escapeHtml(doctor?.summary || room.status || "unknown")}</span>
+    </div>
+    <div class="doctor-grid">
+      <span>${escapeHtml(t("status"))}: ${escapeHtml(room.status || "unknown")}</span>
+      <span>${escapeHtml(t("activeRuns"))}: ${escapeHtml(counts.active_runs || 0)}</span>
+      <span>stale queued: ${escapeHtml(counts.stale_queued_runs || 0)}</span>
+      <span>failed: ${escapeHtml(counts.failed_attempts || 0)}</span>
+      <span>retryable: ${escapeHtml(counts.retryable_failed_agents || 0)}</span>
+      <span>contract gaps: ${escapeHtml(counts.contract_gap_agents || 0)}</span>
+    </div>
+    <div class="doctor-contract">${escapeHtml(contract.complete ? "Contract complete" : `Contract gaps: ${roomContractGapText(contract)}`)}</div>
+    ${actions.length ? `<div class="doctor-actions">${actions.map(renderDoctorAction).join("")}</div>` : ""}
+  `;
+  wireRoomDoctorCopy(panel);
+}
+
+function renderDoctorAction(action) {
+  const command = String(action?.command || "").trim();
+  return `
+    <div class="doctor-action">
+      <div><strong>${escapeHtml(action?.kind || action?.level || "action")}</strong> ${escapeHtml(action?.message || "")}</div>
+      ${command ? `<code>${escapeHtml(command)}</code><button type="button" class="copy-action-button" data-copy-command="${escapeHtml(command)}">${escapeHtml(t("copy"))}</button>` : ""}
+    </div>
+  `;
+}
+
+function wireRoomDoctorCopy(panel) {
+  for (const button of panel.querySelectorAll("[data-copy-command]")) {
+    button.addEventListener("click", () => copyTextToClipboard(button.dataset.copyCommand || "", button));
+  }
+}
+
+function roomContractGapText(contract) {
+  const parts = [];
+  if (contract?.missing_agents?.length) parts.push(`missing agents=${contract.missing_agents.join(",")}`);
+  if (contract?.missing_report_agents?.length) parts.push(`missing REPORT=${contract.missing_report_agents.join(",")}`);
+  if (contract?.missing_done_agents?.length) parts.push(`missing DONE=${contract.missing_done_agents.join(",")}`);
+  return parts.join("; ") || "unknown";
 }
 
 async function openCurrentRoomTrace() {

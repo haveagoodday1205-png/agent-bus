@@ -18,6 +18,7 @@ The console can:
 - Select agents and submit tasks.
 - Preview routing decisions.
 - Poll thread, room, run, report, blackboard, and stdout/stderr results.
+- Run room doctor from the room detail view to show stale/failed/contract counts plus copyable recommended commands.
 - Open a room trace from the room detail view, look up trace ids, and export trace JSON.
 - Export a reports-only room summary with reports, blackboard notes, run metadata, and trace id while omitting the room goal, full messages, and run output by default.
 - List OpenAI-compatible models and reuse them from the Model field suggestions.

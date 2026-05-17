@@ -56,6 +56,8 @@
         "owner": { "type": "string" },
         "runtime": { "type": "string" },
         "permission_profile": { "$ref": "#/$defs/identifier" },
+        "cost_class": { "type": "string" },
+        "latency_class": { "type": "string" },
         "allowed_rooms": {
           "type": "array",
           "items": { "type": "string" }

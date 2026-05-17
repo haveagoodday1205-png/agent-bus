@@ -78,7 +78,12 @@ async function main() {
       enabled: true,
       adapter: "command",
       capabilities: ["test", "room", "offline"],
+      owner: "smoke-team",
+      runtime: "node-command",
       permission_profile: "offline-smoke",
+      cost_class: "free",
+      latency_class: "interactive",
+      allowed_rooms: ["room_*"],
       allowed_wake_targets: ["offline-agent"],
       runCommand: `${quoteCommandArg(process.execPath)} ${quoteCommandArg(agentScript)}`
     }, {
@@ -88,6 +93,7 @@ async function main() {
       enabled: true,
       adapter: "command",
       capabilities: ["test", "room", "offline", "failure"],
+      allowed_rooms: [],
       allowed_wake_targets: [],
       runCommand: `${quoteCommandArg(process.execPath)} ${quoteCommandArg(failAgentScript)}`
     }, {
@@ -129,7 +135,12 @@ async function main() {
   assert(agent.node_status === "online", "agent discovery did not expose online node status");
   assert(Boolean(agent.last_seen_at), "agent discovery did not expose last_seen_at");
   assert(agent.ping_status === "not_configured", "offline agent should report ping_status=not_configured");
+  assert(agent.owner === "smoke-team", "agent discovery did not expose owner");
+  assert(agent.runtime === "node-command", "agent discovery did not expose runtime");
   assert(agent.permission_profile === "offline-smoke", "agent discovery did not expose permission_profile");
+  assert(agent.cost_class === "free", "agent discovery did not expose cost_class");
+  assert(agent.latency_class === "interactive", "agent discovery did not expose latency_class");
+  assert(agent.allowed_rooms?.includes("room_*"), "agent discovery did not expose allowed_rooms");
   assert(agent.allowed_wake_targets?.includes("offline-agent"), "agent discovery did not expose allowed_wake_targets");
   const models = await requestJson(`${base}/v1/models`, { headers: authHeaders(token) });
   assert(models.data?.some((item) => item.id === "agent:offline-agent"), "admin model list did not include the offline agent model");
@@ -239,6 +250,12 @@ async function main() {
   assert(cliStatus.summary?.online_agents === 4, "CLI status did not count all online smoke agents");
   assert(cliStatus.permission_observations?.with_permission_profile === 1, "CLI status did not summarize permission_profile observations");
   assert(cliStatus.permission_observations?.with_allowed_wake_targets === 2, "CLI status did not preserve empty allowed_wake_targets observations");
+  assert(cliStatus.permission_observations?.with_allowed_rooms === 2, "CLI status did not preserve empty allowed_rooms observations");
+  assert(cliStatus.permission_observations?.with_owner === 1, "CLI status did not summarize owner observations");
+  assert(cliStatus.permission_observations?.with_runtime === 1, "CLI status did not summarize runtime observations");
+  assert(cliStatus.permission_observations?.with_cost_class === 1, "CLI status did not summarize cost_class observations");
+  assert(cliStatus.permission_observations?.with_latency_class === 1, "CLI status did not summarize latency_class observations");
+  assert(cliStatus.permission_observations?.profiles?.["offline-smoke"] === 1, "CLI status did not include permission profile distribution");
   assert(cliStatus.nodes?.some((item) => item.id === "offline-smoke-node" && item.freshness?.startsWith("online/fresh")), "CLI status did not include node freshness");
   assert(cliStatus.rooms?.some((item) => item.id === finalRoom.id), "CLI status did not include the smoke room");
   const statusAgent = cliStatus.agents?.find((item) => item.id === "offline-agent");
@@ -249,8 +266,14 @@ async function main() {
   assert(statusAgent?.current_run === null, "CLI status JSON should expose current_run=null after completion");
   assert(statusAgent?.ping_label === "not configured", "CLI status JSON did not include derived ping label");
   assert(statusAgent?.last_run_health === "ok", "CLI status JSON did not include derived last-run health");
+  assert(statusAgent?.owner === "smoke-team", "CLI status JSON did not include owner");
+  assert(statusAgent?.runtime === "node-command", "CLI status JSON did not include runtime");
   assert(statusAgent?.permission_profile === "offline-smoke", "CLI status JSON did not include permission_profile");
+  assert(statusAgent?.cost_class === "free", "CLI status JSON did not include cost_class");
+  assert(statusAgent?.latency_class === "interactive", "CLI status JSON did not include latency_class");
+  assert(statusAgent?.allowed_rooms?.includes("room_*"), "CLI status JSON did not include allowed_rooms");
   assert(statusAgent?.allowed_wake_targets?.includes("offline-agent"), "CLI status JSON did not include allowed_wake_targets");
+  assert(Array.isArray(failStatusAgent?.allowed_rooms) && failStatusAgent.allowed_rooms.length === 0, "CLI status JSON did not preserve empty allowed_rooms");
   assert(Array.isArray(failStatusAgent?.allowed_wake_targets) && failStatusAgent.allowed_wake_targets.length === 0, "CLI status JSON did not preserve empty allowed_wake_targets");
   const cliStatusText = await runCliText(["status", "--gateway", base, "--token", token]);
   assert(cliStatusText.includes("node=online/fresh"), "CLI status human output did not include node freshness");
@@ -258,7 +281,13 @@ async function main() {
   assert(cliStatusText.includes("ping=not configured"), "CLI status human output did not include ping label");
   assert(cliStatusText.includes("last_run=ok"), "CLI status human output did not include last-run health");
   assert(cliStatusText.includes("profile=offline-smoke"), "CLI status human output did not include permission profile observation");
+  assert(cliStatusText.includes("owner=smoke-team"), "CLI status human output did not include owner observation");
+  assert(cliStatusText.includes("runtime=node-command"), "CLI status human output did not include runtime observation");
+  assert(cliStatusText.includes("cost=free"), "CLI status human output did not include cost class observation");
+  assert(cliStatusText.includes("latency=interactive"), "CLI status human output did not include latency class observation");
+  assert(cliStatusText.includes("room_scope=room_*"), "CLI status human output did not include allowed room observation");
   assert(cliStatusText.includes("offline-fail-agent:") && cliStatusText.includes("wake_targets=none"), "CLI status human output did not include empty wake target observation");
+  assert(cliStatusText.includes("offline-fail-agent:") && cliStatusText.includes("room_scope=none"), "CLI status human output did not include empty room scope observation");
   const cliExport = await runCliText(["room", "export", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliExport.includes(`# Agent Bus Room: ${finalRoom.title}`), "CLI room export did not render markdown title");
   assert(cliExport.includes("offline smoke run completed"), "CLI room export did not include report content");

@@ -43,6 +43,11 @@ const messages = {
     busy: "busy",
     capabilities: "Capabilities",
     permissionProfile: "Permission",
+    permissionCoverage: "Permission Coverage",
+    owner: "Owner",
+    runtime: "Runtime",
+    costClass: "Cost",
+    latencyClass: "Latency",
     wakeTargets: "Wake Targets",
     cacheScope: "Cache Scope",
     cacheScopePlaceholder: "Optional stable key for agent:<id> calls",
@@ -236,6 +241,11 @@ const messages = {
     busy: "忙碌",
     capabilities: "能力",
     permissionProfile: "权限",
+    permissionCoverage: "权限覆盖",
+    owner: "负责人",
+    runtime: "运行时",
+    costClass: "成本",
+    latencyClass: "延迟",
     wakeTargets: "唤醒目标",
     cacheScope: "缓存作用域",
     cacheScopePlaceholder: "agent:<id> 调用的可选稳定键",
@@ -688,6 +698,10 @@ function renderAgents() {
 
 function permissionProfileHtml(agent) {
   const profile = agent.permission_profile || agent.permissionProfile || "";
+  const owner = agent.owner || "";
+  const runtime = agent.runtime || "";
+  const costClass = agent.cost_class || agent.costClass || "";
+  const latencyClass = agent.latency_class || agent.latencyClass || "";
   const wakeTargets = Array.isArray(agent.allowed_wake_targets)
     ? agent.allowed_wake_targets
     : Array.isArray(agent.allowedWakeTargets)
@@ -703,6 +717,14 @@ function permissionProfileHtml(agent) {
   const lines = [
     `<span class="status ${profile ? "online" : "paused"}">${escapeHtml(profile || "unprofiled")}</span>`
   ];
+  if (owner) lines.push(`<div class="muted">${escapeHtml(t("owner"))}: ${escapeHtml(owner)}</div>`);
+  if (runtime) lines.push(`<div class="muted">${escapeHtml(t("runtime"))}: ${escapeHtml(runtime)}</div>`);
+  if (costClass || latencyClass) {
+    const parts = [];
+    if (costClass) parts.push(`${t("costClass")}: ${costClass}`);
+    if (latencyClass) parts.push(`${t("latencyClass")}: ${latencyClass}`);
+    lines.push(`<div class="muted">${escapeHtml(parts.join(" / "))}</div>`);
+  }
   if (hasWakeTargets) lines.push(`<div class="muted">${escapeHtml(t("wakeTargets"))}: ${escapeHtml(wakeTargets.length ? wakeTargets.join(", ") : t("none"))}</div>`);
   if (hasRooms) lines.push(`<div class="muted">${escapeHtml(t("rooms"))}: ${escapeHtml(rooms.length ? rooms.join(", ") : t("none"))}</div>`);
   return lines.join("");
@@ -787,6 +809,10 @@ function renderReadinessPanel() {
   const level = String(readiness.level || "unknown").toLowerCase();
   const label = String(readiness.status || readiness.level || "unknown");
   const actions = Array.isArray(status?.next_actions) ? status.next_actions : [];
+  const permission = status?.permission_observations || null;
+  const permissionMetric = permission?.total_agents
+    ? `<span>${escapeHtml(t("permissionCoverage"))}: ${escapeHtml(permission.with_permission_profile || 0)}/${escapeHtml(permission.total_agents || 0)}</span>`
+    : "";
   panel.className = `readiness-panel readiness-${escapeClass(level)}`;
   panel.innerHTML = `
     <div class="readiness-header">
@@ -801,6 +827,7 @@ function renderReadinessPanel() {
       <span>${escapeHtml(t("agents"))}: ${escapeHtml(summary.agents ?? state.health?.agents ?? "-")}/${escapeHtml(summary.registered_agents ?? state.health?.registered_agents ?? "-")}</span>
       <span>${escapeHtml(t("queued"))}: ${escapeHtml(summary.queued ?? state.health?.queued ?? "-")}</span>
       <span>${escapeHtml(t("activeRooms"))}: ${escapeHtml(summary.active_rooms ?? "-")}</span>
+      ${permissionMetric}
     </div>
     <div class="readiness-actions">
       <strong>${escapeHtml(t("nextActions"))}</strong>
@@ -913,7 +940,7 @@ function quickstartChecks() {
       label: t("permissionProfile"),
       ok: Number(permission.total_agents || 0) > 0 && Number(permission.with_permission_profile || 0) === Number(permission.total_agents || 0),
       warn: Number(permission.total_agents || 0) > 0,
-      detail: `${permission.with_permission_profile || 0}/${permission.total_agents || 0} permission_profile`
+      detail: permissionCoverageDetail(permission)
     },
     {
       label: t("telegramBot"),
@@ -926,10 +953,33 @@ function quickstartChecks() {
 
 function permissionObservationsFromAgents() {
   const agents = state.agents || [];
+  const validAgents = agents.filter((agent) => String(agent.id || "").trim());
+  const profileCounts = {};
+  for (const agent of validAgents) {
+    const profile = String(agent.permission_profile || agent.permissionProfile || "").trim();
+    if (profile) profileCounts[profile] = (profileCounts[profile] || 0) + 1;
+  }
   return {
-    total_agents: agents.length,
-    with_permission_profile: agents.filter((agent) => agent.permission_profile || agent.permissionProfile).length
+    total_agents: validAgents.length,
+    with_permission_profile: validAgents.filter((agent) => agent.permission_profile || agent.permissionProfile).length,
+    with_allowed_wake_targets: validAgents.filter((agent) => hasOwn(agent, "allowed_wake_targets") || hasOwn(agent, "allowedWakeTargets")).length,
+    with_allowed_rooms: validAgents.filter((agent) => hasOwn(agent, "allowed_rooms") || hasOwn(agent, "allowedRooms")).length,
+    with_owner: validAgents.filter((agent) => agent.owner).length,
+    with_runtime: validAgents.filter((agent) => agent.runtime).length,
+    with_cost_class: validAgents.filter((agent) => agent.cost_class || agent.costClass).length,
+    with_latency_class: validAgents.filter((agent) => agent.latency_class || agent.latencyClass).length,
+    profiles: profileCounts
   };
+}
+
+function permissionCoverageDetail(permission = {}) {
+  const total = Number(permission.total_agents || 0);
+  const profile = `${permission.with_permission_profile || 0}/${total} permission_profile`;
+  if (!total) return profile;
+  const wake = `${permission.with_allowed_wake_targets || 0}/${total} wake`;
+  const rooms = `${permission.with_allowed_rooms || 0}/${total} rooms`;
+  const runtime = `${permission.with_runtime || 0}/${total} runtime`;
+  return `${profile} / ${wake} / ${rooms} / ${runtime}`;
 }
 
 function quickstartCommandText() {

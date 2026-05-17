@@ -1397,6 +1397,13 @@ def status_next_actions(result):
         preview = ", ".join(missing_profiles[:3])
         suffix = ", ..." if len(missing_profiles) > 3 else ""
         actions.append(f"Add permission_profile observation fields to edge configs for {preview}{suffix}.")
+    missing_wake_targets = (result.get("permission_observations") or {}).get("unscoped_wake_targets") or []
+    missing_rooms = (result.get("permission_observations") or {}).get("unscoped_rooms") or []
+    if missing_wake_targets or missing_rooms:
+        affected = status_unique((missing_wake_targets or []) + (missing_rooms or []))
+        preview = ", ".join(affected[:3])
+        suffix = ", ..." if len(affected) > 3 else ""
+        actions.append(f"Add allowed_wake_targets/allowed_rooms observation fields to edge configs for {preview}{suffix}.")
     return status_unique(actions)[:6]
 
 
@@ -1420,8 +1427,19 @@ def status_online_agent_ids(result, limit=2):
 def permission_observation_summary(agents):
     missing_permission_profile = []
     unscoped_wake_targets = []
+    unscoped_rooms = []
+    missing_owner = []
+    missing_runtime = []
+    missing_cost_class = []
+    missing_latency_class = []
     with_permission_profile = 0
     with_allowed_wake_targets = 0
+    with_allowed_rooms = 0
+    with_owner = 0
+    with_runtime = 0
+    with_cost_class = 0
+    with_latency_class = 0
+    profile_counts = {}
     total = 0
     for agent in agents or []:
         agent_id = str((agent or {}).get("id") or "").strip()
@@ -1429,21 +1447,58 @@ def permission_observation_summary(agents):
             continue
         total += 1
         profile = optional_observation_text(agent.get("permission_profile") if agent.get("permission_profile") is not None else agent.get("permissionProfile"))
+        owner = optional_observation_text(agent.get("owner"))
+        runtime = optional_observation_text(agent.get("runtime"))
+        cost_class = optional_observation_text(agent.get("cost_class") if agent.get("cost_class") is not None else agent.get("costClass"))
+        latency_class = optional_observation_text(agent.get("latency_class") if agent.get("latency_class") is not None else agent.get("latencyClass"))
         has_wake_targets = has_observation_field(agent, "allowed_wake_targets", "allowedWakeTargets")
+        has_rooms = has_observation_field(agent, "allowed_rooms", "allowedRooms")
         if profile:
             with_permission_profile += 1
+            profile_counts[profile] = profile_counts.get(profile, 0) + 1
         else:
             missing_permission_profile.append(agent_id)
         if has_wake_targets:
             with_allowed_wake_targets += 1
         else:
             unscoped_wake_targets.append(agent_id)
+        if has_rooms:
+            with_allowed_rooms += 1
+        else:
+            unscoped_rooms.append(agent_id)
+        if owner:
+            with_owner += 1
+        else:
+            missing_owner.append(agent_id)
+        if runtime:
+            with_runtime += 1
+        else:
+            missing_runtime.append(agent_id)
+        if cost_class:
+            with_cost_class += 1
+        else:
+            missing_cost_class.append(agent_id)
+        if latency_class:
+            with_latency_class += 1
+        else:
+            missing_latency_class.append(agent_id)
     return {
         "total_agents": total,
         "with_permission_profile": with_permission_profile,
         "missing_permission_profile": missing_permission_profile,
         "with_allowed_wake_targets": with_allowed_wake_targets,
         "unscoped_wake_targets": unscoped_wake_targets,
+        "with_allowed_rooms": with_allowed_rooms,
+        "unscoped_rooms": unscoped_rooms,
+        "with_owner": with_owner,
+        "missing_owner": missing_owner,
+        "with_runtime": with_runtime,
+        "missing_runtime": missing_runtime,
+        "with_cost_class": with_cost_class,
+        "missing_cost_class": missing_cost_class,
+        "with_latency_class": with_latency_class,
+        "missing_latency_class": missing_latency_class,
+        "profiles": dict(sorted(profile_counts.items())),
     }
 
 

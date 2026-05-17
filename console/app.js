@@ -101,6 +101,7 @@ const messages = {
     noTrace: "No trace loaded.",
     noAgents: "No registered agents.",
     noAgentChat: "No agent conversation yet.",
+    roomDebugDetails: "Debug Details",
     noRoom: "No room selected.",
     noThread: "No thread selected.",
     node: "Node",
@@ -302,6 +303,7 @@ const messages = {
     noTrace: "尚未加载 trace。",
     noAgents: "没有已注册的智能体。",
     noAgentChat: "还没有 agent 对话。",
+    roomDebugDetails: "调试详情",
     noRoom: "尚未选择房间。",
     noThread: "尚未选择线程。",
     node: "节点",
@@ -1612,10 +1614,9 @@ function roomListPreview(room = {}) {
   const chat = roomChatItems(room);
   const last = chat[chat.length - 1];
   if (last?.content) return `${last.speaker}: ${last.content}`.slice(0, 150);
-  const goal = String(room.goal || room.title || "").trim();
-  if (goal) return goal.slice(0, 150);
   const agents = roomAgentLine(room);
-  return agents === "-" ? room.id || "-" : agents;
+  if (agents && agents !== "-") return `${t("noAgentChat")} - ${agents}`.slice(0, 150);
+  return room.id ? t("noAgentChat") : "-";
 }
 
 function sortRoomChatItems(items) {
@@ -1646,8 +1647,8 @@ function roomChatDisplayContent(item = {}, kind = "") {
   if (!isAgentChatSpeaker(item.speaker || item.role)) return "";
   const lines = roomItemContent(item)
     .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => !isRoomChatNoiseLine(line));
+    .map(roomChatDialogueLine)
+    .filter(Boolean);
   return trimBlankLines(lines).join("\n").trim();
 }
 
@@ -1672,7 +1673,22 @@ function isRoomChatNoiseLine(line) {
   if (/^\d+\.\s+(use a larger|lower the)\b/i.test(text)) return true;
   if (/^\s*(auxiliary|compression|model|threshold)\s*:/i.test(text)) return true;
   if (/^[-*]\s*(tool|command|stderr|stdout|run)\b/i.test(text)) return true;
+  if (/^\{.*"(tool_calls?|function_call|cmd|command|stderr|stdout|run_id)"/i.test(text)) return true;
+  if (/^\[?(tool|command|stderr|stdout|trace|debug)\]?[\s:.-]/i.test(text)) return true;
   return false;
+}
+
+function roomChatDialogueLine(line) {
+  const text = String(line || "").trimEnd();
+  if (isRoomChatNoiseLine(text)) return "";
+  return stripRoomProtocolTail(text).trimEnd();
+}
+
+function stripRoomProtocolTail(line) {
+  return String(line || "")
+    .replace(/\s+\b(?:REPORT|BLACKBOARD)\s*:[\s\S]*$/, "")
+    .replace(/\s+\bWAKE\s+@?[A-Za-z0-9_.-]+(?:\s+IN\b|\s*:)[\s\S]*$/, "")
+    .replace(/\s+\b(?:DONE|TODO)\b\s*:?\s*[\s\S]*$/, "");
 }
 
 function trimBlankLines(lines) {
@@ -1708,7 +1724,6 @@ function renderRoomChatItem(item) {
         <time>${escapeHtml(formatChatTime(item.at))}</time>
       </div>
       <div class="chat-text">${escapeHtml(item.content)}</div>
-      ${item.runId ? `<div class="chat-run-id">${escapeHtml(item.runId)}</div>` : ""}
     </div>
   `;
   return node;

@@ -377,6 +377,47 @@ tbody tr:last-child td {
   overflow: auto;
 }
 
+.room-debug-details {
+  padding: 0;
+}
+
+.room-debug-details summary {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 760;
+  list-style: none;
+}
+
+.room-debug-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.room-debug-details summary::before {
+  content: ">";
+  margin-right: 8px;
+  color: var(--muted);
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.room-debug-details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.room-debug-details[open] {
+  padding-bottom: 12px;
+}
+
+.room-debug-details #roomReports {
+  padding: 0 12px;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) 132px auto;

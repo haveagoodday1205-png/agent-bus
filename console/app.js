@@ -1326,7 +1326,8 @@ async function createRoom(event) {
       goal,
       agents,
       maxSteps: Number($("roomMaxSteps").value || 0),
-      wakeAgents: $("roomWakeMode").value === "all" ? agents : agents.slice(0, 1)
+      wakeAgents: $("roomWakeMode").value === "all" ? agents : agents.slice(0, 1),
+      autoRotate: false
     };
     const room = await request("rooms", { method: "POST", body });
     state.currentRoomId = room.id;
@@ -1371,10 +1372,17 @@ async function sendRoomMessage(event) {
   if (!state.currentRoomId) return;
   const message = $("roomMessage").value.trim();
   if (!message) return logEvent(t("roomMessageEmpty"));
+  const directed = roomMessagePayload(message);
+  const body = { message: directed.message, speaker: "user", wake: true };
+  if (directed.agents.length) {
+    body.agents = directed.agents;
+    body.autoRotate = false;
+    body.reason = `Directed room message to ${directed.agents.join(", ")}.`;
+  }
   try {
     const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/messages`, {
       method: "POST",
-      body: { message, speaker: "user", wake: true }
+      body
     });
     $("roomMessage").value = "";
     upsertRoom(room);
@@ -1384,6 +1392,25 @@ async function sendRoomMessage(event) {
   } catch (err) {
     logEvent(t("roomMessageFailed", { message: err.message }));
   }
+}
+
+function roomMessagePayload(rawMessage) {
+  const targets = new Map();
+  const message = String(rawMessage || "").replace(/@([A-Za-z0-9_.-]+)/g, (match, rawId) => {
+    const agentId = canonicalAgentId(rawId);
+    if (!agentId) return match;
+    targets.set(agentId.toLowerCase(), agentId);
+    return `@${agentId}`;
+  });
+  return { message, agents: [...targets.values()] };
+}
+
+function canonicalAgentId(value) {
+  const needle = String(value || "").trim().toLowerCase();
+  if (!needle) return "";
+  const roomAgents = Array.isArray(state.currentRoom?.agents) ? state.currentRoom.agents : [];
+  const knownAgents = [...roomAgents, ...state.agents.map((agent) => agent.id)].filter(Boolean);
+  return knownAgents.find((agentId) => String(agentId).toLowerCase() === needle) || "";
 }
 
 function startRoomPolling(roomId) {

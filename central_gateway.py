@@ -2489,6 +2489,9 @@ def add_room_message(config, room_id, body, trace_id=None):
         "at": now(),
     })
     room["updated_at"] = now()
+    auto_rotate_override = body.get("auto_rotate", body.get("autoRotate"))
+    if auto_rotate_override is not None:
+        room.setdefault("autonomy", {})["auto_rotate"] = auto_rotate_override is not False
     if body.get("wake", True) is not False:
         wake_ids = body.get("agents") or [next_room_agent(room)]
         wake_room_agents(config, room, wake_ids, body.get("reason") or "New room message.", trace_id)

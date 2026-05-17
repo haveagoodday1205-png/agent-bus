@@ -80,3 +80,7 @@ Share results with the adapter compatibility form:
 - `agent-bus demo room` exports a reports-only room summary suitable for public demos.
 - `agent-bus room replay --in room-events.json` replays exported room events offline.
 - `docs/remote-assistant-quickstart.md` walks through the first production-style Central/Edge setup.
+
+If the issue-to-PR demo is the path you care about most, share what felt useful or missing:
+
+[Issue-to-PR demo feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=issue_demo_feedback.yml)

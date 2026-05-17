@@ -10,6 +10,8 @@ const args = process.argv.slice(2);
 const jsonOut = args.includes("--json");
 const procs = [];
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-issue-demo-"));
+const FEEDBACK_URL = "https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=issue_demo_feedback.yml";
+const TRY_DOCS_URL = "https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/try-agent-bus.md";
 
 main().catch((err) => {
   if (jsonOut) {
@@ -156,6 +158,7 @@ async function main() {
 
   console.log(`   wrote ${outDir}`);
   console.log(`   summary: ${artifacts.summary}`);
+  console.log(`   feedback: ${FEEDBACK_URL}`);
   console.log("Demo complete. The directory contains a README, issue, report, event replay, patch, and PR draft artifacts.");
 }
 
@@ -309,6 +312,11 @@ function writeDemoSummary(file, { artifacts, completed, issue, outDir }) {
     "## Current Boundary",
     "",
     "This demo does not read live GitHub issues, create branches or commits, open a real PR, run real model tools, or replace maintainer review. If you used `--issue-file` or `--issue` with private text, review the generated artifacts before sharing them.",
+    "",
+    "## Feedback",
+    "",
+    `Open issue-to-PR demo feedback: ${FEEDBACK_URL}`,
+    `Try Agent Bus guide: ${TRY_DOCS_URL}`,
     ""
   ];
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
@@ -330,6 +338,8 @@ function issueDemoResult({ artifacts, completed, issue, outDir }) {
     agents: ["demo-planner", "demo-coder", "demo-reviewer"],
     reports: reports.length,
     blackboard_notes: notes.length,
+    feedback_url: FEEDBACK_URL,
+    try_docs_url: TRY_DOCS_URL,
     artifacts: {
       summary: artifacts.summary,
       issue: artifacts.issue,

@@ -46,6 +46,7 @@ async function main() {
     replay: path.join(outDir, "agent-bus-issue-demo-replay.md"),
     patch: path.join(outDir, "agent-bus-issue-demo.patch"),
     prDraft: path.join(outDir, "agent-bus-issue-demo-pr.md"),
+    manifest: path.join(outDir, "agent-bus-issue-demo-manifest.json"),
     summary: path.join(outDir, "README.md")
   };
 
@@ -149,6 +150,12 @@ async function main() {
     issue,
     outDir
   });
+  writeDemoManifest(artifacts.manifest, {
+    artifacts,
+    completed,
+    issue,
+    outDir
+  });
 
   const result = issueDemoResult({ artifacts, completed, issue, outDir });
   if (jsonOut) {
@@ -158,8 +165,9 @@ async function main() {
 
   console.log(`   wrote ${outDir}`);
   console.log(`   summary: ${artifacts.summary}`);
+  console.log(`   manifest: ${artifacts.manifest}`);
   console.log(`   feedback: ${FEEDBACK_URL}`);
-  console.log("Demo complete. The directory contains a README, issue, report, event replay, patch, and PR draft artifacts.");
+  console.log("Demo complete. The directory contains a README, issue, report, event replay, patch, PR draft, and manifest artifacts.");
 }
 
 function demoAgent(id, role, capabilities, agentScript) {
@@ -262,6 +270,7 @@ function demoPrDraft(issue) {
 function writeDemoSummary(file, { artifacts, completed, issue, outDir }) {
   const reports = Array.isArray(completed.reports) ? completed.reports : [];
   const notes = Array.isArray(completed.blackboard?.notes) ? completed.blackboard.notes : [];
+  const nextCommands = issueDemoNextCommands(outDir);
   const artifactRows = [
     ["Demo index", artifacts.summary],
     ["Source issue", artifacts.issue],
@@ -269,7 +278,8 @@ function writeDemoSummary(file, { artifacts, completed, issue, outDir }) {
     ["Room event bundle", artifacts.events],
     ["Offline replay", artifacts.replay],
     ["Patch draft", artifacts.patch],
-    ["PR draft", artifacts.prDraft]
+    ["PR draft", artifacts.prDraft],
+    ["Machine-readable manifest", artifacts.manifest]
   ];
   const lines = [
     "# Agent Bus Issue-to-PR Demo",
@@ -302,6 +312,10 @@ function writeDemoSummary(file, { artifacts, completed, issue, outDir }) {
     "",
     ...artifactRows.map(([label, target]) => `- ${label}: [${path.basename(target)}](${path.basename(target)})`),
     "",
+    "## Next Commands",
+    "",
+    ...nextCommands.map((item) => `- ${item.label}: \`${item.command}\``),
+    "",
     "## What This Proves",
     "",
     "- A private local Central and Edge can coordinate three room agents.",
@@ -320,6 +334,79 @@ function writeDemoSummary(file, { artifacts, completed, issue, outDir }) {
     ""
   ];
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
+}
+
+function writeDemoManifest(file, { artifacts, completed, issue, outDir }) {
+  const reports = Array.isArray(completed.reports) ? completed.reports : [];
+  const notes = Array.isArray(completed.blackboard?.notes) ? completed.blackboard.notes : [];
+  const manifest = {
+    object: "agent_bus.issue_to_pr_demo_manifest",
+    version: 1,
+    generated_at: new Date().toISOString(),
+    share_safe_default: true,
+    mode: "issue-to-pr-demo",
+    quota: "no_model_calls",
+    github: "not_contacted",
+    model_provider: "not_contacted",
+    title: issue.title,
+    out_dir: outDir,
+    room: {
+      id: completed.id,
+      status: completed.status,
+      reports: reports.length,
+      blackboard_notes: notes.length
+    },
+    agents: ["demo-planner", "demo-coder", "demo-reviewer"],
+    artifacts: artifactBasenames(artifacts),
+    next_commands: issueDemoNextCommands(outDir),
+    proves: [
+      "local Central/Edge startup",
+      "planner -> coder -> reviewer room handoff",
+      "REPORT/BLACKBOARD/DONE capture",
+      "reports-only export, event replay, patch draft, and PR draft artifacts"
+    ],
+    does_not_prove: [
+      "real GitHub issue ingestion",
+      "branch creation, commits, or live PR opening",
+      "real model/provider tool execution",
+      "production auth policy readiness"
+    ],
+    feedback_url: FEEDBACK_URL,
+    try_docs_url: TRY_DOCS_URL
+  };
+  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+function artifactBasenames(artifacts) {
+  return Object.fromEntries(Object.entries(artifacts).map(([key, value]) => [key, path.basename(value)]));
+}
+
+function issueDemoNextCommands(outDir) {
+  return [
+    {
+      label: "Re-run this demo into a fresh folder",
+      command: "agent-bus demo issue --out-dir agent-bus-issue-demo"
+    },
+    {
+      label: "Run the smallest no-secret room proof",
+      command: "agent-bus demo zero-token --out-dir agent-bus-demo-output"
+    },
+    {
+      label: "Open the generated demo index",
+      command: `cd ${shellPath(outDir)} && ${openFileCommand("README.md")}`
+    }
+  ];
+}
+
+function shellPath(value) {
+  const text = String(value || "");
+  return /[\s"'`$\\]/.test(text) ? JSON.stringify(text) : text;
+}
+
+function openFileCommand(file) {
+  if (process.platform === "win32") return `start ${file}`;
+  if (process.platform === "darwin") return `open ${file}`;
+  return `xdg-open ${file}`;
 }
 
 function issueDemoResult({ artifacts, completed, issue, outDir }) {
@@ -347,8 +434,10 @@ function issueDemoResult({ artifacts, completed, issue, outDir }) {
       events: artifacts.events,
       replay: artifacts.replay,
       patch: artifacts.patch,
-      pr_draft: artifacts.prDraft
-    }
+      pr_draft: artifacts.prDraft,
+      manifest: artifacts.manifest
+    },
+    next_commands: issueDemoNextCommands(outDir)
   };
 }
 

@@ -38,6 +38,35 @@ If anything feels confusing, open the zero-token feedback form:
 
 [Zero-token demo feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=zero_token_demo.yml)
 
+## 5-minute issue-to-PR proof
+
+Once the smallest room proof works, run the flagship no-secret path:
+
+```bash
+npx agent-bus-cli@latest demo issue --out-dir agent-bus-issue-demo
+```
+
+Or run from a checkout:
+
+```bash
+npm run demo:issue
+```
+
+This starts a private local Central and Edge, uses deterministic planner/coder/reviewer agents, and writes a share-safe artifact folder. Open `agent-bus-issue-demo/README.md` first; it links the source issue, reports-only export, event replay, patch draft, PR draft, and machine-readable manifest.
+
+This proves:
+
+- a GitHub-style issue can move through planner -> coder -> reviewer room handoffs
+- `REPORT`, `BLACKBOARD`, and `DONE` become audit-friendly evidence
+- room export and event replay can reproduce the collaboration story
+- patch and PR draft artifacts can be generated without GitHub, model quota, Telegram, SSH, or private hosts
+
+This does not prove live GitHub issue ingestion, branch creation, real commits, opening a PR, real model/tool execution, or production auth readiness. Keep that boundary in feedback so the next increment can be scoped cleanly.
+
+Share feedback with the issue-to-PR demo form:
+
+[Issue-to-PR demo feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=issue_demo_feedback.yml)
+
 ## 10-minute remote node trial
 
 After the no-secret demo works, connect a real machine as an outbound Edge:
@@ -80,7 +109,3 @@ Share results with the adapter compatibility form:
 - `agent-bus demo room` exports a reports-only room summary suitable for public demos.
 - `agent-bus room replay --in room-events.json` replays exported room events offline.
 - `docs/remote-assistant-quickstart.md` walks through the first production-style Central/Edge setup.
-
-If the issue-to-PR demo is the path you care about most, share what felt useful or missing:
-
-[Issue-to-PR demo feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=issue_demo_feedback.yml)

@@ -19,10 +19,19 @@ npx agent-bus-cli@latest demo zero-token
 
 The demo writes a share-safe `agent-bus-zero-token-report.md` that you can review and attach to a feedback issue. Use `--out-dir agent-bus-demo-output` to keep the report in a dedicated folder.
 
+After that smallest proof works, run the 5-minute issue-to-PR proof. It keeps the same no-secret boundary, but shows the north-star flow: issue -> planner -> coder -> reviewer -> patch/PR draft.
+
+```bash
+npx agent-bus-cli@latest demo issue --out-dir agent-bus-issue-demo
+```
+
+Open `agent-bus-issue-demo/README.md` for the share-safe index, generated patch draft, PR draft, event replay, and the explicit "what this proves / does not prove" boundary.
+
 From a checkout, run the same path with:
 
 ```bash
 npm run demo:zero-token
+npm run demo:issue
 ```
 
 Then open a feedback issue:
@@ -87,6 +96,7 @@ Pick the smallest path that proves what you need before adding real models or pr
 | Time | Goal | Commands | Proves |
 | --- | --- | --- | --- |
 | 2 minutes | Local no-secret proof | `agent-bus demo zero-token` or `npm run demo:zero-token` | Central/edge registration, two fake agents, room delegation, reports, blackboard, DONE, no model calls |
+| 5 minutes | Issue-to-PR flagship proof | `agent-bus demo issue --out-dir agent-bus-issue-demo` or `npm run demo:issue` | A GitHub-style issue moves through planner/coder/reviewer and writes a share-safe README, event replay, patch draft, PR draft, and manifest |
 | 10 minutes | First remote assistant node | `agent-bus setup central --service auto`, `agent-bus pair create`, `agent-bus setup edge --code ... --auto --service auto`, `agent-bus status` | A private machine can connect outbound and become an addressable agent |
 | 15 minutes | Telegram operator bot | `agent-bus setup telegram --chat-id ... --service auto --set-commands`, `agent-bus plugin telegram doctor --transport poller` | Mobile control, contextual buttons, process threads, room creation, poller/webhook health |
 
@@ -146,6 +156,7 @@ npm run demo:agent-model
 # Show the issue-to-PR flagship demo skeleton and export a share-safe artifact folder.
 # Proves local room coordination; does not contact GitHub or open a real PR yet.
 agent-bus demo issue
+agent-bus demo issue-to-pr --out-dir agent-bus-issue-demo
 npm run demo:issue
 
 # Pair a local edge and send a normal task.

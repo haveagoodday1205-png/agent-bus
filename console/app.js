@@ -59,6 +59,7 @@ const messages = {
     checking: "checking",
     clear: "Clear",
     copy: "Copy",
+    copyDemo: "Copy Demo",
     copied: "copied",
     copyStatus: "Copy Status",
     events: "Events",
@@ -279,6 +280,7 @@ const messages = {
     checking: "检查中",
     clear: "清空",
     copy: "复制",
+    copyDemo: "复制 Demo",
     copied: "已复制",
     copyStatus: "复制状态命令",
     events: "事件",
@@ -497,6 +499,7 @@ $("tokenInput").addEventListener("keydown", (event) => {
 });
 $("refreshButton").addEventListener("click", refreshAll);
 $("copyStatusCommandButton").addEventListener("click", copyStatusCommand);
+$("copyDemoCommandButton").addEventListener("click", copyDemoCommand);
 $("copyEdgeJoinButton").addEventListener("click", copyEdgeJoinCommand);
 $("edgeJoinForm").addEventListener("submit", createEdgeJoin);
 $("copyPairJoinButton").addEventListener("click", copyPairJoinCommand);
@@ -1045,8 +1048,12 @@ function quickstartCommandText() {
   const gateway = apiBase.href.replace(/\/$/, "");
   const agents = [...state.selectedAgents].join(",") || "agent-id";
   const lines = [
+    "Demo:",
+    demoIssueCommand(),
+    "agent-bus demo zero-token --out-dir agent-bus-demo-output",
+    "",
     `${t("statusCommand")}:`,
-    `agent-bus status --gateway ${gateway} --token ***`,
+    `agent-bus status --gateway ${gateway} --token *** --doctor`,
     "",
     "Room:",
     `agent-bus room create --gateway ${gateway} --token *** --agents ${agents} --goal "Check current Agent Bus status and report next action."`
@@ -1085,6 +1092,14 @@ async function copyStatusCommand() {
   const command = quickstartCommandText().split("\n").find((line) => line.startsWith("agent-bus status"));
   if (!command) return;
   await copyTextToClipboard(command, $("quickstartCommands"));
+}
+
+async function copyDemoCommand() {
+  await copyTextToClipboard(demoIssueCommand(), $("quickstartCommands"));
+}
+
+function demoIssueCommand() {
+  return "agent-bus demo issue --out-dir agent-bus-issue-demo";
 }
 
 async function copyTextToClipboard(text, fallbackElement = null) {

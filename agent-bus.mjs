@@ -197,6 +197,7 @@ function printHelp() {
   console.log(`agent-bus
 
 A good first run is: agent-bus demo zero-token
+A good north-star proof is: agent-bus demo issue --out-dir agent-bus-issue-demo
 
 Usage:
   agent-bus init central [--out central.config.json] [--force]
@@ -220,6 +221,7 @@ Usage:
   agent-bus demo starter
   agent-bus demo agent-model
   agent-bus demo issue
+  agent-bus demo issue-to-pr
   agent-bus demo local
   agent-bus pair create --gateway https://YOUR-DOMAIN/agent-bus --token ... --preset codex
   agent-bus pair join --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --out edge.config.json [--auto]
@@ -254,7 +256,7 @@ Usage:
   agent-bus room message room_xxx --message "New context" --agents openclaw-hk
   agent-bus trace show trace_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus trace export trace_xxx --format markdown --out trace.md
-  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
+  agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ... [--doctor] [--json] [--no-room-details] [--room-detail-limit 25] [--stale-seconds 180] [--queued-run-stale-seconds 21600] [--run-heartbeat-stale-seconds 90]
   agent-bus status --config edge.config.json [--json]
   agent-bus plugin status --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus plugin telegram test --message "hello" --gateway https://YOUR-DOMAIN/agent-bus --token ...
@@ -293,7 +295,7 @@ function demo(args) {
   if (target === "agent-model" || target === "model" || target === "responses") {
     return runScript("scripts/demo-agent-model.mjs", extra);
   }
-  if (target === "issue" || target === "issue-pr" || target === "flagship") {
+  if (target === "issue" || target === "issue-pr" || target === "issue-to-pr" || target === "flagship") {
     return runScript("scripts/demo-issue-pr.mjs", extra);
   }
   if (target === "local" || target === "pairing" || target === "remote-assistant") {
@@ -5067,6 +5069,7 @@ function markdownFence(value) {
 
 async function status(args) {
   const jsonOut = args.includes("--json");
+  const doctorMode = args.includes("--doctor") || args.includes("--onboarding");
   const request = resolveGatewayRequestContext(args);
   const token = request.token;
   const health = await gatewayJson("/health", { auth: false, args });
@@ -5114,7 +5117,13 @@ async function status(args) {
     result.status_meta = {
       ...(result.status_meta || {}),
       ...(hydrationMeta ? { room_details: hydrationMeta } : {}),
-      room_access: roomAccess
+      room_access: roomAccess,
+      ...(doctorMode ? { doctor_mode: true } : {})
+    };
+  } else if (doctorMode) {
+    result.status_meta = {
+      ...(result.status_meta || {}),
+      doctor_mode: true
     };
   }
   applyStatusRoomDetailCoverage(result);
@@ -5122,7 +5131,7 @@ async function status(args) {
     printJson(result);
     return;
   }
-  printStatus(result);
+  printStatus(result, { doctorMode });
 }
 
 async function plugin(args) {
@@ -5486,6 +5495,7 @@ function summarizeStatus({
   };
   result.readiness = statusReadiness(result, { authWarning });
   result.next_actions = statusNextActions(result, { authWarning, roomAccess });
+  result.onboarding = statusOnboarding(result, { authWarning, roomAccess });
   return result;
 }
 
@@ -5637,6 +5647,148 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
     actions.push(`Add owner/runtime/cost_class/latency_class observation fields to edge configs for ${missingDescriptors.slice(0, 3).join(", ")}${missingDescriptors.length > 3 ? ", ..." : ""}.`);
   }
   return unique(actions).slice(0, 6);
+}
+
+function statusOnboarding(result, { authWarning = "", roomAccess = "full" } = {}) {
+  const s = result.summary || {};
+  const centralOk = Boolean(result.health?.ok);
+  const hasToken = !authWarning;
+  const registeredNodes = Number(s.registered_nodes || 0);
+  const onlineNodes = Number(s.nodes || 0);
+  const onlineAgents = Number(s.online_agents || 0);
+  const activeRooms = Number(s.active_rooms || 0);
+  const duplicateAgents = Number(s.duplicate_agent_ids || 0);
+  const staleRuns = Number(s.stale_running_runs || 0) + Number(s.stale_queued_runs || 0) + Number(s.orphaned_running_runs || 0);
+  const stage = !centralOk
+    ? "central"
+    : !hasToken
+      ? "token"
+      : onlineAgents > 0
+        ? "ready"
+        : registeredNodes > 0 || onlineNodes > 0
+          ? "edge"
+          : "pairing";
+  const checklist = [
+    {
+      id: "central",
+      label: "Central reachable",
+      status: centralOk ? "pass" : "fail",
+      detail: centralOk ? "GET /health responded." : "Central health did not report ok."
+    },
+    {
+      id: "token",
+      label: "Operator token",
+      status: hasToken ? "pass" : "warn",
+      detail: hasToken ? "Authenticated status details are visible." : "Pass --token or set AGENT_BUS_TOKEN to show agents, nodes, rooms, and recovery hints."
+    },
+    {
+      id: "edge",
+      label: "Edge connected",
+      status: !hasToken ? "unknown" : onlineNodes > 0 ? "pass" : registeredNodes > 0 ? "warn" : "todo",
+      detail: !hasToken
+        ? "Hidden until an operator token is provided."
+        : onlineNodes > 0
+          ? `${onlineNodes} online node${onlineNodes === 1 ? "" : "s"}.`
+          : registeredNodes > 0
+            ? "An edge is registered, but none are currently fresh online."
+            : "Create a pair code and join the first edge."
+    },
+    {
+      id: "agents",
+      label: "Agents discoverable",
+      status: !hasToken ? "unknown" : onlineAgents > 0 ? "pass" : "todo",
+      detail: !hasToken
+        ? "Hidden until an operator token is provided."
+        : onlineAgents > 0
+          ? `${onlineAgents} online agent${onlineAgents === 1 ? "" : "s"} ready for routing.`
+          : "Start an edge with at least one enabled agent."
+    },
+    {
+      id: "rooms",
+      label: "Room path",
+      status: !hasToken || roomAccess !== "full" ? "unknown" : staleRuns > 0 ? "warn" : activeRooms > 0 ? "pass" : onlineAgents > 0 ? "ready" : "todo",
+      detail: !hasToken || roomAccess !== "full"
+        ? "Use an admin token for room inventory and recovery hints."
+        : staleRuns > 0
+          ? "Room inventory has stale or orphaned work; inspect before waking old rooms."
+          : activeRooms > 0
+            ? `${activeRooms} active room${activeRooms === 1 ? "" : "s"}.`
+            : onlineAgents > 0
+              ? "Ready to create a live room."
+              : "No room can run until at least one agent is online."
+    },
+    {
+      id: "safety",
+      label: "Routing safety",
+      status: duplicateAgents > 0 ? "fail" : "pass",
+      detail: duplicateAgents > 0 ? "Duplicate online agent ids must be renamed before routing work." : "No duplicate online agent ids detected."
+    }
+  ];
+  const commands = [
+    {
+      label: "2-minute no-secret room demo",
+      command: "agent-bus demo zero-token --out-dir agent-bus-demo-output",
+      share_safe: true,
+      when: "first local proof"
+    },
+    {
+      label: "5-minute issue-to-PR demo",
+      command: "agent-bus demo issue --out-dir agent-bus-issue-demo",
+      share_safe: true,
+      when: "north-star planner/coder/reviewer artifact proof"
+    },
+    {
+      label: "Gateway status doctor",
+      command: "agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN --doctor",
+      share_safe: false,
+      when: "after Central is deployed"
+    },
+    {
+      label: "Edge doctor",
+      command: "agent-bus doctor --config edge.config.json",
+      share_safe: false,
+      when: "after joining or changing an edge"
+    }
+  ];
+  if (hasToken && roomAccess === "full" && onlineAgents > 0) {
+    commands.push({
+      label: "Live room smoke",
+      command: statusRoomCreateExample(result),
+      share_safe: false,
+      when: "after agents are online"
+    });
+  }
+  return {
+    object: "agent_bus.status_onboarding",
+    stage,
+    summary: statusOnboardingSummary(stage),
+    checklist,
+    commands,
+    demo: {
+      recommended: "agent-bus demo issue --out-dir agent-bus-issue-demo",
+      artifact_index: "agent-bus-issue-demo/README.md",
+      proves: [
+        "local Central/Edge startup",
+        "planner -> coder -> reviewer room handoff",
+        "REPORT/BLACKBOARD/DONE capture",
+        "reports-only export, event replay, patch draft, and PR draft artifacts"
+      ],
+      does_not_prove: [
+        "real GitHub issue ingestion",
+        "branch creation, commits, or live PR opening",
+        "real model/provider tool execution",
+        "production auth policy readiness"
+      ]
+    }
+  };
+}
+
+function statusOnboardingSummary(stage) {
+  if (stage === "central") return "Central needs attention before Agent Bus can route work.";
+  if (stage === "token") return "Central is reachable; provide an operator token to inspect agents, rooms, and recovery hints.";
+  if (stage === "pairing") return "Central is authenticated; join the first Edge and start an agent.";
+  if (stage === "edge") return "An Edge is known, but no online agent is ready yet.";
+  return "Agent Bus is ready for live rooms; run the issue-to-PR demo for a shareable north-star proof.";
 }
 
 function statusRoomCreateExample(result) {
@@ -6282,15 +6434,36 @@ function lastRunHealth(status) {
   return "unknown";
 }
 
-function printStatus(result) {
+function printStatus(result, { doctorMode = false } = {}) {
   const s = result.summary || {};
   console.log(`Agent Bus status: ${result.ok ? "OK" : "WARN"}`);
   console.log(`Gateway: nodes ${s.nodes}/${s.registered_nodes}, agents ${s.agents}/${s.registered_agents}, online ${s.online_agents}, busy ${s.busy_agents || 0}, duplicate_agents ${s.duplicate_agent_ids || 0}, stale_running ${s.stale_running_runs || 0}, orphaned_running ${s.orphaned_running_runs || 0}, queued ${s.queued}`);
   if (result.readiness) {
     console.log(`Readiness: ${result.readiness.status} (${result.readiness.level}) - ${result.readiness.message}`);
   }
+  if (result.onboarding) {
+    console.log(`First-run: ${result.onboarding.stage} - ${result.onboarding.summary}`);
+  }
   if (result.warnings?.length) {
     for (const warning of result.warnings) console.log(`Warning: ${warning}`);
+  }
+  if (result.onboarding?.checklist?.length) {
+    console.log("\nFirst-run checklist:");
+    for (const item of result.onboarding.checklist) {
+      console.log(`- [${String(item.status || "unknown").toUpperCase()}] ${item.label}: ${item.detail}`);
+    }
+  }
+  if (result.onboarding?.demo) {
+    console.log("\nRecommended proof:");
+    console.log(`- ${result.onboarding.demo.recommended}`);
+    console.log(`- artifact index: ${result.onboarding.demo.artifact_index}`);
+  }
+  if (doctorMode && result.onboarding?.commands?.length) {
+    console.log("\nDoctor and demo commands:");
+    for (const item of result.onboarding.commands) {
+      const safe = item.share_safe ? "share-safe" : "operator";
+      console.log(`- ${item.label} (${safe}): ${item.command}`);
+    }
   }
   if (result.next_actions?.length) {
     console.log("\nNext actions:");

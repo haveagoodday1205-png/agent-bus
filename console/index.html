@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260517-console24" />
+    <link rel="stylesheet" href="./styles.css?v=20260517-console25" />
   </head>
   <body>
     <header class="topbar">
@@ -73,7 +73,10 @@
           <div class="tool-surface">
             <div class="section-head">
               <h2 data-i18n="quickstart">Quickstart</h2>
-              <button id="copyStatusCommandButton" type="button" data-i18n="copyStatus">Copy Status</button>
+              <div class="button-row">
+                <button id="copyDemoCommandButton" type="button" data-i18n="copyDemo">Copy Demo</button>
+                <button id="copyStatusCommandButton" type="button" data-i18n="copyStatus">Copy Status</button>
+              </div>
             </div>
             <div id="readinessPanel" class="readiness-panel"></div>
             <div id="quickstartList" class="check-list"></div>
@@ -427,6 +430,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260517-console24"></script>
+    <script type="module" src="./app.js?v=20260517-console25"></script>
   </body>
 </html>

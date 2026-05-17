@@ -146,6 +146,8 @@ agent-bus setup edge \
 
 Without `--code`, pass `--token` or `AGENT_BUS_TOKEN` for a trusted manual config. `--service auto` chooses systemd on Linux, launchd on macOS, and Windows Service Control commands on Windows. It writes a template only; review and install it using your normal OS service workflow.
 
+Generated edge presets include observation-only metadata for `owner`, `runtime`, `permission_profile`, `cost_class`, `latency_class`, `allowed_rooms`, and `allowed_wake_targets`. Central surfaces these in `agent-bus status` and the Web Console so operators can see whether an agent is meant to be a coder, researcher, model gateway, or local demo adapter before routing work. These fields are still descriptive only; the local edge runtime and OS sandbox remain the permission boundary.
+
 On the central/operator machine, use `setup central` to write a central config, generate an optional service template, and print the first edge join command plus an operator checklist:
 
 ```bash

@@ -14,6 +14,13 @@
       "enabled": true,
       "adapter": "command",
       "capabilities": ["code", "review", "shell", "files"],
+      "owner": "edge-operator",
+      "runtime": "codex-cli",
+      "permission_profile": "coder",
+      "cost_class": "variable",
+      "latency_class": "interactive",
+      "allowed_rooms": ["room_*"],
+      "allowed_wake_targets": [],
       "pingUrl": "https://api.openai.com/v1/models",
       "healthCommand": "codex --help | head -40",
       "runCommand": "CODEX_COMMAND=codex bash ./scripts/codex-agent-bus.sh"

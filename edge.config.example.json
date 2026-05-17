@@ -18,7 +18,12 @@
       "enabled": true,
       "adapter": "echo",
       "capabilities": ["shell", "files"],
+      "owner": "edge-operator",
+      "runtime": "agent-bus-echo",
       "permission_profile": "local-demo",
+      "cost_class": "free",
+      "latency_class": "interactive",
+      "allowed_rooms": ["room_*"],
       "allowed_wake_targets": ["local-echo"]
     }
   ]

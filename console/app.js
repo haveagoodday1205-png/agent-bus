@@ -160,7 +160,7 @@ const messages = {
     roomFailed: "room failed: {message}",
     roomGoalEmpty: "room goal is empty",
     roomGoalPlaceholder: "Describe the goal for the autonomous agent room",
-    roomMessage: "Room Message",
+    roomMessage: "Message",
     roomMessageEmpty: "room message is empty",
     roomMessageFailed: "room message failed: {message}",
     roomMessagePlaceholder: "Send a message into the selected room",
@@ -168,6 +168,7 @@ const messages = {
     roomDoctor: "Doctor",
     roomDoctorFailed: "room doctor failed: {message}",
     roomLoadFailed: "room load failed: {message}",
+    roomChat: "Room Chat",
     roomTimeline: "Room Timeline",
     pauseRoom: "Pause",
     pauseRoomFailed: "pause failed: {message}",
@@ -358,7 +359,7 @@ const messages = {
     roomFailed: "房间创建失败：{message}",
     roomGoalEmpty: "房间目标不能为空",
     roomGoalPlaceholder: "描述这个自主 agent 房间要完成的目标",
-    roomMessage: "房间消息",
+    roomMessage: "消息",
     roomMessageEmpty: "房间消息不能为空",
     roomMessageFailed: "房间消息发送失败：{message}",
     roomMessagePlaceholder: "向当前选中的房间发送消息",
@@ -366,6 +367,7 @@ const messages = {
     roomDoctor: "诊断",
     roomDoctorFailed: "房间诊断失败：{message}",
     roomLoadFailed: "房间加载失败：{message}",
+    roomChat: "房间群聊",
     roomTimeline: "房间时间线",
     pauseRoom: "暂停",
     pauseRoomFailed: "暂停失败：{message}",
@@ -1437,29 +1439,27 @@ function renderRoom(room) {
   updateDashboardStats();
   const messageList = $("roomMessages");
   messageList.textContent = "";
-  for (const item of room.messages || []) {
-    const node = document.createElement("div");
-    node.className = `run-item conversation-item ${item.speaker === "user" ? "user" : ""}`;
-    node.innerHTML = `
-      <div class="run-head">
-        <strong>${escapeHtml(item.speaker || item.role || "agent")}</strong>
-        <span class="muted">${escapeHtml(item.at || "")}</span>
-      </div>
-      <pre class="output">${escapeHtml((item.content || "").trim())}</pre>
-    `;
-    messageList.append(node);
+  const chatItems = roomChatItems(room);
+  if (!chatItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state room-chat-empty";
+    empty.textContent = t("noRoom");
+    messageList.append(empty);
+  }
+  for (const item of chatItems) {
+    messageList.append(renderRoomChatItem(item));
   }
   const reports = $("roomReports");
   reports.textContent = "";
   if ((room.reports || []).length) {
     const title = document.createElement("div");
-    title.className = "subhead";
+    title.className = "subhead room-side-section";
     title.textContent = t("reports");
     reports.append(title);
   }
   for (const report of room.reports || []) {
     const node = document.createElement("div");
-    node.className = "run-item";
+    node.className = "run-item room-side-item";
     node.innerHTML = `
       <div class="run-head">
         <strong>${escapeHtml(report.speaker || "report")}</strong>
@@ -1472,13 +1472,13 @@ function renderRoom(room) {
   const notes = room.blackboard?.notes || [];
   if (notes.length) {
     const title = document.createElement("div");
-    title.className = "subhead";
+    title.className = "subhead room-side-section";
     title.textContent = "BLACKBOARD";
     reports.append(title);
   }
   for (const note of notes) {
     const node = document.createElement("div");
-    node.className = "run-item";
+    node.className = "run-item room-side-item";
     node.innerHTML = `
       <div class="run-head">
         <strong>${escapeHtml(note.speaker || "blackboard")}</strong>
@@ -1490,14 +1490,14 @@ function renderRoom(room) {
   }
   if ((room.runs || []).length) {
     const title = document.createElement("div");
-    title.className = "subhead";
+    title.className = "subhead room-side-section";
     title.textContent = "RUNS";
     reports.append(title);
   }
   for (const run of room.runs || []) {
     const output = (run.stdout || run.summary || run.stderr || "").trim();
     const node = document.createElement("div");
-    node.className = "run-item";
+    node.className = "run-item room-side-item";
     node.innerHTML = `
       <div class="run-head">
         <div><strong>${escapeHtml(run.agent_id || "-")}</strong> <span class="muted">${escapeHtml(run.node_id || run.id || "")}</span></div>
@@ -1508,6 +1508,126 @@ function renderRoom(room) {
     reports.append(node);
   }
   renderOverview();
+}
+
+function roomChatItems(room = {}) {
+  const items = [];
+  let ordinal = 0;
+  for (const message of room.messages || []) {
+    const content = roomItemContent(message);
+    if (!content) continue;
+    items.push(normalizeRoomChatItem({
+      kind: "message",
+      speaker: message.speaker || message.role || "agent",
+      role: message.role || "",
+      status: message.status || "",
+      at: message.at || message.created_at || message.completed_at || "",
+      content,
+      runId: message.run_id || "",
+      ordinal: ordinal += 1
+    }));
+  }
+  if (items.length) {
+    return sortRoomChatItems(items);
+  }
+  for (const report of room.reports || []) {
+    const content = roomItemContent(report);
+    if (!content) continue;
+    items.push(normalizeRoomChatItem({
+      kind: "report",
+      speaker: report.speaker || "report",
+      role: "REPORT",
+      at: report.at || report.created_at || "",
+      content,
+      ordinal: ordinal += 1
+    }));
+  }
+  for (const note of room.blackboard?.notes || []) {
+    const content = roomItemContent(note);
+    if (!content) continue;
+    items.push(normalizeRoomChatItem({
+      kind: "blackboard",
+      speaker: note.speaker || "blackboard",
+      role: "BLACKBOARD",
+      at: note.at || note.created_at || "",
+      content,
+      ordinal: ordinal += 1
+    }));
+  }
+  return sortRoomChatItems(items);
+}
+
+function sortRoomChatItems(items) {
+  return items
+    .sort((a, b) => (a.timestamp - b.timestamp) || (a.ordinal - b.ordinal))
+    .filter((item, index, sorted) => !isDuplicateChatItem(item, sorted[index - 1]));
+}
+
+function normalizeRoomChatItem(item) {
+  const speaker = String(item.speaker || "agent").trim() || "agent";
+  const kind = String(item.kind || "message").toLowerCase();
+  return {
+    ...item,
+    kind,
+    speaker,
+    label: roomChatLabel(kind, item.role, item.status),
+    content: String(item.content || "").trim(),
+    timestamp: Date.parse(item.at || "") || Number.MAX_SAFE_INTEGER
+  };
+}
+
+function roomItemContent(item = {}) {
+  return String(item.content || item.message || item.text || item.summary || "").trim();
+}
+
+function roomChatLabel(kind, role = "", status = "") {
+  if (kind === "report") return "REPORT";
+  if (kind === "blackboard") return "BLACKBOARD";
+  const parts = [];
+  if (role && role !== "user") parts.push(role);
+  if (status) parts.push(statusText(status));
+  return parts.join(" / ") || "";
+}
+
+function isDuplicateChatItem(item, previous) {
+  if (!previous) return false;
+  return item.kind === previous.kind
+    && item.speaker === previous.speaker
+    && item.content === previous.content
+    && item.at === previous.at;
+}
+
+function renderRoomChatItem(item) {
+  const node = document.createElement("article");
+  const isUser = ["user", "operator", "admin"].includes(String(item.speaker || "").toLowerCase());
+  const kindClass = item.kind.replace(/[^a-z0-9_-]/g, "") || "message";
+  node.className = `chat-message ${isUser ? "is-user" : "is-agent"} is-${kindClass}`;
+  node.innerHTML = `
+    <div class="chat-avatar" aria-hidden="true">${escapeHtml(chatInitials(item.speaker))}</div>
+    <div class="chat-bubble">
+      <div class="chat-meta">
+        <strong>${escapeHtml(item.speaker)}</strong>
+        ${item.label ? `<span>${escapeHtml(item.label)}</span>` : ""}
+        <time>${escapeHtml(formatChatTime(item.at))}</time>
+      </div>
+      <div class="chat-text">${escapeHtml(item.content)}</div>
+      ${item.runId ? `<div class="chat-run-id">${escapeHtml(item.runId)}</div>` : ""}
+    </div>
+  `;
+  return node;
+}
+
+function chatInitials(value) {
+  const text = String(value || "AB").trim();
+  const words = text.split(/[\s._:-]+/).filter(Boolean);
+  if (words.length >= 2) return `${words[0][0] || ""}${words[1][0] || ""}`.toUpperCase();
+  return text.slice(0, 2).toUpperCase();
+}
+
+function formatChatTime(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return String(value || "");
+  return date.toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 function renderRoomDoctor(doctor) {

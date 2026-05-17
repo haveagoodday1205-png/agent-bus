@@ -1676,11 +1676,16 @@ function roomItemContent(item = {}) {
 function roomChatDisplayContent(item = {}, kind = "") {
   if (["report", "blackboard"].includes(String(kind || "").toLowerCase())) return "";
   if (!isRoomDialogueSpeaker(item.speaker || item.role)) return "";
-  const lines = roomItemContent(item)
-    .split(/\r?\n/)
+  const rawLines = roomItemContent(item).split(/\r?\n/);
+  const lines = rawLines
     .map(roomChatDialogueLine)
     .filter(Boolean);
-  return trimBlankLines(lines).join("\n").trim();
+  const content = trimBlankLines(lines).join("\n").trim();
+  if (content) return content;
+  const reportLines = rawLines
+    .map(roomChatReportFallbackLine)
+    .filter(Boolean);
+  return trimBlankLines(reportLines).join("\n").trim();
 }
 
 function isVisibleRoomChatItem(item) {
@@ -1713,6 +1718,14 @@ function roomChatDialogueLine(line) {
   const text = String(line || "").trimEnd();
   if (isRoomChatNoiseLine(text)) return "";
   return stripRoomProtocolTail(text).trimEnd();
+}
+
+function roomChatReportFallbackLine(line) {
+  const text = String(line || "").trim();
+  if (!text || isRoomChatNoiseLine(text.replace(/^REPORT\b\s*:?\s*/i, ""))) return "";
+  const match = text.match(/^REPORT\b\s*:?\s*(.*)$/i);
+  if (!match) return "";
+  return stripRoomProtocolTail(match[1]).replace(/\s*\bDONE\b\s*:?\s*$/i, "").trim();
 }
 
 function stripRoomProtocolTail(line) {

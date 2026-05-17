@@ -256,6 +256,7 @@ async function main() {
   assert(cliStatus.permission_observations?.with_cost_class === 1, "CLI status did not summarize cost_class observations");
   assert(cliStatus.permission_observations?.with_latency_class === 1, "CLI status did not summarize latency_class observations");
   assert(cliStatus.permission_observations?.profiles?.["offline-smoke"] === 1, "CLI status did not include permission profile distribution");
+  assert(cliStatus.next_actions?.some((item) => /owner\/runtime\/cost_class\/latency_class/.test(item)), `CLI status did not suggest adding descriptive observation fields: ${JSON.stringify(cliStatus.next_actions)}`);
   assert(cliStatus.nodes?.some((item) => item.id === "offline-smoke-node" && item.freshness?.startsWith("online/fresh")), "CLI status did not include node freshness");
   assert(cliStatus.rooms?.some((item) => item.id === finalRoom.id), "CLI status did not include the smoke room");
   const statusAgent = cliStatus.agents?.find((item) => item.id === "offline-agent");

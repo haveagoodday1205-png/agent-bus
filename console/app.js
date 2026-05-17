@@ -429,7 +429,7 @@ const messages = {
 
 const apiBase = new URL("../", window.location.href);
 $("gatewayLabel").textContent = apiBase.href.replace(/\/$/, "");
-$("tokenInput").value = sessionStorage.getItem("agentBusToken") || "";
+$("tokenInput").value = initialConsoleToken();
 $("languageSelect").value = state.lang;
 applyLanguage();
 setTokenStatus($("tokenInput").value ? "tokenSaved" : "tokenRequired", $("tokenInput").value ? "" : "");
@@ -1983,6 +1983,21 @@ function logEvent(message) {
 
 function currentToken() {
   return normalizeToken($("tokenInput").value || sessionStorage.getItem("agentBusToken") || "");
+}
+
+function initialConsoleToken() {
+  const hash = String(window.location.hash || "").replace(/^#/, "");
+  const params = new URLSearchParams(hash);
+  const hashToken = normalizeToken(params.get("token") || params.get("access_token") || "");
+  if (hashToken) {
+    sessionStorage.setItem("agentBusToken", hashToken);
+    params.delete("token");
+    params.delete("access_token");
+    const nextHash = params.toString();
+    history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ""}`);
+    return hashToken;
+  }
+  return sessionStorage.getItem("agentBusToken") || "";
 }
 
 function normalizeToken(value) {

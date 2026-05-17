@@ -446,6 +446,57 @@ tbody tr:last-child td {
   margin: 14px 0;
 }
 
+.composer-assist {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  gap: 4px;
+  max-height: min(320px, 44vh);
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 18px 42px rgba(17, 24, 39, 0.18);
+}
+
+.composer-assist[hidden] {
+  display: none;
+}
+
+.composer-assist-item {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.composer-assist-item:hover,
+.composer-assist-item.active {
+  background: var(--surface-2);
+}
+
+.composer-assist-item:disabled {
+  opacity: 0.68;
+}
+
+.composer-assist-label {
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.composer-assist-detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .room-detail-surface #roomMessages {
   order: 4;
 }

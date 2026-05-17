@@ -17,6 +17,7 @@ const state = {
   currentRoom: null,
   currentRoomDoctor: null,
   currentTrace: null,
+  composerAssist: null,
   roomPolling: null,
   polling: null,
   lang: localStorage.getItem("agentBusLanguage") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"),
@@ -101,6 +102,7 @@ const messages = {
     noTrace: "No trace loaded.",
     noAgents: "No registered agents.",
     noAgentChat: "No agent conversation yet.",
+    noComposerMatches: "No matches",
     roomDebugDetails: "Debug Details",
     noRoom: "No room selected.",
     noThread: "No thread selected.",
@@ -303,6 +305,7 @@ const messages = {
     noTrace: "尚未加载 trace。",
     noAgents: "没有已注册的智能体。",
     noAgentChat: "还没有 agent 对话。",
+    noComposerMatches: "没有匹配项",
     roomDebugDetails: "调试详情",
     noRoom: "尚未选择房间。",
     noThread: "尚未选择线程。",
@@ -487,6 +490,7 @@ $("clearTraceButton").addEventListener("click", () => {
 });
 $("clearEventsButton").addEventListener("click", () => { $("eventLog").textContent = ""; });
 
+initComposerAssist();
 refreshAll();
 syncTaskMode();
 setInterval(() => {
@@ -1991,6 +1995,361 @@ function modelRequestBody({ endpoint, model, prompt, cacheScope, timeoutSeconds 
     ...(cacheScope ? { prompt_cache_key: cacheScope } : {}),
     ...timeout
   };
+}
+
+function initComposerAssist() {
+  const menu = document.createElement("div");
+  menu.id = "composerAssist";
+  menu.className = "composer-assist";
+  menu.hidden = true;
+  document.body.append(menu);
+  state.composerAssist = {
+    menu,
+    target: null,
+    trigger: "",
+    query: "",
+    start: 0,
+    end: 0,
+    selectedIndex: 0,
+    items: []
+  };
+  for (const id of ["roomMessage", "roomGoal", "taskMessage", "chatPrompt"]) {
+    const target = $(id);
+    if (!target) continue;
+    target.addEventListener("input", () => updateComposerAssist(target));
+    target.addEventListener("click", () => updateComposerAssist(target));
+    target.addEventListener("focus", () => updateComposerAssist(target));
+    target.addEventListener("keydown", handleComposerAssistKeydown);
+    target.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (!menu.matches(":hover")) closeComposerAssist();
+      }, 120);
+    });
+  }
+  document.addEventListener("mousedown", (event) => {
+    const active = state.composerAssist?.target;
+    if (menu.contains(event.target) || active === event.target) return;
+    closeComposerAssist();
+  });
+  window.addEventListener("resize", positionComposerAssist);
+  document.addEventListener("scroll", positionComposerAssist, true);
+}
+
+function handleComposerAssistKeydown(event) {
+  const assist = state.composerAssist;
+  if (!assist || assist.target !== event.target || assist.menu.hidden) return;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    moveComposerAssistSelection(1);
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    moveComposerAssistSelection(-1);
+    return;
+  }
+  if (event.key === "Enter" || event.key === "Tab") {
+    const item = assist.items[assist.selectedIndex];
+    if (item && !item.disabled) {
+      event.preventDefault();
+      selectComposerAssistItem(assist.selectedIndex);
+    }
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeComposerAssist();
+  }
+}
+
+function updateComposerAssist(target) {
+  const trigger = currentComposerTrigger(target);
+  if (!trigger) {
+    closeComposerAssist();
+    return;
+  }
+  const items = trigger.trigger === "@"
+    ? agentComposerItems(trigger.query)
+    : slashComposerItems(target, trigger.query);
+  const assist = state.composerAssist;
+  assist.target = target;
+  assist.trigger = trigger.trigger;
+  assist.query = trigger.query;
+  assist.start = trigger.start;
+  assist.end = trigger.end;
+  assist.items = items.length ? items : [emptyComposerItem()];
+  assist.selectedIndex = firstEnabledComposerItemIndex(assist.items);
+  renderComposerAssist();
+}
+
+function currentComposerTrigger(target) {
+  const end = target.selectionStart ?? 0;
+  const prefix = String(target.value || "").slice(0, end);
+  const match = prefix.match(/(^|[\s([{])([@/][A-Za-z0-9_.-]*)$/);
+  if (!match) return null;
+  const token = match[2];
+  return {
+    trigger: token[0],
+    query: token.slice(1).toLowerCase(),
+    start: prefix.length - token.length,
+    end
+  };
+}
+
+function agentComposerItems(query) {
+  const normalized = String(query || "").toLowerCase();
+  return [...state.agents]
+    .filter((agent) => {
+      const haystack = [agent.id, agent.role, agent.kind, agent.node_id, ...(agent.capabilities || [])]
+        .join(" ")
+        .toLowerCase();
+      return !normalized || haystack.includes(normalized);
+    })
+    .sort((a, b) => agentComposerRank(a) - agentComposerRank(b) || String(a.id || "").localeCompare(String(b.id || "")))
+    .slice(0, 9)
+    .map((agent) => ({
+      kind: "agent",
+      label: `@${agent.id}`,
+      detail: [agent.role || agent.kind || t("agent"), statusText(agent.status || agent.node_status || "unknown")]
+        .filter(Boolean)
+        .join(" - "),
+      insert: `@${agent.id} `
+    }));
+}
+
+function agentComposerRank(agent) {
+  const online = String(agent.status || agent.node_status || "").toLowerCase() === "online" ? 0 : 10;
+  const reachable = String(agent.ping_status || "").toLowerCase() === "reachable" ? 0 : 1;
+  return online + reachable;
+}
+
+function slashComposerItems(target, query) {
+  const normalized = String(query || "").toLowerCase();
+  return composerCommandDefinitions(target)
+    .filter((item) => [item.label, item.detail, item.insert].join(" ").toLowerCase().includes(normalized))
+    .slice(0, 9);
+}
+
+function composerCommandDefinitions(target) {
+  const zh = state.lang === "zh";
+  const id = target.id;
+  if (id === "roomMessage") {
+    return [
+      {
+        label: "/wake",
+        detail: zh ? "唤醒房间里的下一个 agent" : "Wake the next room agent",
+        insert: "",
+        onSelect: () => wakeCurrentRoom()
+      },
+      {
+        label: "/doctor",
+        detail: zh ? "打开房间诊断" : "Open room doctor",
+        insert: "",
+        onSelect: () => loadCurrentRoomDoctor()
+      },
+      {
+        label: "/trace",
+        detail: zh ? "打开当前房间 trace" : "Open this room trace",
+        insert: "",
+        onSelect: () => openCurrentRoomTrace()
+      },
+      {
+        label: "/export",
+        detail: zh ? "导出房间摘要" : "Export room summary",
+        insert: "",
+        onSelect: () => exportCurrentRoomSummary()
+      },
+      {
+        label: "/pause",
+        detail: zh ? "暂停当前房间" : "Pause this room",
+        insert: "",
+        onSelect: () => pauseCurrentRoom()
+      },
+      {
+        label: "/handoff",
+        detail: zh ? "插入一条继续推进提示" : "Insert a continuation prompt",
+        insert: zh ? "请基于当前房间上下文继续推进，只输出关键对话内容。" : "Continue from the current room context and reply with only the useful conversation."
+      }
+    ];
+  }
+  if (id === "roomGoal") {
+    return [
+      {
+        label: "/issue",
+        detail: zh ? "生成 issue -> planner -> coder -> reviewer 目标" : "Issue to planner/coder/reviewer goal",
+        insert: "Turn this issue into a planner -> coder -> reviewer workflow. Planner should break down the work, coder should draft the patch, reviewer should check risk and tests, then produce a concise patch/PR draft."
+      },
+      {
+        label: "/demo",
+        detail: zh ? "生成 live demo 目标" : "Live demo goal",
+        insert: "Run a concise live demo that proves the selected agents can collaborate in this room. Each agent should write one short conversational update, then summarize the result."
+      },
+      {
+        label: "/review",
+        detail: zh ? "生成项目审查目标" : "Project review goal",
+        insert: "Review the current Agent Bus project state, identify the highest-impact product polish work, and return a short prioritized plan."
+      },
+      {
+        label: "/handoff",
+        detail: zh ? "生成交接阅读目标" : "Read handoff goal",
+        insert: "Read docs/project-handoff.md first, summarize the current architecture and online agents, then propose the next concrete development step."
+      }
+    ];
+  }
+  if (id === "taskMessage") {
+    return [
+      {
+        label: "/group",
+        detail: zh ? "切换成群聊任务" : "Switch to group chat task",
+        insert: "Discuss this as a group and produce a concise decision:",
+        onSelect: () => setTaskMode("group")
+      },
+      {
+        label: "/broadcast",
+        detail: zh ? "切换成广播任务" : "Switch to broadcast task",
+        insert: "Each selected agent should report its current status, blockers, and next recommended step:",
+        onSelect: () => setTaskMode("broadcast")
+      },
+      {
+        label: "/explicit",
+        detail: zh ? "切换成选中 agent 任务" : "Switch to selected-agent task",
+        insert: "Selected agents, handle this task and return concise results:",
+        onSelect: () => setTaskMode("explicit")
+      },
+      {
+        label: "/review",
+        detail: zh ? "插入审查任务模板" : "Insert review task template",
+        insert: "Review this change for bugs, regressions, missing tests, and deployment risk."
+      }
+    ];
+  }
+  if (id === "chatPrompt") {
+    return [
+      {
+        label: "/models",
+        detail: zh ? "刷新模型列表" : "Refresh model list",
+        insert: "",
+        onSelect: () => loadModels()
+      },
+      {
+        label: "/summarize",
+        detail: zh ? "插入总结提示" : "Insert summarization prompt",
+        insert: "Summarize the important points, decisions, and next actions."
+      },
+      {
+        label: "/compare",
+        detail: zh ? "插入对比提示" : "Insert comparison prompt",
+        insert: "Compare the options, call out tradeoffs, and recommend one path."
+      },
+      {
+        label: "/agent",
+        detail: zh ? "插入 agent 模型测试提示" : "Insert agent model test prompt",
+        insert: "Introduce yourself as an Agent Bus agent and describe what you can help with."
+      }
+    ];
+  }
+  return [];
+}
+
+function setTaskMode(mode) {
+  $("taskMode").value = mode;
+  syncTaskMode();
+}
+
+function emptyComposerItem() {
+  return {
+    kind: "empty",
+    label: t("noComposerMatches"),
+    detail: "",
+    disabled: true
+  };
+}
+
+function firstEnabledComposerItemIndex(items) {
+  const index = items.findIndex((item) => !item.disabled);
+  return index === -1 ? 0 : index;
+}
+
+function moveComposerAssistSelection(direction) {
+  const assist = state.composerAssist;
+  if (!assist?.items?.length) return;
+  let index = assist.selectedIndex;
+  for (let i = 0; i < assist.items.length; i += 1) {
+    index = (index + direction + assist.items.length) % assist.items.length;
+    if (!assist.items[index]?.disabled) {
+      assist.selectedIndex = index;
+      renderComposerAssist();
+      return;
+    }
+  }
+}
+
+function renderComposerAssist() {
+  const assist = state.composerAssist;
+  if (!assist?.menu || !assist.target) return;
+  assist.menu.textContent = "";
+  assist.items.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `composer-assist-item ${index === assist.selectedIndex ? "active" : ""}`;
+    button.disabled = Boolean(item.disabled);
+    button.innerHTML = `
+      <span class="composer-assist-label">${escapeHtml(item.label)}</span>
+      ${item.detail ? `<span class="composer-assist-detail">${escapeHtml(item.detail)}</span>` : ""}
+    `;
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => selectComposerAssistItem(index));
+    assist.menu.append(button);
+  });
+  assist.menu.hidden = false;
+  positionComposerAssist();
+}
+
+function positionComposerAssist() {
+  const assist = state.composerAssist;
+  if (!assist?.menu || assist.menu.hidden || !assist.target) return;
+  const rect = assist.target.getBoundingClientRect();
+  const width = Math.min(Math.max(rect.width, 280), window.innerWidth - 24);
+  const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+  assist.menu.style.width = `${width}px`;
+  assist.menu.style.left = `${left}px`;
+  assist.menu.style.top = "0px";
+  assist.menu.style.visibility = "hidden";
+  const height = assist.menu.offsetHeight || 0;
+  const below = rect.bottom + 6;
+  const above = rect.top - height - 6;
+  const top = below + height > window.innerHeight - 8 && above > 8 ? above : below;
+  assist.menu.style.top = `${Math.max(8, top)}px`;
+  assist.menu.style.visibility = "visible";
+}
+
+function selectComposerAssistItem(index) {
+  const assist = state.composerAssist;
+  const item = assist?.items?.[index];
+  if (!assist?.target || !item || item.disabled) return;
+  const target = assist.target;
+  const before = target.value.slice(0, assist.start);
+  const after = target.value.slice(assist.end);
+  const insert = item.insert ?? item.label;
+  target.value = `${before}${insert}${after}`;
+  const caret = before.length + String(insert).length;
+  target.setSelectionRange(caret, caret);
+  closeComposerAssist();
+  target.focus();
+  target.dispatchEvent(new Event("input", { bubbles: true }));
+  if (typeof item.onSelect === "function") {
+    setTimeout(() => item.onSelect(), 0);
+  }
+}
+
+function closeComposerAssist() {
+  const assist = state.composerAssist;
+  if (!assist?.menu) return;
+  assist.menu.hidden = true;
+  assist.target = null;
+  assist.items = [];
+  assist.trigger = "";
+  assist.query = "";
 }
 
 async function request(path, options = {}) {

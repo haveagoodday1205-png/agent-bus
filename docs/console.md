@@ -18,6 +18,7 @@ The console can:
 - Select agents and submit tasks.
 - Preview routing decisions.
 - Enter a room through a group-chat layout with a room list, sticky chat composer, room header, and Central's normalized chat-history endpoint (`GET /rooms/{room_id}/chat`). The default chat stream shows agent conversation only; REPORT/BLACKBOARD/RUNS details are tucked into a collapsed debug panel.
+- Use composer assist in console text areas: type `@` to mention an agent from the live registry, or `/` to pick contextual room actions and prompt templates.
 - Poll thread, room, run, report, blackboard, and stdout/stderr results.
 - Run room doctor from the room detail view to show stale/failed/contract counts plus copyable recommended commands.
 - Open a room trace from the room detail view, look up trace ids, and export trace JSON.

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260517-console17" />
+    <link rel="stylesheet" href="./styles.css?v=20260517-console19" />
   </head>
   <body>
     <header class="topbar">
@@ -235,6 +235,38 @@
                 <button type="submit" data-i18n="createRoom">Create Room</button>
               </div>
             </form>
+            <form id="roomSettingsForm" class="tool-surface room-settings-surface">
+              <div class="section-head">
+                <h2 data-i18n="roomControls">Room Controls</h2>
+              </div>
+              <div class="room-settings-grid">
+                <label>
+                  <span data-i18n="status">Status</span>
+                  <select id="roomStatusEdit">
+                    <option value="active" data-i18n="active">active</option>
+                    <option value="running" data-i18n="running">running</option>
+                    <option value="paused" data-i18n="paused">paused</option>
+                    <option value="completed" data-i18n="completed">completed</option>
+                    <option value="finishing" data-i18n="finishing">finishing</option>
+                  </select>
+                </label>
+                <label>
+                  <span data-i18n="steps">Steps</span>
+                  <input id="roomStepsEdit" type="number" min="0" value="0" />
+                </label>
+                <label>
+                  <span data-i18n="maxSteps">Max Steps</span>
+                  <input id="roomMaxStepsEdit" type="number" min="0" value="0" />
+                </label>
+                <label>
+                  <span data-i18n="autoRetryLimit">Retry Limit</span>
+                  <input id="roomRetryLimitEdit" type="number" min="0" max="10" value="3" />
+                </label>
+              </div>
+              <div class="subhead" data-i18n="roomAgents">Room Agents</div>
+              <div id="roomAgentEditor" class="room-agent-editor"></div>
+              <button id="saveRoomSettingsButton" type="submit" data-i18n="save">Save</button>
+            </form>
             <details class="tool-surface room-inspector-surface room-debug-details">
               <summary data-i18n="roomDebugDetails">Debug Details</summary>
               <div id="roomReports" class="runs-list"></div>
@@ -370,6 +402,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260517-console17"></script>
+    <script type="module" src="./app.js?v=20260517-console19"></script>
   </body>
 </html>

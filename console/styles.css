@@ -372,6 +372,40 @@ tbody tr:last-child td {
   grid-template-columns: 1fr;
 }
 
+.room-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.room-agent-editor {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
+.room-agent-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 13px;
+}
+
+.room-agent-check input {
+  width: auto;
+}
+
+.room-agent-check span:nth-child(2) {
+  overflow-wrap: anywhere;
+  font-weight: 720;
+}
+
 .room-inspector-surface {
   max-height: min(48vh, 520px);
   overflow: auto;
@@ -1000,6 +1034,11 @@ tbody tr:last-child td {
   font-weight: 720;
 }
 
+.chat-room-stats .chat-room-running {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
 .conversation-list,
 .runs-list {
   display: grid;
@@ -1261,6 +1300,7 @@ tbody tr:last-child td {
   .overview-grid,
   .rooms-grid,
   .form-row,
+  .room-settings-grid,
   .model-options-grid,
   .edge-join-form,
   .pair-code-form,

@@ -401,6 +401,7 @@ async function main() {
       agents: ["offline-fail-agent"],
       wakeAgents: ["offline-fail-agent"],
       auto_rotate: false,
+      auto_retry_limit: 0,
       max_steps: 1
     })
   });
@@ -458,6 +459,27 @@ async function main() {
   assert(failedAfterRetry.runs?.filter((item) => item.agent_id === "offline-fail-agent" && item.status === "failed").length === 2, "failed-agent retry did not preserve both failed attempts");
   assert(failedAfterRetry.blackboard?.agent_checklist?.agents?.["offline-fail-agent"]?.run_count === 2, "failed-agent retry did not update checklist run count");
   await runCliJson(["room", "pause", failedAfterRetry.id, "--reason", "offline smoke failed room checked", "--gateway", base, "--token", token]);
+
+  const autoRetryRoom = await requestJson(`${base}/rooms`, {
+    method: "POST",
+    headers: authJsonHeaders(token),
+    body: JSON.stringify({
+      title: "Offline auto retry room",
+      goal: "Verify retryable room failures are retried three times automatically.",
+      agents: ["offline-fail-agent"],
+      wakeAgents: ["offline-fail-agent"],
+      auto_rotate: false,
+      max_steps: 1
+    })
+  });
+  const autoRetryFinalRoom = await waitForRoomAgentTerminalRuns(base, token, autoRetryRoom.id, "offline-fail-agent", 4);
+  const autoRetryRuns = (autoRetryFinalRoom.runs || []).filter((item) => item.agent_id === "offline-fail-agent");
+  assert(autoRetryRuns.length === 4, "auto retry room did not preserve original run plus three retries");
+  assert(autoRetryRuns.every((item) => item.status === "failed"), "auto retry room did not finish with failed terminal runs");
+  assert(autoRetryRuns.map((item) => item.attempt?.attempt_no || item.attempt_no).join(",") === "1,2,3,4", "auto retry room did not record attempt numbers 1..4");
+  assert((autoRetryFinalRoom.operations?.auto_failed_retries || []).length === 3, "auto retry room did not record three automatic retries");
+  assert((autoRetryFinalRoom.autonomy?.max_steps || 0) >= 4, "auto retry room did not expand max_steps to allow retry attempts");
+  await runCliJson(["room", "pause", autoRetryFinalRoom.id, "--reason", "offline smoke auto retry checked", "--gateway", base, "--token", token]);
 
   const authFailedRoom = await requestJson(`${base}/rooms`, {
     method: "POST",
@@ -597,6 +619,8 @@ async function main() {
     failed_room_status: failedFinalRoom.status,
     paused_room_id: pausedRoom.id,
     paused_cancelled_runs: pausedRoom.pause?.cancelled_queued_runs?.length || 0,
+    auto_retry_room_id: autoRetryFinalRoom.id,
+    auto_retry_runs: autoRetryRuns.length,
     run_id: run.id,
     failed_run_id: failedRun.id,
     reports: finalRoom.reports?.length || 0,
@@ -795,6 +819,19 @@ async function waitForRoomRunTerminal(base, token, roomId, agentId, timeoutMs = 
     await delay(250);
   }
   throw new Error(`Timed out waiting for terminal run from ${agentId} in room ${roomId}`);
+}
+
+async function waitForRoomAgentTerminalRuns(base, token, roomId, agentId, expectedRuns, timeoutMs = 30000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const room = await requestJson(`${base}/rooms/${roomId}`, { headers: authHeaders(token) });
+    const runs = (room.runs || []).filter((item) => item.agent_id === agentId);
+    const active = runs.some((item) => ["queued", "running"].includes(item.status));
+    const terminal = runs.filter((item) => ["completed", "failed", "error", "cancelled", "canceled"].includes(item.status));
+    if (!active && terminal.length >= expectedRuns) return room;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${expectedRuns} terminal runs from ${agentId} in room ${roomId}`);
 }
 
 async function waitForRunTerminal(base, token, runId, timeoutMs = 20000) {

@@ -534,6 +534,8 @@ class Handler(BaseHTTPRequestHandler):
                 parts = path.strip("/").split("/")
                 if len(parts) == 3 and parts[2] == "messages":
                     return self.json(add_room_message(self.config, parts[1], body, self.request_trace_id(body)), 201)
+                if len(parts) == 3 and parts[2] in ("update", "settings"):
+                    return self.json(update_room(self.config, parts[1], body))
                 if len(parts) == 3 and parts[2] == "wake":
                     return self.json(wake_room(self.config, parts[1], body, self.request_trace_id(body)))
                 if len(parts) == 3 and parts[2] == "pause":
@@ -1015,6 +1017,7 @@ STATUS_RUN_HEARTBEAT_STALE_SECONDS = max(
         int_env("AGENT_BUS_RUNNING_RUN_STALE_SECONDS", 90),
     ),
 )
+ROOM_DEFAULT_AUTO_RETRY_LIMIT = 3
 ROOM_AUTO_RETRY_FAILURE_CLASSES = {"rate_limited", "timeout", "upstream_transient"}
 RUN_FAILURE_GUIDANCE = {
     "rate_limited": {
@@ -2408,6 +2411,19 @@ def room_chat_sort_key(item):
     return (item.get("at") or "9999", item.get("ordinal") or 0)
 
 
+def room_body_int(body, *names, default=0, lower=0, upper=10000):
+    for name in names:
+        if name not in body or body.get(name) is None:
+            continue
+        try:
+            return max(lower, min(int(body.get(name)), upper))
+        except (TypeError, ValueError):
+            err = Exception(f"{name} must be an integer")
+            err.status_code = 400
+            raise err
+    return max(lower, min(int(default), upper))
+
+
 def create_room(config, body, trace_id=None):
     goal = body.get("goal") or body.get("message")
     if not goal:
@@ -2423,8 +2439,15 @@ def create_room(config, body, trace_id=None):
         err = Exception("room requires at least one agent")
         err.status_code = 400
         raise err
-    max_steps = int(body.get("max_steps") if body.get("max_steps") is not None else body.get("maxSteps", 0))
-    max_steps = max(0, max_steps)
+    max_steps = room_body_int(body, "max_steps", "maxSteps", default=0, lower=0, upper=10000)
+    auto_retry_limit = room_body_int(
+        body,
+        "auto_retry_limit",
+        "autoRetryLimit",
+        default=ROOM_DEFAULT_AUTO_RETRY_LIMIT,
+        lower=0,
+        upper=10,
+    )
     room_trace_id = trace_id or trace_id_from_body(body) or new_trace_id()
     room = {
         "id": "room_" + str(uuid.uuid4()),
@@ -2445,6 +2468,7 @@ def create_room(config, body, trace_id=None):
             "budget": "unlimited",
             "permissions": "all",
             "auto_rotate": body.get("auto_rotate", body.get("autoRotate", True)) is not False,
+            "auto_retry_limit": auto_retry_limit,
             "next_index": 0,
         },
         "blackboard": {
@@ -2497,6 +2521,90 @@ def add_room_message(config, room_id, body, trace_id=None):
         wake_room_agents(config, room, wake_ids, body.get("reason") or "New room message.", trace_id)
     write_room(config, room)
     return room
+
+
+ROOM_OPERATOR_STATUSES = {"active", "running", "finishing", "paused", "completed"}
+
+
+def update_room(config, room_id, body):
+    room = get_room(config, room_id)
+    updated_at = now()
+    changes = {}
+    autonomy = room.setdefault("autonomy", {})
+    if "status" in body and body.get("status") is not None:
+        requested = str(body.get("status") or "").strip().lower()
+        aliases = {"resume": "active", "resumed": "active", "open": "active", "done": "completed"}
+        requested = aliases.get(requested, requested)
+        if requested not in ROOM_OPERATOR_STATUSES:
+            err = Exception("unsupported room status: " + requested)
+            err.status_code = 400
+            raise err
+        if requested == "paused" and room.get("status") != "paused":
+            room = pause_room(config, room_id, {"reason": body.get("reason") or "Operator updated room status."})
+            autonomy = room.setdefault("autonomy", {})
+        elif room.get("status") != requested:
+            room["status"] = requested
+            changes["status"] = requested
+            if requested == "active" and isinstance(room.get("pause"), dict):
+                room["pause"]["resumed_at"] = updated_at
+    if any(name in body for name in ("steps", "max_steps", "maxSteps", "auto_retry_limit", "autoRetryLimit")):
+        if "steps" in body and body.get("steps") is not None:
+            autonomy["steps"] = room_body_int(body, "steps", default=int(autonomy.get("steps") or 0), lower=0, upper=100000)
+            changes["steps"] = autonomy["steps"]
+        if body.get("max_steps") is not None or body.get("maxSteps") is not None:
+            autonomy["max_steps"] = room_body_int(body, "max_steps", "maxSteps", default=int(autonomy.get("max_steps") or 0), lower=0, upper=100000)
+            changes["max_steps"] = autonomy["max_steps"]
+        if body.get("auto_retry_limit") is not None or body.get("autoRetryLimit") is not None:
+            autonomy["auto_retry_limit"] = room_body_int(
+                body,
+                "auto_retry_limit",
+                "autoRetryLimit",
+                default=int(autonomy.get("auto_retry_limit") or ROOM_DEFAULT_AUTO_RETRY_LIMIT),
+                lower=0,
+                upper=10,
+            )
+            changes["auto_retry_limit"] = autonomy["auto_retry_limit"]
+        room["autonomy"] = autonomy
+    if "agents" in body and body.get("agents") is not None:
+        agents = normalize_room_update_agents(room, body.get("agents"))
+        if agents != (room.get("agents") or []):
+            room["agents"] = agents
+            changes["agents"] = agents
+            if agents:
+                autonomy["next_index"] = int(autonomy.get("next_index") or 0) % len(agents)
+            room.setdefault("blackboard", {}).setdefault("agent_checklist", {})["expected_agents"] = agents
+    if changes:
+        room["updated_at"] = updated_at
+        room.setdefault("operations", {}).setdefault("operator_updates", []).append({
+            "at": updated_at,
+            "changes": changes,
+            "reason": body.get("reason") or "Updated from operator control.",
+        })
+        write_room(config, room)
+        append_jsonl(config, "rooms.jsonl", room)
+    return room
+
+
+def normalize_room_update_agents(room, values):
+    if isinstance(values, str):
+        values = [item.strip() for item in values.split(",")]
+    wanted = status_unique(str(item or "").strip() for item in (values or []) if str(item or "").strip())
+    if not wanted:
+        err = Exception("room requires at least one agent")
+        err.status_code = 400
+        raise err
+    online_agents = public_agents()
+    known = {agent.get("id") for agent in online_agents if agent.get("id")}
+    known.update(agent_id for agent_id in (room.get("agents") or []) if agent_id)
+    missing = [agent_id for agent_id in wanted if agent_id not in known]
+    if missing:
+        err = Exception("unknown registered agents: " + ", ".join(missing))
+        err.status_code = 400
+        raise err
+    online_wanted = [agent_id for agent_id in wanted if agent_id in {agent.get("id") for agent in online_agents}]
+    if online_wanted:
+        raise_if_agent_ids_ambiguous(online_wanted, online_agents)
+    return wanted
 
 
 def wake_room(config, room_id, body, trace_id=None):
@@ -2684,6 +2792,66 @@ def retry_failed_room_agents(config, room_id, body, trace_id=None):
         result["requires_operator_inspection"] = True
         result["refusal_reason"] = "Retry was confirmed, but no retry run was created."
     return result
+
+
+def maybe_auto_retry_failed_room_run(config, room, run):
+    if run_status(run) not in {"failed", "error"}:
+        return []
+    if room.get("status") in ("completed", "paused"):
+        return []
+    agent_id = run.get("agent_id")
+    if not agent_id or agent_id not in (room.get("agents") or []):
+        return []
+    autonomy = room.setdefault("autonomy", {})
+    retry_limit = int(autonomy.get("auto_retry_limit") if autonomy.get("auto_retry_limit") is not None else ROOM_DEFAULT_AUTO_RETRY_LIMIT)
+    if retry_limit <= 0:
+        return []
+    attempt = latest_run_attempt(run)
+    attempt_no = int(attempt.get("attempt_no") or run.get("attempt_no") or 1)
+    if attempt_no > retry_limit:
+        return []
+    classification = room_run_failure_taxonomy(run, run_status(run), attempt)
+    if not room_failure_class_is_auto_retryable(classification.get("failure_class")):
+        return []
+    if any(item.get("agent_id") == agent_id and item.get("id") != run.get("id") and run_is_active_for_room(item) for item in room.get("runs") or []):
+        return []
+    registered = next((item for item in public_agents() if item.get("id") == agent_id), None)
+    if not registered or registered.get("status") != "online":
+        return []
+    steps = int(autonomy.get("steps") or 0)
+    max_steps = int(autonomy.get("max_steps") or 0)
+    if max_steps > 0 and steps + 1 > max_steps:
+        autonomy["max_steps"] = steps + 1
+    reason = f"Auto retry {attempt_no}/{retry_limit} after {classification.get('failure_class') or 'failed'} failure."
+    retry_meta = {
+        agent_id: {
+            "retry_of_run_id": run.get("id"),
+            "retry_reason": reason,
+            "source_failure_class": classification.get("failure_class"),
+            "source_failure_category": classification.get("failure_category"),
+            "source_recommended_action": classification.get("recommended_action"),
+            "source_error_excerpt": attempt.get("last_error_excerpt") or trim_one_line(run.get("stderr") or run.get("summary") or run.get("stdout"), 500),
+        }
+    }
+    created = wake_room_agents(config, room, [agent_id], reason, run.get("trace_id") or room.get("trace_id"), retry_meta)
+    if created:
+        room.setdefault("operations", {}).setdefault("auto_failed_retries", []).append({
+            "at": now(),
+            "agent_id": agent_id,
+            "attempt_no": attempt_no,
+            "retry_limit": retry_limit,
+            "source_run_id": run.get("id"),
+            "created_run_ids": [item.get("id") for item in created if item.get("id")],
+            "failure_class": classification.get("failure_class"),
+        })
+        room.setdefault("reports", []).append({
+            "at": now(),
+            "speaker": "system",
+            "content": f"Auto retrying {agent_id} after {classification.get('failure_class') or 'failed'} failure ({attempt_no}/{retry_limit}).",
+            "agents": [agent_id],
+            "created_run_ids": [item.get("id") for item in created if item.get("id")],
+        })
+    return created
 
 
 def resolve_duplicate_room_runs(config, room_id, body):
@@ -5172,6 +5340,8 @@ def continue_room_run(config, run):
     previous_status = room.get("status")
     actions = process_room_directives(config, room, run, content)
     update_room_agent_checklist(room, run, content, actions)
+    if maybe_auto_retry_failed_room_run(config, room, run):
+        actions.append("retry")
     finalize_room_completion(room)
     if previous_status != "completed" and room.get("status") == "completed":
         notify_plugin(config, "room.completed", {
@@ -5181,7 +5351,7 @@ def continue_room_run(config, run):
             "reports": len(room.get("reports") or []),
             "runs": len(room.get("runs") or []),
         })
-    scheduled_actions = {"wake", "reminder", "done"}
+    scheduled_actions = {"wake", "reminder", "done", "retry"}
     if not any(action in scheduled_actions for action in actions) and room.get("status") == "active" and room.get("autonomy", {}).get("auto_rotate", True):
         wake_room_agents(config, room, [next_room_agent(room)], "Continue the room from the latest message.", run.get("trace_id") or room.get("trace_id"))
     room["updated_at"] = now()

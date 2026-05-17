@@ -173,12 +173,18 @@ const messages = {
     roomDoctorFailed: "room doctor failed: {message}",
     roomHistoryFallback: "room chat history endpoint unavailable; using room snapshot: {message}",
     roomLoadFailed: "room load failed: {message}",
+    roomControls: "Room Controls",
+    roomAgents: "Room Agents",
+    roomSettingsFailed: "room settings failed: {message}",
+    roomSettingsSaved: "room settings saved",
     roomChat: "Room Chat",
     roomTimeline: "Room Timeline",
     pauseRoom: "Pause",
     pauseRoomFailed: "pause failed: {message}",
     paused: "paused",
+    autoRetryLimit: "Retry Limit",
     rounds: "Rounds",
+    runningNow: "Running",
     runTask: "Run Task",
     save: "Save",
     seen: "Seen",
@@ -187,6 +193,7 @@ const messages = {
     showTrace: "Show Trace",
     stopPolling: "Stop Polling",
     status: "Status",
+    steps: "Steps",
     statusCommand: "Status command",
     recoveryCommands: "Recovery commands",
     statusLoadFailed: "status failed: {message}",
@@ -376,12 +383,18 @@ const messages = {
     roomDoctorFailed: "房间诊断失败：{message}",
     roomHistoryFallback: "房间聊天记录接口不可用，已使用房间快照：{message}",
     roomLoadFailed: "房间加载失败：{message}",
+    roomControls: "房间控制",
+    roomAgents: "房间 Agent",
+    roomSettingsFailed: "房间设置保存失败：{message}",
+    roomSettingsSaved: "房间设置已保存",
     roomChat: "房间群聊",
     roomTimeline: "房间时间线",
     pauseRoom: "暂停",
     pauseRoomFailed: "暂停失败：{message}",
     paused: "已暂停",
+    autoRetryLimit: "失败重试上限",
     rounds: "轮数",
+    runningNow: "正在运行",
     runTask: "运行任务",
     save: "保存",
     seen: "最近在线",
@@ -390,6 +403,7 @@ const messages = {
     showTrace: "查看 Trace",
     stopPolling: "停止轮询",
     status: "状态",
+    steps: "步数",
     statusCommand: "状态命令",
     recoveryCommands: "恢复命令",
     statusLoadFailed: "状态加载失败：{message}",
@@ -439,6 +453,7 @@ $("gatewayLabel").textContent = apiBase.href.replace(/\/$/, "");
 $("tokenInput").value = initialConsoleToken();
 $("languageSelect").value = state.lang;
 applyLanguage();
+renderRoomSettings({});
 setTokenStatus($("tokenInput").value ? "tokenSaved" : "tokenRequired", $("tokenInput").value ? "" : "");
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -450,6 +465,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
   localStorage.setItem("agentBusLanguage", state.lang);
   applyLanguage();
   renderAgents();
+  if (state.currentRoom) renderRoomSettings(state.currentRoom);
 }));
 $("saveTokenButton").addEventListener("click", saveToken);
 $("tokenInput").addEventListener("keydown", (event) => {
@@ -466,6 +482,7 @@ $("loadAgentsButton").addEventListener("click", loadAgents);
 $("loadPluginsButton").addEventListener("click", loadManifest);
 $("loadRoomsButton").addEventListener("click", loadRooms);
 $("roomForm").addEventListener("submit", createRoom);
+$("roomSettingsForm").addEventListener("submit", saveRoomSettings);
 $("roomDoctorButton").addEventListener("click", loadCurrentRoomDoctor);
 $("roomTraceButton").addEventListener("click", openCurrentRoomTrace);
 $("exportRoomButton").addEventListener("click", exportCurrentRoomSummary);
@@ -639,6 +656,7 @@ async function loadAgents() {
       for (const agent of state.agents) state.selectedAgents.add(agent.id);
     }
     renderAgents();
+    if (state.currentRoom) renderRoomSettings(state.currentRoom);
     updateDashboardStats();
     renderOverview();
     logEvent(t("agentsLoaded", { count: state.agents.length }));
@@ -1326,6 +1344,7 @@ async function createRoom(event) {
       goal,
       agents,
       maxSteps: Number($("roomMaxSteps").value || 0),
+      autoRetryLimit: 3,
       wakeAgents: $("roomWakeMode").value === "all" ? agents : agents.slice(0, 1),
       autoRotate: false
     };
@@ -1364,6 +1383,33 @@ async function pauseCurrentRoom() {
     renderRoom(room);
   } catch (err) {
     logEvent(t("pauseRoomFailed", { message: err.message }));
+  }
+}
+
+async function saveRoomSettings(event) {
+  event.preventDefault();
+  if (!state.currentRoomId) return;
+  const agents = [...document.querySelectorAll("#roomAgentEditor input[data-room-agent]:checked")]
+    .map((item) => item.dataset.roomAgent)
+    .filter(Boolean);
+  const body = {
+    status: $("roomStatusEdit").value,
+    steps: Number($("roomStepsEdit").value || 0),
+    maxSteps: Number($("roomMaxStepsEdit").value || 0),
+    autoRetryLimit: Number($("roomRetryLimitEdit").value || 0),
+    agents,
+    reason: "Updated from Agent Bus Console."
+  };
+  try {
+    const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/update`, {
+      method: "POST",
+      body
+    });
+    upsertRoom(room);
+    renderRoom(room);
+    logEvent(t("roomSettingsSaved"));
+  } catch (err) {
+    logEvent(t("roomSettingsFailed", { message: err.message }));
   }
 }
 
@@ -1468,6 +1514,7 @@ function renderRoom(room) {
     $("roomDoctor").className = "room-doctor-panel";
   }
   upsertRoom(room);
+  const activeRuns = roomActiveRunItems(room);
   $("roomSummary").removeAttribute("data-i18n");
   $("roomSummary").innerHTML = `
     <div class="chat-room-head">
@@ -1485,9 +1532,11 @@ function renderRoom(room) {
         <span>${escapeHtml(roomReportCount(room))} ${escapeHtml(t("reports"))}</span>
         <span>${escapeHtml(room.autonomy?.steps || 0)}/${escapeHtml(room.autonomy?.max_steps || 0)} ${escapeHtml(t("maxSteps"))}</span>
         ${room.trace_id ? `<span>${escapeHtml(t("trace"))}: ${escapeHtml(room.trace_id)}</span>` : ""}
+        ${activeRuns.length ? `<span class="chat-room-running">${escapeHtml(t("runningNow"))}: ${activeRuns.map(roomRunStatusLabel).map(escapeHtml).join(", ")}</span>` : ""}
       </div>
     </div>
   `;
+  renderRoomSettings(room);
   $("roomDoctorButton").disabled = !room.id;
   $("pauseRoomButton").disabled = !room.id || ["paused", "completed"].includes(room.status);
   $("wakeRoomButton").disabled = !room.id || room.status === "paused";
@@ -1570,6 +1619,56 @@ function renderRoom(room) {
     reports.append(node);
   }
   renderOverview();
+}
+
+function renderRoomSettings(room = {}) {
+  const hasRoom = Boolean(room.id);
+  $("roomStatusEdit").disabled = !hasRoom;
+  $("roomStepsEdit").disabled = !hasRoom;
+  $("roomMaxStepsEdit").disabled = !hasRoom;
+  $("roomRetryLimitEdit").disabled = !hasRoom;
+  $("saveRoomSettingsButton").disabled = !hasRoom;
+  $("roomStatusEdit").value = ["active", "running", "paused", "completed", "finishing"].includes(String(room.status || "").toLowerCase())
+    ? String(room.status || "").toLowerCase()
+    : "active";
+  $("roomStepsEdit").value = String(room.autonomy?.steps || 0);
+  $("roomMaxStepsEdit").value = String(room.autonomy?.max_steps || 0);
+  $("roomRetryLimitEdit").value = String(room.autonomy?.auto_retry_limit ?? 3);
+  const editor = $("roomAgentEditor");
+  editor.textContent = "";
+  const roomAgents = Array.isArray(room.agents) ? room.agents : [];
+  const options = roomAgentEditorOptions(roomAgents);
+  if (!options.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = t("noAgents");
+    editor.append(empty);
+    return;
+  }
+  for (const option of options) {
+    const id = `room-agent-${option.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+    const label = document.createElement("label");
+    label.className = "room-agent-check";
+    label.htmlFor = id;
+    label.innerHTML = `
+      <input id="${escapeHtml(id)}" type="checkbox" data-room-agent="${escapeHtml(option.id)}" ${roomAgents.includes(option.id) ? "checked" : ""}>
+      <span>${escapeHtml(option.id)}</span>
+      ${option.status ? `<span class="status ${escapeHtml(option.status)}">${escapeHtml(statusText(option.status))}</span>` : ""}
+    `;
+    editor.append(label);
+  }
+}
+
+function roomAgentEditorOptions(roomAgents = []) {
+  const byId = new Map();
+  for (const agentId of roomAgents) {
+    if (agentId) byId.set(agentId, { id: agentId, status: "unknown" });
+  }
+  for (const agent of state.agents || []) {
+    if (!agent.id) continue;
+    byId.set(agent.id, { id: agent.id, status: agent.status || agent.node_status || "" });
+  }
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function roomChatItems(room = {}) {
@@ -2542,6 +2641,18 @@ function roomActiveRunCount(room) {
   if (Array.isArray(room.active_runs)) return room.active_runs.length;
   if (!Array.isArray(room.runs)) return 0;
   return room.runs.filter((run) => ["queued", "running"].includes(String(run.status || "").toLowerCase())).length;
+}
+
+function roomActiveRunItems(room) {
+  if (!Array.isArray(room?.runs)) return [];
+  return room.runs
+    .filter((run) => ["queued", "running"].includes(String(run.status || "").toLowerCase()))
+    .sort((a, b) => String(a.started_at || a.created_at || "").localeCompare(String(b.started_at || b.created_at || "")));
+}
+
+function roomRunStatusLabel(run) {
+  const status = statusText(run.status || "queued");
+  return `${run.agent_id || "agent"} (${status})`;
 }
 
 function roomExportSummary(room) {

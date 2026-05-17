@@ -20,7 +20,6 @@ const state = {
   composerAssist: null,
   roomPolling: null,
   roomPollingFastTimer: null,
-  roomPendingTyping: new Map(),
   polling: null,
   lang: localStorage.getItem("agentBusLanguage") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"),
   tokenStatusKey: null,
@@ -28,7 +27,6 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const ROOM_PENDING_TYPING_MS = 18000;
 const messages = {
   en: {
     agent: "Agent",
@@ -1427,7 +1425,6 @@ async function sendRoomMessage(event) {
   const message = $("roomMessage").value.trim();
   if (!message) return logEvent(t("roomMessageEmpty"));
   const directed = roomMessagePayload(message);
-  const pendingAgents = roomMessagePendingAgents(directed.agents, state.currentRoom);
   const body = { message: directed.message, speaker: "user", wake: true };
   if (directed.agents.length) {
     body.agents = directed.agents;
@@ -1441,7 +1438,6 @@ async function sendRoomMessage(event) {
     });
     $("roomMessage").value = "";
     upsertRoom(room);
-    queueRoomPendingTyping(room.id, pendingAgents, room);
     renderRoom(room);
     startRoomPolling(room.id, { fast: true });
     loadRoom(room.id);
@@ -1468,14 +1464,6 @@ function canonicalAgentId(value) {
   const roomAgents = Array.isArray(state.currentRoom?.agents) ? state.currentRoom.agents : [];
   const knownAgents = [...roomAgents, ...state.agents.map((agent) => agent.id)].filter(Boolean);
   return knownAgents.find((agentId) => String(agentId).toLowerCase() === needle) || "";
-}
-
-function roomMessagePendingAgents(directedAgents = [], room = {}) {
-  if (directedAgents.length) return directedAgents;
-  const agents = Array.isArray(room?.agents) ? room.agents : [];
-  if (!agents.length) return [];
-  const nextIndex = Number(room?.autonomy?.next_index || 0);
-  return [agents[((Number.isFinite(nextIndex) ? nextIndex : 0) % agents.length + agents.length) % agents.length]];
 }
 
 function startRoomPolling(roomId, options = {}) {
@@ -1515,7 +1503,7 @@ async function loadRoom(roomId) {
     }
     renderRoom(room);
     const active = roomActiveRunItems(room).length > 0;
-    if (!active && !roomPendingTypingItems(room).length && room.status !== "active" && state.roomPolling) {
+    if (!active && room.status !== "active" && state.roomPolling) {
       stopRoomPolling();
     }
   } catch (err) {
@@ -1581,7 +1569,7 @@ function renderRoom(room) {
   const messageList = $("roomMessages");
   messageList.textContent = "";
   const chatItems = roomChatItems(room);
-  const typingItems = roomTypingItems(room, chatItems, activeRuns);
+  const typingItems = activeRuns;
   renderRoomMembers(room, typingItems);
   if (!chatItems.length && !typingItems.length) {
     const empty = document.createElement("div");
@@ -1953,7 +1941,7 @@ function renderRoomChatItem(item) {
 function renderRoomTypingItem(run = {}) {
   const speaker = roomRunAgentId(run) || "agent";
   const node = document.createElement("article");
-  node.className = `chat-message is-agent is-typing ${run.pending ? "is-pending" : ""}`.trim();
+  node.className = "chat-message is-agent is-typing";
   node.innerHTML = `
     <div class="chat-avatar" aria-hidden="true">${escapeHtml(chatInitials(speaker))}</div>
     <div class="chat-bubble">
@@ -2749,66 +2737,12 @@ function roomActiveRunItems(room) {
     .sort((a, b) => String(a.started_at || a.created_at || "").localeCompare(String(b.started_at || b.created_at || "")));
 }
 
-function queueRoomPendingTyping(roomId, agents = [], room = {}) {
-  const cleanAgents = [...new Map((agents || [])
-    .map((agent) => String(agent || "").trim())
-    .filter(Boolean)
-    .map((agent) => [agent.toLowerCase(), agent])).values()];
-  if (!roomId || !cleanAgents.length) return;
-  const afterOrdinal = maxRoomChatOrdinal(roomChatItems(room));
-  const nowMs = Date.now();
-  state.roomPendingTyping.set(roomId, cleanAgents.map((agentId) => ({
-    agent_id: agentId,
-    pending: true,
-    status: "running",
-    afterOrdinal,
-    createdAt: nowMs,
-    expiresAt: nowMs + ROOM_PENDING_TYPING_MS
-  })));
-}
-
-function roomTypingItems(room, chatItems = roomChatItems(room), activeRuns = roomActiveRunItems(room)) {
-  const activeKeys = new Set(activeRuns.map((run) => normalizeAgentKey(roomRunAgentId(run))).filter(Boolean));
-  const pending = roomPendingTypingItems(room, chatItems, activeRuns)
-    .filter((item) => !activeKeys.has(normalizeAgentKey(roomRunAgentId(item))));
-  return [...activeRuns, ...pending];
-}
-
-function roomPendingTypingItems(room, chatItems = roomChatItems(room), activeRuns = roomActiveRunItems(room)) {
-  const roomId = room?.id;
-  if (!roomId) return [];
-  const entries = state.roomPendingTyping.get(roomId) || [];
-  if (!entries.length) return [];
-  const nowMs = Date.now();
-  const activeKeys = new Set(activeRuns.map((run) => normalizeAgentKey(roomRunAgentId(run))).filter(Boolean));
-  const kept = [];
-  const visible = [];
-  for (const entry of entries) {
-    const agentKey = normalizeAgentKey(roomRunAgentId(entry));
-    if (!agentKey || Number(entry.expiresAt || 0) <= nowMs) continue;
-    const hasReply = chatItems.some((item) => (
-      normalizeAgentKey(item.speaker) === agentKey
-      && Number(item.ordinal || 0) > Number(entry.afterOrdinal || 0)
-    ));
-    if (hasReply) continue;
-    kept.push(entry);
-    if (!activeKeys.has(agentKey)) visible.push(entry);
-  }
-  if (kept.length) state.roomPendingTyping.set(roomId, kept);
-  else state.roomPendingTyping.delete(roomId);
-  return visible;
-}
-
 function roomRunAgentId(run = {}) {
   return run.agent_id || run.agent || run.id || "";
 }
 
 function normalizeAgentKey(value) {
   return String(value || "").trim().toLowerCase();
-}
-
-function maxRoomChatOrdinal(items = []) {
-  return items.reduce((max, item) => Math.max(max, Number(item.ordinal || 0)), 0);
 }
 
 function roomExportSummary(room) {

@@ -1241,6 +1241,8 @@ function validateEdgeConfig(checks, config, gatewayUrl, token, baseDir) {
     addCheck(checks, "fail", "enabled agents", "no enabled agents configured", "Enable at least one echo, command, Codex, OpenClaw, Hermes, Claude Code, or Ollama agent.");
   }
 
+  checkAgentObservationFields(checks, agents);
+
   for (const agent of agents) {
     const prefix = `agent ${agent.id || "(missing id)"}`;
     const adapter = agent.adapter || "command";
@@ -1271,6 +1273,71 @@ function validateEdgeConfig(checks, config, gatewayUrl, token, baseDir) {
       addCheck(checks, "pass", `${prefix} pingUrl`, pingUrl);
     }
   }
+}
+
+function checkAgentObservationFields(checks, agents) {
+  const active = Array.isArray(agents) ? agents.filter((agent) => agent?.enabled !== false) : [];
+  if (!active.length) return;
+
+  const missingPermission = missingAgentObservationFields(active, [
+    { snake: "permission_profile", camel: "permissionProfile", label: "permission_profile" },
+    { snake: "allowed_rooms", camel: "allowedRooms", label: "allowed_rooms", presenceOnly: true },
+    { snake: "allowed_wake_targets", camel: "allowedWakeTargets", label: "allowed_wake_targets", presenceOnly: true }
+  ]);
+  if (missingPermission.length) {
+    addCheck(
+      checks,
+      "warn",
+      "agent permission observations",
+      formatMissingObservationFields(missingPermission),
+      "Add permission_profile, allowed_rooms, and allowed_wake_targets to enabled agents so status, doctor, and the Web Console can show routing intent. These fields are descriptive; keep sandboxing in the edge runtime."
+    );
+  } else {
+    addCheck(checks, "pass", "agent permission observations", `${active.length}/${active.length} agents`);
+  }
+
+  const missingDescriptors = missingAgentObservationFields(active, [
+    { snake: "owner", camel: "owner", label: "owner" },
+    { snake: "runtime", camel: "runtime", label: "runtime" },
+    { snake: "cost_class", camel: "costClass", label: "cost_class" },
+    { snake: "latency_class", camel: "latencyClass", label: "latency_class" }
+  ]);
+  if (missingDescriptors.length) {
+    addCheck(
+      checks,
+      "warn",
+      "agent descriptive observations",
+      formatMissingObservationFields(missingDescriptors),
+      "Add owner, runtime, cost_class, and latency_class to help operators compare agents before routing room work."
+    );
+  } else {
+    addCheck(checks, "pass", "agent descriptive observations", `${active.length}/${active.length} agents`);
+  }
+}
+
+function missingAgentObservationFields(agents, fields) {
+  const missing = [];
+  for (const agent of agents) {
+    const id = String(agent?.id || "(missing id)").trim() || "(missing id)";
+    const fieldsMissing = fields
+      .filter((field) => !agentObservationFieldConfigured(agent, field))
+      .map((field) => field.label);
+    if (fieldsMissing.length) missing.push({ id, fields: fieldsMissing });
+  }
+  return missing;
+}
+
+function agentObservationFieldConfigured(agent, field) {
+  if (field.presenceOnly) return hasObservationField(agent, field.snake, field.camel);
+  return Boolean(observationText(agent?.[field.snake] ?? agent?.[field.camel]));
+}
+
+function formatMissingObservationFields(missing) {
+  const sample = missing
+    .slice(0, 8)
+    .map((item) => `${item.id}: ${item.fields.join(",")}`);
+  const suffix = missing.length > sample.length ? `; +${missing.length - sample.length} more` : "";
+  return `missing ${sample.join("; ")}${suffix}`;
 }
 
 async function checkGateway(checks, gatewayUrl, token, config = {}) {

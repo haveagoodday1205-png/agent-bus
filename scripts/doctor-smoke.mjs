@@ -106,6 +106,39 @@ async function main() {
     requiredPasses: ["gateway agents", "gateway nodes", "gateway models"],
     requiredWarnings: ["gateway rooms"]
   });
+  const legacyPermissionObservations = findDoctorCheck(edgeDoctor, "agent permission observations");
+  assert(legacyPermissionObservations?.status === "warn" && /doctor-echo/.test(legacyPermissionObservations.detail), `legacy edge config should warn about missing permission observations: ${JSON.stringify(legacyPermissionObservations)}`);
+  const legacyDescriptiveObservations = findDoctorCheck(edgeDoctor, "agent descriptive observations");
+  assert(legacyDescriptiveObservations?.status === "warn" && /doctor-echo/.test(legacyDescriptiveObservations.detail), `legacy edge config should warn about missing descriptive observations: ${JSON.stringify(legacyDescriptiveObservations)}`);
+
+  step("Verifying observation-ready edge config");
+  const observedConfig = path.join(tempDir, "edge-observed.config.json");
+  fs.writeFileSync(observedConfig, `${JSON.stringify({
+    nodeId: "doctor-observed-edge",
+    gatewayUrl: gateway,
+    token: edgeToken,
+    tokenScope: "edge",
+    agents: [{
+      id: "doctor-observed",
+      kind: "echo",
+      role: "diagnostic",
+      enabled: true,
+      adapter: "echo",
+      capabilities: ["doctor", "no-quota"],
+      owner: "edge-operator",
+      runtime: "agent-bus-echo",
+      permission_profile: "local-demo",
+      cost_class: "free",
+      latency_class: "interactive",
+      allowed_rooms: ["room_*"],
+      allowed_wake_targets: []
+    }]
+  }, null, 2)}\n`);
+  const observedDoctor = await runDoctor(["--config", observedConfig, "--local-only", "--json"]);
+  const observedPermissionCheck = findDoctorCheck(observedDoctor, "agent permission observations");
+  assert(observedPermissionCheck?.status === "pass", `observation-ready config should pass permission observations: ${JSON.stringify(observedPermissionCheck)}`);
+  const observedDescriptorCheck = findDoctorCheck(observedDoctor, "agent descriptive observations");
+  assert(observedDescriptorCheck?.status === "pass", `observation-ready config should pass descriptive observations: ${JSON.stringify(observedDescriptorCheck)}`);
 
   step("Verifying local-only doctor summary");
   const localDoctor = await runCli(["doctor", "--config", edgeConfig, "--local-only"]);

@@ -100,6 +100,7 @@ const messages = {
     noNodes: "No registered nodes.",
     noTrace: "No trace loaded.",
     noAgents: "No registered agents.",
+    noAgentChat: "No agent conversation yet.",
     noRoom: "No room selected.",
     noThread: "No thread selected.",
     node: "Node",
@@ -300,6 +301,7 @@ const messages = {
     noNodes: "没有已注册的节点。",
     noTrace: "尚未加载 trace。",
     noAgents: "没有已注册的智能体。",
+    noAgentChat: "还没有 agent 对话。",
     noRoom: "尚未选择房间。",
     noThread: "尚未选择线程。",
     node: "节点",
@@ -1467,7 +1469,7 @@ function renderRoom(room) {
   if (!chatItems.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state room-chat-empty";
-    empty.textContent = t("noRoom");
+    empty.textContent = room?.id ? t("noAgentChat") : t("noRoom");
     messageList.append(empty);
   }
   for (const item of chatItems) {
@@ -1545,15 +1547,15 @@ function roomChatItems(room = {}) {
       role: item.role || item.label || "",
       status: item.status || "",
       at: item.at || "",
-      content: roomItemContent(item),
+      content: roomChatDisplayContent(item, item.source || item.kind || "message"),
       runId: item.run_id || item.runId || "",
       ordinal: item.ordinal || index + 1
-    })));
+    })).filter(isVisibleRoomChatItem));
   }
   const items = [];
   let ordinal = 0;
   for (const message of room.messages || []) {
-    const content = roomItemContent(message);
+    const content = roomChatDisplayContent(message, "message");
     if (!content) continue;
     items.push(normalizeRoomChatItem({
       kind: "message",
@@ -1570,7 +1572,7 @@ function roomChatItems(room = {}) {
     return sortRoomChatItems(items);
   }
   for (const report of room.reports || []) {
-    const content = roomItemContent(report);
+    const content = roomChatDisplayContent(report, "report");
     if (!content) continue;
     items.push(normalizeRoomChatItem({
       kind: "report",
@@ -1582,7 +1584,7 @@ function roomChatItems(room = {}) {
     }));
   }
   for (const note of room.blackboard?.notes || []) {
-    const content = roomItemContent(note);
+    const content = roomChatDisplayContent(note, "blackboard");
     if (!content) continue;
     items.push(normalizeRoomChatItem({
       kind: "blackboard",
@@ -1639,13 +1641,49 @@ function roomItemContent(item = {}) {
   return String(item.content || item.message || item.text || item.summary || "").trim();
 }
 
+function roomChatDisplayContent(item = {}, kind = "") {
+  if (["report", "blackboard"].includes(String(kind || "").toLowerCase())) return "";
+  if (!isAgentChatSpeaker(item.speaker || item.role)) return "";
+  const lines = roomItemContent(item)
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => !isRoomChatNoiseLine(line));
+  return trimBlankLines(lines).join("\n").trim();
+}
+
+function isVisibleRoomChatItem(item) {
+  return Boolean(item?.content && isAgentChatSpeaker(item.speaker));
+}
+
+function isAgentChatSpeaker(value) {
+  const speaker = String(value || "").trim().toLowerCase();
+  return Boolean(speaker && !["user", "operator", "admin", "system", "tool", "blackboard", "report"].includes(speaker));
+}
+
+function isRoomChatNoiseLine(line) {
+  const text = String(line || "").trim();
+  if (!text) return false;
+  if (/^(REPORT|BLACKBOARD|DONE|TODO|WAKE)\b\s*:?\s*/i.test(text)) return true;
+  if (/^(STDOUT|STDERR|TOOL|COMMAND|EXIT CODE|RUN|TRACE|DEBUG)\b\s*:?\s*/i.test(text)) return true;
+  if (/^[-=]{3,}$/.test(text)) return true;
+  if (/^⚠/.test(text)) return true;
+  if (/\b(compression model|compression threshold|compression can run|context is [0-9,]+ tokens|main model|auto-lowered|config\.yaml)\b/i.test(text)) return true;
+  if (/^(to make this permanent|use a larger compression model|lower the compression threshold)\b/i.test(text)) return true;
+  if (/^\d+\.\s+(use a larger|lower the)\b/i.test(text)) return true;
+  if (/^\s*(auxiliary|compression|model|threshold)\s*:/i.test(text)) return true;
+  if (/^[-*]\s*(tool|command|stderr|stdout|run)\b/i.test(text)) return true;
+  return false;
+}
+
+function trimBlankLines(lines) {
+  const result = [...lines];
+  while (result.length && !result[0].trim()) result.shift();
+  while (result.length && !result[result.length - 1].trim()) result.pop();
+  return result;
+}
+
 function roomChatLabel(kind, role = "", status = "") {
-  if (kind === "report") return "REPORT";
-  if (kind === "blackboard") return "BLACKBOARD";
-  const parts = [];
-  if (role && role !== "user") parts.push(role);
-  if (status) parts.push(statusText(status));
-  return parts.join(" / ") || "";
+  return ["report", "blackboard"].includes(kind) ? kind.toUpperCase() : "";
 }
 
 function isDuplicateChatItem(item, previous) {

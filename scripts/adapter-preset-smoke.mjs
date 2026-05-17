@@ -63,6 +63,7 @@ try {
 
   const codex = agents.get("codex");
   assert(codex.role === "coder", "codex preset has wrong role");
+  assertPresetObservations(codex, "coder", "codex-cli");
   if (process.platform === "win32") {
     assert(codex.runCommand.includes(" exec "), "codex Windows preset must use codex exec");
     assert(codex.runCommand.includes("--color never"), "codex Windows preset should disable color");
@@ -74,12 +75,14 @@ try {
 
   const openclaw = agents.get("openclaw");
   assert(openclaw.role === "executor", "openclaw preset has wrong role");
+  assertPresetObservations(openclaw, "operator-browser", "openclaw-cli");
   assert(openclaw.runCommand.includes("OPENCLAW_AGENT_ID=agent-bus"), "openclaw preset must use the dedicated Agent Bus agent id");
   assert(openclaw.runCommand.includes("openclaw-agent-bus.sh"), "openclaw preset must use the bridge script when available");
   assert(openclaw.capabilities.includes("browser"), "openclaw preset should advertise browser capability");
 
   const hermes = agents.get("hermes");
   assert(hermes.role === "researcher", "hermes preset has wrong role");
+  assertPresetObservations(hermes, "research-readonly", "hermes-cli");
   if (process.platform === "win32") {
     assert(hermes.runCommand.includes(" chat -q "), "hermes Windows preset must use hermes chat");
     assert(hermes.runCommand.includes("AGENT_MESSAGE"), "hermes Windows preset must pass AGENT_MESSAGE");
@@ -91,6 +94,7 @@ try {
 
   const claudecode = agents.get("claudecode");
   assert(claudecode.role === "coder", "claudecode preset has wrong role");
+  assertPresetObservations(claudecode, "coder", "claude-code-cli");
   assert(claudecode.healthCommand.includes("--version"), "claudecode preset should include a shallow CLI health command");
   if (process.platform === "win32") {
     assert(claudecode.runCommand.includes(" --print "), "claudecode Windows preset must use claude --print");
@@ -104,6 +108,7 @@ try {
 
   const ollama = agents.get("ollama");
   assert(ollama.role === "model", "ollama preset has wrong role");
+  assertPresetObservations(ollama, "local-model", "ollama");
   assert(ollama.runCommand.includes(" run "), "ollama preset must call ollama run");
   assert(ollama.runCommand.includes("adapter-smoke-llama"), "ollama preset did not use AGENT_BUS_OLLAMA_MODEL");
   assert(ollama.pingUrl === "http://127.0.0.1:11434/api/tags", "ollama preset must use a shallow tags ping URL");
@@ -144,6 +149,16 @@ try {
   process.exitCode = 1;
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
+}
+
+function assertPresetObservations(agent, permissionProfile, runtime) {
+  assert(agent.owner === "edge-operator", `${agent.id} preset should include owner observation`);
+  assert(agent.runtime === runtime, `${agent.id} preset should include runtime observation`);
+  assert(agent.permission_profile === permissionProfile, `${agent.id} preset should include permission_profile observation`);
+  assert(agent.cost_class, `${agent.id} preset should include cost_class observation`);
+  assert(agent.latency_class === "interactive", `${agent.id} preset should include latency_class observation`);
+  assert(Array.isArray(agent.allowed_rooms) && agent.allowed_rooms.includes("room_*"), `${agent.id} preset should include allowed_rooms observation`);
+  assert(Array.isArray(agent.allowed_wake_targets), `${agent.id} preset should include allowed_wake_targets observation`);
 }
 
 function writeFakeExecutable(binDir, name) {

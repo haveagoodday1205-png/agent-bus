@@ -60,7 +60,12 @@ try {
   assert(edgeJson.token === edgeToken, "edge setup did not persist edge token");
   assert(edgeJson.nodeId === "setup-smoke-edge", "edge setup did not honor --node-id");
   assert(edgeJson.tokenScope === "edge", "edge setup should mark tokenScope=edge");
+  assert(edgeJson.agents?.[0]?.owner === "edge-operator", "edge setup did not include an owner observation field");
+  assert(edgeJson.agents?.[0]?.runtime === "agent-bus-echo", "edge setup did not include a runtime observation field");
   assert(edgeJson.agents?.[0]?.permission_profile === "local-demo", "edge setup did not include a permission_profile observation field");
+  assert(edgeJson.agents?.[0]?.cost_class === "free", "edge setup did not include a cost_class observation field");
+  assert(edgeJson.agents?.[0]?.latency_class === "interactive", "edge setup did not include a latency_class observation field");
+  assert(edgeJson.agents?.[0]?.allowed_rooms?.includes("room_*"), "edge setup did not include allowed_rooms observation field");
   assert(edgeJson.agents?.[0]?.allowed_wake_targets?.includes("local-echo"), "edge setup did not include allowed_wake_targets observation field");
   assert(edgeSetup.stdout.includes("Node id: setup-smoke-edge"), "edge setup did not print the configured node id");
   assert(edgeSetup.stdout.includes(`agent-bus status --config ${edgeConfig}`), "edge setup did not print the local status checklist command");

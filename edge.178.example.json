@@ -14,6 +14,13 @@
       "enabled": false,
       "adapter": "command",
       "capabilities": ["sub2api", "cliproxyapi", "models"],
+      "owner": "edge-operator",
+      "runtime": "openai-compatible-gateway",
+      "permission_profile": "model-gateway",
+      "cost_class": "variable",
+      "latency_class": "interactive",
+      "allowed_rooms": [],
+      "allowed_wake_targets": [],
       "healthCommand": "fail=0; printf 'sub2api='; code=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || echo curl_failed); echo \"$code\"; [ \"$code\" = \"200\" ] || fail=1; printf 'cliproxyapi='; code=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8317/management.html || echo curl_failed); echo \"$code\"; [ \"$code\" = \"200\" ] || fail=1; exit $fail",
       "runCommand": "printf '%s\\n' \"model-gateway-edge is a model/API gateway adapter. It does not execute free-form agent tasks yet.\""
     }

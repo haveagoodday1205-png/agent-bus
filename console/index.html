@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260517-console22" />
+    <link rel="stylesheet" href="./styles.css?v=20260517-console23" />
   </head>
   <body>
     <header class="topbar">
@@ -173,8 +173,9 @@
                   <option value="all" data-i18n="wakeAll">all selected</option>
                 </select>
               </label>
-              <button type="submit" data-i18n="createRoom">Create Room</button>
+              <button id="createRoomButton" type="submit" data-i18n="createRoom">Create Room</button>
             </div>
+            <div id="roomCreateStatus" class="form-status" aria-live="polite"></div>
           </form>
 
           <div class="agents-table-column">
@@ -413,6 +414,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260517-console22"></script>
+    <script type="module" src="./app.js?v=20260517-console23"></script>
   </body>
 </html>

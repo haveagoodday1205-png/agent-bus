@@ -70,6 +70,7 @@ const messages = {
     groupNeedsAgents: "group chat needs at least two selected agents",
     createPairCode: "Create Code",
     createRoom: "Create Room",
+    creatingRoom: "Creating room...",
     goal: "Goal",
     healthFailed: "health failed: {message}",
     health: "Health",
@@ -162,6 +163,7 @@ const messages = {
     routeSummary: "Route: {agents}",
     rooms: "Rooms",
     roomCreated: "room created: {id}",
+    roomCreateReady: "Choose agents, enter a goal, then create a room.",
     roomFailed: "room failed: {message}",
     roomGoalEmpty: "room goal is empty",
     roomGoalPlaceholder: "Describe the goal for the autonomous agent room",
@@ -281,6 +283,7 @@ const messages = {
     groupNeedsAgents: "群聊至少需要选择两个智能体",
     createPairCode: "生成短码",
     createRoom: "创建房间",
+    creatingRoom: "正在创建房间...",
     goal: "目标",
     healthFailed: "健康检查失败：{message}",
     health: "健康",
@@ -373,6 +376,7 @@ const messages = {
     routeSummary: "路由到：{agents}",
     rooms: "房间",
     roomCreated: "房间已创建：{id}",
+    roomCreateReady: "选择智能体，输入目标，然后创建房间。",
     roomFailed: "房间创建失败：{message}",
     roomGoalEmpty: "房间目标不能为空",
     roomGoalPlaceholder: "描述这个自主 agent 房间要完成的目标",
@@ -458,6 +462,7 @@ $("languageSelect").value = state.lang;
 applyLanguage();
 renderRoomSettings({});
 renderRoomMembers({});
+setRoomCreateStatus("roomCreateReady");
 setTokenStatus($("tokenInput").value ? "tokenSaved" : "tokenRequired", $("tokenInput").value ? "" : "");
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -1341,8 +1346,18 @@ function renderRooms() {
 async function createRoom(event) {
   event.preventDefault();
   const goal = $("roomGoal").value.trim();
-  if (!goal) return logEvent(t("roomGoalEmpty"));
+  if (!goal) {
+    setRoomCreateStatus("roomGoalEmpty", "failed");
+    return logEvent(t("roomGoalEmpty"));
+  }
+  if (!currentToken()) {
+    setRoomCreateStatus("tokenRequiredShort", "failed");
+    return renderAuthError(new Error(t("missingToken")));
+  }
   const agents = [...state.selectedAgents];
+  const button = $("createRoomButton");
+  if (button) button.disabled = true;
+  setRoomCreateStatus("creatingRoom", "running");
   try {
     const body = {
       goal,
@@ -1360,10 +1375,23 @@ async function createRoom(event) {
     renderRoom(room);
     startRoomPolling(room.id, { fast: true });
     loadRoom(room.id);
+    setRoomCreateStatus("roomCreated", "online", { id: room.id });
     logEvent(t("roomCreated", { id: room.id }));
   } catch (err) {
+    setRoomCreateStatus("roomFailed", "failed", { message: err.message });
     logEvent(t("roomFailed", { message: err.message }));
+  } finally {
+    if (button) button.disabled = false;
   }
+}
+
+function setRoomCreateStatus(key, className = "", values = {}) {
+  const node = $("roomCreateStatus");
+  if (!node) return;
+  node.dataset.statusKey = key;
+  node.dataset.statusValues = JSON.stringify(values || {});
+  node.textContent = t(key, values);
+  node.className = `form-status ${className}`.trim();
 }
 
 async function wakeCurrentRoom() {
@@ -2674,6 +2702,16 @@ function applyLanguage() {
   document.querySelectorAll("[data-i18n-placeholder]").forEach((item) => {
     item.placeholder = t(item.dataset.i18nPlaceholder);
   });
+  const roomCreateStatus = $("roomCreateStatus");
+  if (roomCreateStatus?.dataset.statusKey) {
+    let values = {};
+    try {
+      values = JSON.parse(roomCreateStatus.dataset.statusValues || "{}");
+    } catch {
+      values = {};
+    }
+    roomCreateStatus.textContent = t(roomCreateStatus.dataset.statusKey, values);
+  }
   if (state.tokenStatusKey) setTokenStatus(state.tokenStatusKey, state.tokenStatusClass);
   const gatewayKey = $("gatewayStatus").dataset.statusKey;
   if (gatewayKey) $("gatewayStatus").textContent = t(gatewayKey);

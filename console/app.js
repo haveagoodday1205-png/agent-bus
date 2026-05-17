@@ -1675,7 +1675,7 @@ function roomItemContent(item = {}) {
 
 function roomChatDisplayContent(item = {}, kind = "") {
   if (["report", "blackboard"].includes(String(kind || "").toLowerCase())) return "";
-  if (!isAgentChatSpeaker(item.speaker || item.role)) return "";
+  if (!isRoomDialogueSpeaker(item.speaker || item.role)) return "";
   const lines = roomItemContent(item)
     .split(/\r?\n/)
     .map(roomChatDialogueLine)
@@ -1684,12 +1684,12 @@ function roomChatDisplayContent(item = {}, kind = "") {
 }
 
 function isVisibleRoomChatItem(item) {
-  return Boolean(item?.content && isAgentChatSpeaker(item.speaker));
+  return Boolean(item?.content && isRoomDialogueSpeaker(item.speaker));
 }
 
-function isAgentChatSpeaker(value) {
+function isRoomDialogueSpeaker(value) {
   const speaker = String(value || "").trim().toLowerCase();
-  return Boolean(speaker && !["user", "operator", "admin", "system", "tool", "blackboard", "report"].includes(speaker));
+  return Boolean(speaker && !["system", "tool", "blackboard", "report"].includes(speaker));
 }
 
 function isRoomChatNoiseLine(line) {

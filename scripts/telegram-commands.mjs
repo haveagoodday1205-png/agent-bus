@@ -10,7 +10,7 @@ const DEFAULT_COMMANDS = [
   ["resume", "Resume a previous process/thread"],
   ["agent", "Set, toggle, or clear process agents"],
   ["rooms", "List Agent Bus rooms"],
-  ["room", "Inspect or create rooms, set agents and steps"],
+  ["room", "Inspect, doctor, or create rooms"],
   ["run", "Queue one task for a specific agent"]
 ].map(([command, description]) => ({ command, description }));
 

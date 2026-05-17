@@ -232,6 +232,10 @@ async function main() {
   assertInlineButton(roomsWebhook.reply_markup, `/room ${room.id}`, "telegram /rooms did not include room inspect button");
   const roomWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, `/room ${room.id}`);
   assert(roomWebhook.command === "room" && /Agent Bus room/.test(roomWebhook.reply || ""), "telegram /room callback did not inspect room");
+  assertInlineButton(roomWebhook.reply_markup, `/room doctor ${room.id}`, "telegram /room callback did not include room doctor button");
+  const roomDoctorWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, `/room doctor ${room.id}`);
+  assert(roomDoctorWebhook.command === "room" && /Agent Bus room doctor/.test(roomDoctorWebhook.reply || ""), "telegram /room doctor callback did not diagnose room");
+  assert(/Recommended actions:/.test(roomDoctorWebhook.reply || ""), "telegram /room doctor did not include recommended actions");
   const roomDraftWebhook = await telegramCallbackWebhook(gateway, webhookSecret, telegramChatId, "/room new");
   assert(roomDraftWebhook.command === "room_draft", "telegram /room new did not start a room draft");
   assertInlineButton(roomDraftWebhook.reply_markup, "/room agent toggle telegram-smoke-agent", "telegram room draft did not include agent toggle");
@@ -261,7 +265,7 @@ async function main() {
     doctor_checks: doctorSmoke.checks,
     setup_files: setupSmoke.files,
     setup_restriction: setupRestrictionSmoke.error,
-    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command, roomStartWebhook.command],
+    webhook_commands: [statusWebhook.command, callbackAgentsWebhook.command, agentsWebhook.command, runWebhook.command, chatWebhook.command, continuedWebhook.command, helperWebhook.command, resumeWebhook.command, resumeCallbackWebhook.command, newWebhook.command, preselectWebhook.command, newChatWebhook.command, roomsWebhook.command, roomWebhook.command, roomDoctorWebhook.command, roomDraftWebhook.command, roomStepsWebhook.command, roomStartWebhook.command],
     webhook_thread_id: runWebhook.thread.id,
     conversational_thread_id: chatWebhook.thread.id,
     fresh_conversational_thread_id: newChatWebhook.thread.id,

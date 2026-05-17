@@ -14,7 +14,7 @@ The console can:
 - Create, audit, and revoke scoped edge tokens while copying ready-to-run `agent-bus setup edge --gateway ... --token ...` join commands.
 - Create short-lived pair codes and copy safer `agent-bus setup edge --gateway ... --code ...` onboarding commands for another machine.
 - Show gateway health, registered nodes, and agents.
-- Show advertised agent permission profiles, allowed wake targets, and profile coverage as observation-only readiness hints.
+- Show advertised agent permission profiles, allowed wake targets, allowed room scopes, owner/runtime/cost/latency metadata, and profile coverage as observation-only readiness hints.
 - Select agents and submit tasks.
 - Preview routing decisions.
 - Poll thread, room, run, report, blackboard, and stdout/stderr results.

@@ -139,7 +139,7 @@ Optional observation fields:
 }
 ```
 
-Central and the CLI currently preserve these fields for inventory, status, and console visibility only.
+Central and the CLI currently preserve these fields for inventory, status, profile coverage summaries, and console visibility only.
 For list fields, an advertised empty array is preserved so operators can distinguish "declared none" from "not declared".
 They are not hard enforcement yet; local edge runtimes and sandboxes remain the permission boundary.
 

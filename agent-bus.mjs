@@ -5500,6 +5500,16 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
   if (!authWarning && missingProfiles.length) {
     actions.push(`Add permission_profile observation fields to edge configs for ${missingProfiles.slice(0, 3).join(", ")}${missingProfiles.length > 3 ? ", ..." : ""}.`);
   }
+  const missingWakeTargets = Array.isArray(permissionObservations.unscoped_wake_targets)
+    ? permissionObservations.unscoped_wake_targets
+    : [];
+  const missingRooms = Array.isArray(permissionObservations.unscoped_rooms)
+    ? permissionObservations.unscoped_rooms
+    : [];
+  if (!authWarning && (missingWakeTargets.length || missingRooms.length)) {
+    const affected = unique([...missingWakeTargets, ...missingRooms]);
+    actions.push(`Add allowed_wake_targets/allowed_rooms observation fields to edge configs for ${affected.slice(0, 3).join(", ")}${affected.length > 3 ? ", ..." : ""}.`);
+  }
   return unique(actions).slice(0, 6);
 }
 
@@ -6025,24 +6035,65 @@ function permissionObservationSummary(agents = []) {
   const list = Array.isArray(agents) ? agents : [];
   const missingPermissionProfile = [];
   const unscopedWakeTargets = [];
+  const unscopedRooms = [];
+  const missingOwner = [];
+  const missingRuntime = [];
+  const missingCostClass = [];
+  const missingLatencyClass = [];
   let withPermissionProfile = 0;
   let withAllowedWakeTargets = 0;
+  let withAllowedRooms = 0;
+  let withOwner = 0;
+  let withRuntime = 0;
+  let withCostClass = 0;
+  let withLatencyClass = 0;
+  const profiles = new Map();
   for (const agent of list) {
     const id = String(agent?.id || "").trim();
     if (!id) continue;
     const profile = observationText(agent?.permission_profile ?? agent?.permissionProfile);
     const hasWakeTargets = hasObservationField(agent, "allowed_wake_targets", "allowedWakeTargets");
-    if (profile) withPermissionProfile += 1;
-    else missingPermissionProfile.push(id);
+    const hasRooms = hasObservationField(agent, "allowed_rooms", "allowedRooms");
+    const owner = observationText(agent?.owner);
+    const runtime = observationText(agent?.runtime);
+    const costClass = observationText(agent?.cost_class ?? agent?.costClass);
+    const latencyClass = observationText(agent?.latency_class ?? agent?.latencyClass);
+    if (profile) {
+      withPermissionProfile += 1;
+      profiles.set(profile, (profiles.get(profile) || 0) + 1);
+    } else {
+      missingPermissionProfile.push(id);
+    }
     if (hasWakeTargets) withAllowedWakeTargets += 1;
     else unscopedWakeTargets.push(id);
+    if (hasRooms) withAllowedRooms += 1;
+    else unscopedRooms.push(id);
+    if (owner) withOwner += 1;
+    else missingOwner.push(id);
+    if (runtime) withRuntime += 1;
+    else missingRuntime.push(id);
+    if (costClass) withCostClass += 1;
+    else missingCostClass.push(id);
+    if (latencyClass) withLatencyClass += 1;
+    else missingLatencyClass.push(id);
   }
   return {
     total_agents: list.filter((agent) => String(agent?.id || "").trim()).length,
     with_permission_profile: withPermissionProfile,
     missing_permission_profile: missingPermissionProfile,
     with_allowed_wake_targets: withAllowedWakeTargets,
-    unscoped_wake_targets: unscopedWakeTargets
+    unscoped_wake_targets: unscopedWakeTargets,
+    with_allowed_rooms: withAllowedRooms,
+    unscoped_rooms: unscopedRooms,
+    with_owner: withOwner,
+    missing_owner: missingOwner,
+    with_runtime: withRuntime,
+    missing_runtime: missingRuntime,
+    with_cost_class: withCostClass,
+    missing_cost_class: missingCostClass,
+    with_latency_class: withLatencyClass,
+    missing_latency_class: missingLatencyClass,
+    profiles: Object.fromEntries([...profiles.entries()].sort(([a], [b]) => a.localeCompare(b)))
   };
 }
 
@@ -6153,8 +6204,13 @@ function printStatus(result) {
     console.log("\nPermission observations:");
     console.log(`- permission_profile: ${p.with_permission_profile || 0}/${p.total_agents || 0} agents`);
     console.log(`- allowed_wake_targets: ${p.with_allowed_wake_targets || 0}/${p.total_agents || 0} agents`);
+    console.log(`- allowed_rooms: ${p.with_allowed_rooms || 0}/${p.total_agents || 0} agents`);
+    console.log(`- owner/runtime/cost/latency: ${p.with_owner || 0}/${p.total_agents || 0}, ${p.with_runtime || 0}/${p.total_agents || 0}, ${p.with_cost_class || 0}/${p.total_agents || 0}, ${p.with_latency_class || 0}/${p.total_agents || 0}`);
     if (p.missing_permission_profile?.length) {
       console.log(`- missing permission_profile: ${p.missing_permission_profile.slice(0, 8).join(",")}${p.missing_permission_profile.length > 8 ? ",..." : ""}`);
+    }
+    if (p.unscoped_wake_targets?.length) {
+      console.log(`- missing allowed_wake_targets: ${p.unscoped_wake_targets.slice(0, 8).join(",")}${p.unscoped_wake_targets.length > 8 ? ",..." : ""}`);
     }
   }
   if (result.nodes?.length) {
@@ -6185,7 +6241,19 @@ function printStatus(result) {
       const wakeTargets = hasObservationField(agent, "allowed_wake_targets", "allowedWakeTargets")
         ? ` wake_targets=${wakeTargetValues.length ? wakeTargetValues.join(",") : "none"}`
         : "";
-      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${profile}${wakeTargets}${seen}${active}${run}${heartbeatEvery}${staleRunning}${staleQueued}${orphanedRunning}`);
+      const roomScopeValues = Array.isArray(agent.allowed_rooms)
+        ? agent.allowed_rooms
+        : Array.isArray(agent.allowedRooms)
+          ? agent.allowedRooms
+          : [];
+      const roomScope = hasObservationField(agent, "allowed_rooms", "allowedRooms")
+        ? ` room_scope=${roomScopeValues.length ? roomScopeValues.join(",") : "none"}`
+        : "";
+      const owner = agent.owner ? ` owner=${agent.owner}` : "";
+      const runtime = agent.runtime ? ` runtime=${agent.runtime}` : "";
+      const costClass = agent.cost_class ? ` cost=${agent.cost_class}` : "";
+      const latencyClass = agent.latency_class ? ` latency=${agent.latency_class}` : "";
+      console.log(`- ${agent.id}: node=${agent.freshness}, activity=${agent.activity}, ping=${agent.ping_label}, last_run=${agent.last_run_health}${profile}${wakeTargets}${roomScope}${owner}${runtime}${costClass}${latencyClass}${seen}${active}${run}${heartbeatEvery}${staleRunning}${staleQueued}${orphanedRunning}`);
     }
   }
   if (result.rooms.length) {

@@ -184,7 +184,6 @@ const messages = {
     paused: "paused",
     autoRetryLimit: "Retry Limit",
     rounds: "Rounds",
-    runningNow: "Running",
     runTask: "Run Task",
     save: "Save",
     seen: "Seen",
@@ -231,6 +230,7 @@ const messages = {
     ,
     nextActions: "Next Actions",
     noNextActions: "No pending next actions.",
+    typing: "typing...",
     wake: "Wake",
     wakeAll: "all selected",
     wakeFirst: "first selected",
@@ -394,7 +394,6 @@ const messages = {
     paused: "已暂停",
     autoRetryLimit: "失败重试上限",
     rounds: "轮数",
-    runningNow: "正在运行",
     runTask: "运行任务",
     save: "保存",
     seen: "最近在线",
@@ -440,6 +439,7 @@ const messages = {
     waiting: "等待中...",
     nextActions: "下一步",
     noNextActions: "暂无待处理动作。",
+    typing: "正在输入...",
     wake: "唤醒",
     wakeAll: "全部选中",
     wakeFirst: "第一个选中",
@@ -1479,7 +1479,7 @@ async function loadRoom(roomId) {
       logEvent(t("roomHistoryFallback", { message: err.message }));
     }
     renderRoom(room);
-    const active = (room.runs || []).some((run) => ["queued", "running"].includes(run.status));
+    const active = roomActiveRunItems(room).length > 0;
     if (!active && room.status !== "active" && state.roomPolling) {
       clearInterval(state.roomPolling);
       state.roomPolling = null;
@@ -1532,7 +1532,6 @@ function renderRoom(room) {
         <span>${escapeHtml(roomReportCount(room))} ${escapeHtml(t("reports"))}</span>
         <span>${escapeHtml(room.autonomy?.steps || 0)}/${escapeHtml(room.autonomy?.max_steps || 0)} ${escapeHtml(t("maxSteps"))}</span>
         ${room.trace_id ? `<span>${escapeHtml(t("trace"))}: ${escapeHtml(room.trace_id)}</span>` : ""}
-        ${activeRuns.length ? `<span class="chat-room-running">${escapeHtml(t("runningNow"))}: ${activeRuns.map(roomRunStatusLabel).map(escapeHtml).join(", ")}</span>` : ""}
       </div>
     </div>
   `;
@@ -1548,7 +1547,7 @@ function renderRoom(room) {
   const messageList = $("roomMessages");
   messageList.textContent = "";
   const chatItems = roomChatItems(room);
-  if (!chatItems.length) {
+  if (!chatItems.length && !activeRuns.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state room-chat-empty";
     empty.textContent = room?.id ? t("noAgentChat") : t("noRoom");
@@ -1556,6 +1555,9 @@ function renderRoom(room) {
   }
   for (const item of chatItems) {
     messageList.append(renderRoomChatItem(item));
+  }
+  for (const run of activeRuns) {
+    messageList.append(renderRoomTypingItem(run));
   }
   requestAnimationFrame(() => {
     messageList.scrollTop = messageList.scrollHeight;
@@ -1867,6 +1869,25 @@ function renderRoomChatItem(item) {
         <time>${escapeHtml(formatChatTime(item.at))}</time>
       </div>
       <div class="chat-text">${escapeHtml(item.content)}</div>
+    </div>
+  `;
+  return node;
+}
+
+function renderRoomTypingItem(run = {}) {
+  const speaker = run.agent_id || run.agent || run.id || "agent";
+  const node = document.createElement("article");
+  node.className = "chat-message is-agent is-typing";
+  node.innerHTML = `
+    <div class="chat-avatar" aria-hidden="true">${escapeHtml(chatInitials(speaker))}</div>
+    <div class="chat-bubble">
+      <div class="chat-meta">
+        <strong>${escapeHtml(speaker)}</strong>
+      </div>
+      <div class="chat-typing" aria-live="polite">
+        <span>${escapeHtml(t("typing"))}</span>
+        <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
     </div>
   `;
   return node;
@@ -2644,15 +2665,11 @@ function roomActiveRunCount(room) {
 }
 
 function roomActiveRunItems(room) {
-  if (!Array.isArray(room?.runs)) return [];
-  return room.runs
+  const runs = Array.isArray(room?.runs) ? room.runs : Array.isArray(room?.active_runs) ? room.active_runs : [];
+  return runs
+    .map((run) => typeof run === "string" ? { id: run, agent_id: run, status: "running" } : run)
     .filter((run) => ["queued", "running"].includes(String(run.status || "").toLowerCase()))
     .sort((a, b) => String(a.started_at || a.created_at || "").localeCompare(String(b.started_at || b.created_at || "")));
-}
-
-function roomRunStatusLabel(run) {
-  const status = statusText(run.status || "queued");
-  return `${run.agent_id || "agent"} (${status})`;
 }
 
 function roomExportSummary(room) {

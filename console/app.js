@@ -20,6 +20,7 @@ const state = {
   composerAssist: null,
   roomPolling: null,
   roomPollingFastTimer: null,
+  roomForceScrollBottom: true,
   polling: null,
   lang: localStorage.getItem("agentBusLanguage") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"),
   tokenStatusKey: null,
@@ -172,6 +173,12 @@ const messages = {
     roomMessageFailed: "room message failed: {message}",
     roomMessagePlaceholder: "Send a message into the selected room",
     roomMessageSent: "room message sent",
+    roomWakeMode: "Wake scope",
+    wakeAuto: "Auto",
+    wakeNextMember: "Next member",
+    wakeMentionsOnly: "@ mentions",
+    wakeAllMembers: "All members",
+    wakeNone: "No wake",
     roomDoctor: "Doctor",
     roomDoctorFailed: "room doctor failed: {message}",
     roomHistoryFallback: "room chat history endpoint unavailable; using room snapshot: {message}",
@@ -193,6 +200,7 @@ const messages = {
     seen: "Seen",
     selectedAgents: "selected agents",
     send: "Send",
+    scrollToBottom: "Bottom",
     showTrace: "Show Trace",
     stopPolling: "Stop Polling",
     status: "Status",
@@ -385,6 +393,12 @@ const messages = {
     roomMessageFailed: "房间消息发送失败：{message}",
     roomMessagePlaceholder: "向当前选中的房间发送消息",
     roomMessageSent: "房间消息已发送",
+    roomWakeMode: "唤醒范围",
+    wakeAuto: "自动",
+    wakeNextMember: "下一位",
+    wakeMentionsOnly: "仅 @ 提及",
+    wakeAllMembers: "所有成员",
+    wakeNone: "不唤醒",
     roomDoctor: "诊断",
     roomDoctorFailed: "房间诊断失败：{message}",
     roomHistoryFallback: "房间聊天记录接口不可用，已使用房间快照：{message}",
@@ -406,6 +420,7 @@ const messages = {
     seen: "最近在线",
     selectedAgents: "选中的智能体",
     send: "发送",
+    scrollToBottom: "回到底部",
     showTrace: "查看 Trace",
     stopPolling: "停止轮询",
     status: "状态",
@@ -498,6 +513,11 @@ $("exportRoomButton").addEventListener("click", exportCurrentRoomSummary);
 $("wakeRoomButton").addEventListener("click", wakeCurrentRoom);
 $("pauseRoomButton").addEventListener("click", pauseCurrentRoom);
 $("roomMessageForm").addEventListener("submit", sendRoomMessage);
+$("roomMessages").addEventListener("scroll", updateRoomScrollButton);
+$("roomScrollBottomButton").addEventListener("click", () => {
+  state.roomForceScrollBottom = true;
+  scrollRoomMessagesToBottom();
+});
 $("routeButton").addEventListener("click", routeTask);
 $("taskForm").addEventListener("submit", submitTask);
 $("taskMode").addEventListener("change", syncTaskMode);
@@ -1296,6 +1316,7 @@ async function loadRooms() {
     updateDashboardStats();
     renderOverview();
     if (!state.currentRoomId && rooms[0]) {
+      state.roomForceScrollBottom = true;
       state.currentRoomId = state.rooms[0].id;
       await loadRoom(state.rooms[0].id);
     }
@@ -1338,7 +1359,10 @@ function renderRooms() {
         </div>
       </div>
     `;
-    button.addEventListener("click", () => loadRoom(room.id));
+    button.addEventListener("click", () => {
+      if (state.currentRoomId !== room.id) state.roomForceScrollBottom = true;
+      loadRoom(room.id);
+    });
     list.append(button);
   }
 }
@@ -1370,6 +1394,7 @@ async function createRoom(event) {
     const room = await request("rooms", { method: "POST", body });
     state.currentRoomId = room.id;
     state.rooms = [room, ...state.rooms.filter((item) => item.id !== room.id)];
+    state.roomForceScrollBottom = true;
     activateTab("rooms");
     renderRooms();
     renderRoom(room);
@@ -1399,6 +1424,7 @@ async function wakeCurrentRoom() {
   try {
     const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/wake`, { method: "POST", body: {} });
     upsertRoom(room);
+    state.roomForceScrollBottom = true;
     renderRoom(room);
     startRoomPolling(room.id, { fast: true });
   } catch (err) {
@@ -1453,12 +1479,7 @@ async function sendRoomMessage(event) {
   const message = $("roomMessage").value.trim();
   if (!message) return logEvent(t("roomMessageEmpty"));
   const directed = roomMessagePayload(message);
-  const body = { message: directed.message, speaker: "user", wake: true };
-  if (directed.agents.length) {
-    body.agents = directed.agents;
-    body.autoRotate = false;
-    body.reason = `Directed room message to ${directed.agents.join(", ")}.`;
-  }
+  const body = roomMessageRequestBody(directed, message);
   try {
     const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/messages`, {
       method: "POST",
@@ -1466,6 +1487,7 @@ async function sendRoomMessage(event) {
     });
     $("roomMessage").value = "";
     upsertRoom(room);
+    state.roomForceScrollBottom = true;
     renderRoom(room);
     startRoomPolling(room.id, { fast: true });
     loadRoom(room.id);
@@ -1484,6 +1506,67 @@ function roomMessagePayload(rawMessage) {
     return `@${agentId}`;
   });
   return { message, agents: [...targets.values()] };
+}
+
+function roomMessageRequestBody(directed, rawMessage) {
+  const selectedMode = $("roomMessageWakeMode")?.value || "auto";
+  const mode = resolveRoomMessageWakeMode(selectedMode, directed, rawMessage);
+  const body = { message: directed.message, speaker: "user", wake: true };
+  if (mode === "none") {
+    body.wake = false;
+    body.reason = "Room message without agent wake.";
+    return body;
+  }
+  if (mode === "all") {
+    const agents = roomWakeAgents();
+    if (!agents.length) {
+      body.wake = false;
+      body.reason = "Room message requested all members, but the room has no agents.";
+      return body;
+    }
+    body.agents = agents;
+    body.autoRotate = false;
+    body.reason = `Room message wake all members: ${agents.join(", ")}.`;
+    return body;
+  }
+  if (mode === "mentions") {
+    if (!directed.agents.length) {
+      body.wake = false;
+      body.reason = "Room message requested @ mentions only, but no valid room agent was mentioned.";
+      return body;
+    }
+    body.agents = directed.agents;
+    body.autoRotate = false;
+    body.reason = `Directed room message to ${directed.agents.join(", ")}.`;
+    return body;
+  }
+  body.reason = "Room message wake next member.";
+  return body;
+}
+
+function resolveRoomMessageWakeMode(selectedMode, directed, rawMessage) {
+  if (selectedMode && selectedMode !== "auto") return selectedMode;
+  if (directed.agents.length) return "mentions";
+  if (roomMessageRequestsEveryone(rawMessage)) return "all";
+  return "next";
+}
+
+function roomMessageRequestsEveryone(rawMessage) {
+  return /(全体|全部|所有成员|所有智能体|所有\s*agent|大家|everyone|everybody|all\s+(agents|members))/i.test(String(rawMessage || ""));
+}
+
+function roomWakeAgents() {
+  const agents = Array.isArray(state.currentRoom?.agents) ? state.currentRoom.agents : [];
+  const seen = new Set();
+  const result = [];
+  for (const agentId of agents) {
+    const normalized = String(agentId || "").trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function canonicalAgentId(value) {
@@ -1516,6 +1599,7 @@ function stopRoomPolling() {
 }
 
 async function loadRoom(roomId) {
+  if (state.currentRoomId !== roomId) state.roomForceScrollBottom = true;
   try {
     const room = await request(`rooms/${encodeURIComponent(roomId)}`);
     try {
@@ -1556,6 +1640,9 @@ async function loadCurrentRoomDoctor() {
 }
 
 function renderRoom(room) {
+  const messageList = $("roomMessages");
+  const shouldScrollBottom = state.roomForceScrollBottom || state.currentRoomId !== room.id || isRoomMessagesNearBottom(messageList);
+  const previousBottomOffset = roomMessagesBottomOffset(messageList);
   state.currentRoom = room;
   state.currentRoomId = room.id;
   if (state.currentRoomDoctor?.room?.id !== room.id) {
@@ -1594,7 +1681,6 @@ function renderRoom(room) {
   if (state.currentRoomDoctor) renderRoomDoctor(state.currentRoomDoctor);
   renderRooms();
   updateDashboardStats();
-  const messageList = $("roomMessages");
   messageList.textContent = "";
   const chatItems = roomChatItems(room);
   const typingItems = activeRuns;
@@ -1612,7 +1698,10 @@ function renderRoom(room) {
     messageList.append(renderRoomTypingItem(run));
   }
   requestAnimationFrame(() => {
-    messageList.scrollTop = messageList.scrollHeight;
+    if (shouldScrollBottom) scrollRoomMessagesToBottom();
+    else restoreRoomMessagesScroll(previousBottomOffset);
+    state.roomForceScrollBottom = false;
+    updateRoomScrollButton();
   });
   const reports = $("roomReports");
   reports.textContent = "";
@@ -1673,6 +1762,37 @@ function renderRoom(room) {
     reports.append(node);
   }
   renderOverview();
+}
+
+function isRoomMessagesNearBottom(list = $("roomMessages")) {
+  if (!list) return true;
+  const distance = list.scrollHeight - list.scrollTop - list.clientHeight;
+  return distance <= 80;
+}
+
+function roomMessagesBottomOffset(list = $("roomMessages")) {
+  if (!list) return 0;
+  return Math.max(0, list.scrollHeight - list.scrollTop);
+}
+
+function restoreRoomMessagesScroll(bottomOffset, list = $("roomMessages")) {
+  if (!list) return;
+  const offset = Number.isFinite(bottomOffset) ? bottomOffset : 0;
+  list.scrollTop = Math.max(0, list.scrollHeight - offset);
+}
+
+function scrollRoomMessagesToBottom(list = $("roomMessages")) {
+  if (!list) return;
+  list.scrollTop = list.scrollHeight;
+  updateRoomScrollButton();
+}
+
+function updateRoomScrollButton() {
+  const button = $("roomScrollBottomButton");
+  const list = $("roomMessages");
+  if (!button || !list) return;
+  const scrollable = list.scrollHeight - list.clientHeight > 24;
+  button.hidden = !scrollable || isRoomMessagesNearBottom(list);
 }
 
 function renderRoomSettings(room = {}) {
@@ -2394,6 +2514,30 @@ function composerCommandDefinitions(target) {
         onSelect: () => wakeCurrentRoom()
       },
       {
+        label: "/all",
+        detail: zh ? "本条消息唤醒所有房间成员" : "Send the next message to all room members",
+        insert: "",
+        onSelect: () => setRoomMessageWakeMode("all")
+      },
+      {
+        label: "/next",
+        detail: zh ? "本条消息只唤醒下一位成员" : "Send the next message to the next member",
+        insert: "",
+        onSelect: () => setRoomMessageWakeMode("next")
+      },
+      {
+        label: "/mentions",
+        detail: zh ? "本条消息只唤醒 @ 提及的成员" : "Send the next message only to @ mentions",
+        insert: "",
+        onSelect: () => setRoomMessageWakeMode("mentions")
+      },
+      {
+        label: "/silent",
+        detail: zh ? "本条消息只记录，不唤醒 agent" : "Post the next message without waking agents",
+        insert: "",
+        onSelect: () => setRoomMessageWakeMode("none")
+      },
+      {
         label: "/doctor",
         detail: zh ? "打开房间诊断" : "Open room doctor",
         insert: "",
@@ -2506,6 +2650,12 @@ function composerCommandDefinitions(target) {
 function setTaskMode(mode) {
   $("taskMode").value = mode;
   syncTaskMode();
+}
+
+function setRoomMessageWakeMode(mode) {
+  const select = $("roomMessageWakeMode");
+  if (!select) return;
+  select.value = mode;
 }
 
 function emptyComposerItem() {

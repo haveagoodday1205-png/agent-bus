@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260517-console23" />
+    <link rel="stylesheet" href="./styles.css?v=20260517-console24" />
   </head>
   <body>
     <header class="topbar">
@@ -236,9 +236,22 @@
                 <span data-i18n="roomMessage">Message</span>
                 <textarea id="roomMessage" rows="3" placeholder="Send a message into the selected room" data-i18n-placeholder="roomMessagePlaceholder"></textarea>
               </label>
+              <label>
+                <span data-i18n="roomWakeMode">Wake scope</span>
+                <select id="roomMessageWakeMode">
+                  <option value="auto" data-i18n="wakeAuto">Auto</option>
+                  <option value="next" data-i18n="wakeNextMember">Next member</option>
+                  <option value="mentions" data-i18n="wakeMentionsOnly">@ mentions</option>
+                  <option value="all" data-i18n="wakeAllMembers">All members</option>
+                  <option value="none" data-i18n="wakeNone">No wake</option>
+                </select>
+              </label>
               <button type="submit" data-i18n="send">Send</button>
             </form>
-            <div id="roomMessages" class="conversation-list"></div>
+            <div id="roomMessagesShell" class="room-messages-shell">
+              <div id="roomMessages" class="conversation-list"></div>
+              <button id="roomScrollBottomButton" class="room-scroll-bottom" type="button" data-i18n="scrollToBottom" hidden>Bottom</button>
+            </div>
           </div>
           <div class="room-tools-column">
             <section class="tool-surface room-members-surface">
@@ -414,6 +427,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260517-console23"></script>
+    <script type="module" src="./app.js?v=20260517-console24"></script>
   </body>
 </html>

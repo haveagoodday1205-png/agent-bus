@@ -5602,6 +5602,15 @@ function statusNextActions(result, { authWarning = "", roomAccess = "full" } = {
     const affected = unique([...missingWakeTargets, ...missingRooms]);
     actions.push(`Add allowed_wake_targets/allowed_rooms observation fields to edge configs for ${affected.slice(0, 3).join(", ")}${affected.length > 3 ? ", ..." : ""}.`);
   }
+  const missingDescriptors = unique([
+    ...(Array.isArray(permissionObservations.missing_owner) ? permissionObservations.missing_owner : []),
+    ...(Array.isArray(permissionObservations.missing_runtime) ? permissionObservations.missing_runtime : []),
+    ...(Array.isArray(permissionObservations.missing_cost_class) ? permissionObservations.missing_cost_class : []),
+    ...(Array.isArray(permissionObservations.missing_latency_class) ? permissionObservations.missing_latency_class : [])
+  ]);
+  if (!authWarning && missingDescriptors.length) {
+    actions.push(`Add owner/runtime/cost_class/latency_class observation fields to edge configs for ${missingDescriptors.slice(0, 3).join(", ")}${missingDescriptors.length > 3 ? ", ..." : ""}.`);
+  }
   return unique(actions).slice(0, 6);
 }
 

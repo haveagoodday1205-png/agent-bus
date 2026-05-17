@@ -231,6 +231,7 @@ Usage:
   agent-bus edge-agents --config edge.config.json
   agent-bus room create --goal "Check deployment" --agents codex-120,openclaw-hk --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room show room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ...
+  agent-bus room chat room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json] [--tail 50]
   agent-bus room memory room_xxx --query "cache decision" --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room expand room_xxx 'messages[7]' --around 1 --gateway https://YOUR-DOMAIN/agent-bus --token ...
   agent-bus room health room_xxx --gateway https://YOUR-DOMAIN/agent-bus --token ... [--json]
@@ -2630,6 +2631,15 @@ async function room(args) {
     const roomId = requiredPositional(args, 1, "room id");
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}`, { auth: true, args }));
   }
+  if (action === "chat" || action === "history" || action === "messages") {
+    const roomId = requiredPositional(args, 1, "room id");
+    const tail = positiveIntegerOption(optionValue(args, "--tail") || optionValue(args, "--limit"), 0, 10000);
+    const query = tail ? `?tail=${encodeURIComponent(String(tail))}` : "";
+    const history = await gatewayJson(`/rooms/${pathPart(roomId)}/chat${query}`, { auth: true, args });
+    if (args.includes("--json")) return printJson(history);
+    process.stdout.write(formatRoomChatHistory(history));
+    return;
+  }
   if (action === "memory" || action === "index" || action === "toc" || action === "recall") {
     const roomId = requiredPositional(args, 1, "room id");
     const query = optionValue(args, "--query") || optionValue(args, "--q") || "";
@@ -2944,7 +2954,7 @@ async function room(args) {
     };
     return printJson(await gatewayJson(`/rooms/${pathPart(roomId)}/messages`, { auth: true, args, method: "POST", body }));
   }
-  throw new Error("Usage: agent-bus room list|show|memory|expand|health|inspect|doctor|follow-up|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
+  throw new Error("Usage: agent-bus room list|show|chat|history|memory|expand|health|inspect|doctor|follow-up|export|replay|create|wake|pause|retry-failed|recover|resolve-duplicates|supervisor|message [options]");
 }
 
 function formatRoomMemory(value, options = {}) {
@@ -3803,6 +3813,21 @@ function formatRoomDoctor(result) {
       if (action.command) lines.push(`  ${action.command}`);
       if (action.confirm_command) lines.push(`  confirm: ${action.confirm_command}`);
     }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatRoomChatHistory(history) {
+  const room = history?.room || {};
+  const items = Array.isArray(history?.items) ? history.items : [];
+  const lines = [];
+  lines.push(`Agent Bus room chat: ${room.id || history?.room_id || "-"}`);
+  lines.push(`Status: ${room.status || "-"} | Agents: ${Array.isArray(room.agents) && room.agents.length ? room.agents.join(", ") : "-"} | Messages: ${items.length}/${history?.total ?? items.length}`);
+  for (const item of items) {
+    const label = item.label || item.role || item.source || "message";
+    const at = item.at ? ` ${item.at}` : "";
+    lines.push("", `[${item.speaker || "agent"}] ${label}${at}`);
+    lines.push(String(item.content || "").trim() || "-");
   }
   return `${lines.join("\n")}\n`;
 }

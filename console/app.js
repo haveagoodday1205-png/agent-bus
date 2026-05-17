@@ -167,6 +167,7 @@ const messages = {
     roomMessageSent: "room message sent",
     roomDoctor: "Doctor",
     roomDoctorFailed: "room doctor failed: {message}",
+    roomHistoryFallback: "room chat history endpoint unavailable; using room snapshot: {message}",
     roomLoadFailed: "room load failed: {message}",
     roomChat: "Room Chat",
     roomTimeline: "Room Timeline",
@@ -366,6 +367,7 @@ const messages = {
     roomMessageSent: "房间消息已发送",
     roomDoctor: "诊断",
     roomDoctorFailed: "房间诊断失败：{message}",
+    roomHistoryFallback: "房间聊天记录接口不可用，已使用房间快照：{message}",
     roomLoadFailed: "房间加载失败：{message}",
     roomChat: "房间群聊",
     roomTimeline: "房间时间线",
@@ -1381,6 +1383,17 @@ function startRoomPolling(roomId) {
 async function loadRoom(roomId) {
   try {
     const room = await request(`rooms/${encodeURIComponent(roomId)}`);
+    try {
+      const history = await request(`rooms/${encodeURIComponent(roomId)}/chat`);
+      room.chat_history = Array.isArray(history.items) ? history.items : [];
+      room.chat_history_meta = {
+        object: history.object || "",
+        count: history.count || 0,
+        total: history.total || 0
+      };
+    } catch (err) {
+      logEvent(t("roomHistoryFallback", { message: err.message }));
+    }
     renderRoom(room);
     const active = (room.runs || []).some((run) => ["queued", "running"].includes(run.status));
     if (!active && room.status !== "active" && state.roomPolling) {
@@ -1511,6 +1524,18 @@ function renderRoom(room) {
 }
 
 function roomChatItems(room = {}) {
+  if (Array.isArray(room.chat_history) && room.chat_history.length) {
+    return sortRoomChatItems(room.chat_history.map((item, index) => normalizeRoomChatItem({
+      kind: item.source || item.kind || "message",
+      speaker: item.speaker || item.role || "agent",
+      role: item.role || item.label || "",
+      status: item.status || "",
+      at: item.at || "",
+      content: roomItemContent(item),
+      runId: item.run_id || item.runId || "",
+      ordinal: item.ordinal || index + 1
+    })));
+  }
   const items = [];
   let ordinal = 0;
   for (const message of room.messages || []) {

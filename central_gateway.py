@@ -451,6 +451,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(list_rooms(self.config))
             if path.startswith("/rooms/"):
                 parts = path.strip("/").split("/")
+                if len(parts) == 3 and parts[2] in ("chat", "history", "messages"):
+                    return self.json(room_chat_history_api(self.config, parts[1], query))
                 if len(parts) == 3 and parts[2] == "memory":
                     return self.json(room_memory_api(self.config, parts[1], query))
                 if len(parts) == 4 and parts[2] == "memory" and parts[3] == "expand":
@@ -1536,6 +1538,7 @@ def agent_bus_manifest(config):
             "threads": "POST /threads",
             "rooms": "POST /rooms",
             "room": "GET /rooms/{room_id}",
+            "room_chat_history": "GET /rooms/{room_id}/chat",
             "room_memory": "GET /rooms/{room_id}/memory",
             "room_memory_expand": "GET /rooms/{room_id}/memory/expand?ref=messages[7]&around=1",
             "room_doctor": "GET /rooms/{room_id}/doctor",
@@ -2290,6 +2293,119 @@ def list_rooms(config):
         key=lambda item: item.get("updated_at") or "",
         reverse=True,
     )
+
+
+def room_chat_history_api(config, room_id, query=None):
+    room = get_room(config, room_id)
+    items = room_chat_history_items(room)
+    total = len(items)
+    limit = room_query_int_any(query or {}, ("limit", "tail"), 0, 0, 500)
+    if limit:
+        items = items[-limit:]
+    return {
+        "object": "agent_bus.room_chat_history",
+        "room": room_chat_summary(room),
+        "count": len(items),
+        "total": total,
+        "items": items,
+    }
+
+
+def room_chat_summary(room):
+    return {
+        "id": room.get("id"),
+        "title": room.get("title"),
+        "status": room.get("status"),
+        "agents": room.get("agents") or [],
+        "trace_id": room.get("trace_id"),
+        "created_at": room.get("created_at"),
+        "updated_at": room.get("updated_at"),
+        "message_count": len(room.get("messages") or []),
+        "report_count": len(room.get("reports") or []),
+        "blackboard_note_count": len((room.get("blackboard") or {}).get("notes") or []),
+    }
+
+
+def room_chat_history_items(room):
+    items = []
+    ordinal = 0
+    for message in room.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        content = room_chat_item_content(message)
+        if not content:
+            continue
+        ordinal += 1
+        items.append(room_chat_item(
+            source="message",
+            speaker=message.get("speaker") or message.get("role") or "agent",
+            role=message.get("role") or "",
+            content=content,
+            at=message.get("at") or message.get("created_at") or message.get("completed_at") or "",
+            ordinal=ordinal,
+            status=message.get("status") or "",
+            run_id=message.get("run_id") or "",
+            trace_id=message.get("trace_id") or room.get("trace_id") or "",
+        ))
+    if items:
+        return sorted(items, key=room_chat_sort_key)
+    for report in room.get("reports") or []:
+        if not isinstance(report, dict):
+            continue
+        content = room_chat_item_content(report)
+        if not content:
+            continue
+        ordinal += 1
+        items.append(room_chat_item(
+            source="report",
+            speaker=report.get("speaker") or "report",
+            role="REPORT",
+            content=content,
+            at=report.get("at") or report.get("created_at") or "",
+            ordinal=ordinal,
+            trace_id=report.get("trace_id") or room.get("trace_id") or "",
+        ))
+    for note in (room.get("blackboard") or {}).get("notes") or []:
+        if not isinstance(note, dict):
+            continue
+        content = room_chat_item_content(note)
+        if not content:
+            continue
+        ordinal += 1
+        items.append(room_chat_item(
+            source="blackboard",
+            speaker=note.get("speaker") or "blackboard",
+            role="BLACKBOARD",
+            content=content,
+            at=note.get("at") or note.get("created_at") or "",
+            ordinal=ordinal,
+            trace_id=note.get("trace_id") or room.get("trace_id") or "",
+        ))
+    return sorted(items, key=room_chat_sort_key)
+
+
+def room_chat_item(source, speaker, role, content, at, ordinal, status="", run_id="", trace_id=""):
+    label = "REPORT" if source == "report" else "BLACKBOARD" if source == "blackboard" else status or role
+    return {
+        "source": source,
+        "speaker": str(speaker or "agent"),
+        "role": str(role or ""),
+        "label": str(label or ""),
+        "content": str(content or ""),
+        "at": str(at or ""),
+        "run_id": str(run_id or ""),
+        "trace_id": str(trace_id or ""),
+        "status": str(status or ""),
+        "ordinal": ordinal,
+    }
+
+
+def room_chat_item_content(item):
+    return str(item.get("content") or item.get("message") or item.get("text") or item.get("summary") or "").strip()
+
+
+def room_chat_sort_key(item):
+    return (item.get("at") or "9999", item.get("ordinal") or 0)
 
 
 def create_room(config, body, trace_id=None):

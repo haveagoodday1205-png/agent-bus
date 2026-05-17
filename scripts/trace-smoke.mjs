@@ -121,9 +121,7 @@ async function main() {
   assert(chat.agent_bus?.trace_id === traceId, "agent-backed chat response did not include trace_id");
 
   step("Looking up trace");
-  const trace = await requestJson(`${gateway}/traces/${encodeURIComponent(traceId)}`, {
-    headers: authHeaders(token)
-  });
+  const trace = await waitForTrace(gateway, token, traceId, { minRuns: 2, minEvents: 2 });
   assert(trace.summary.rooms >= 1, "trace did not include room");
   assert(trace.summary.threads >= 1, "trace did not include agent-backed thread");
   assert(trace.summary.runs >= 2, "trace did not include both runs");

@@ -214,6 +214,11 @@ async function main() {
   assert(finalRoom.blackboard?.notes?.some((item) => /wake reason Initial room wake\./.test(item.content || "")), "AGENT_WAKE_REASON was not exposed to the command adapter");
   assert(finalRoom.blackboard?.notes?.some((item) => /edge session edge_session_/.test(item.content || "")), "EDGE_SESSION_ID was not exposed to the command adapter");
   assert((run.stdout || "").includes("DONE"), "agent stdout did not include DONE");
+  const roomChatHistory = await requestJson(`${base}/rooms/${encodeURIComponent(finalRoom.id)}/chat?tail=20`, { headers: authHeaders(token) });
+  assert(roomChatHistory.object === "agent_bus.room_chat_history", "room chat history endpoint returned the wrong object");
+  assert(roomChatHistory.room?.id === finalRoom.id, "room chat history returned the wrong room");
+  assert(roomChatHistory.items?.some((item) => item.speaker === "user" && /Verify Agent Bus room dispatch/.test(item.content || "")), "room chat history omitted the operator message");
+  assert(roomChatHistory.items?.some((item) => item.speaker === "offline-agent" && /offline smoke run completed/.test(item.content || "")), "room chat history omitted the agent message");
   const checklist = finalRoom.blackboard?.agent_checklist;
   const checklistAgent = checklist?.agents?.["offline-agent"];
   assert(checklist?.summary?.expected_agents === 1, "room checklist did not count expected agents");
@@ -228,6 +233,10 @@ async function main() {
 
   const cliRoom = await runCliJson(["room", "show", finalRoom.id, "--gateway", base, "--token", token]);
   assert(cliRoom.id === finalRoom.id, "CLI room show did not return the expected room");
+  const cliRoomChat = await runCliText(["room", "chat", finalRoom.id, "--tail", "20", "--gateway", base, "--token", token]);
+  assert(cliRoomChat.includes("Agent Bus room chat:"), "CLI room chat did not render a title");
+  assert(cliRoomChat.includes("[offline-agent]"), "CLI room chat did not render the agent speaker");
+  assert(cliRoomChat.includes("offline smoke run completed"), "CLI room chat did not render agent content");
   const cliRoomHealth = await runCliJson(["room", "health", finalRoom.id, "--json", "--gateway", base, "--token", token]);
   assert(cliRoomHealth.object === "agent_bus.room_health", "CLI room health did not return a room health object");
   assert(cliRoomHealth.room?.id === finalRoom.id, "CLI room health returned the wrong room");

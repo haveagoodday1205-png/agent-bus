@@ -548,6 +548,7 @@ Doctor is intentionally shallow and quota-safe: URL pings use cheap reachability
 - declared token scope (`edge` or `admin`)
 - enabled agents
 - duplicate agent ids
+- observation-only agent metadata for `permission_profile`, `allowed_rooms`, `allowed_wake_targets`, `owner`, `runtime`, `cost_class`, and `latency_class`
 - unsupported adapters
 - missing command adapters
 - missing command working directories
@@ -562,7 +563,7 @@ Doctor is intentionally shallow and quota-safe: URL pings use cheap reachability
 - authenticated `/rooms` listing without creating a room
 - local edge health probe
 
-It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation. For example, `/rooms` may warn with an edge token because room listing is an operator/admin endpoint, while `/v1/models` may warn with an edge token unless the gateway has edge agent models enabled. In central mode, placeholder admin tokens, unwritable data directories, malformed ports, duplicate static edge tokens, and invalid backend URLs are hard failures; missing backend key environment variables or Telegram allowlists are warnings. Empty `edgeTokens` in `central.config.json` is healthy when edges were created through pair codes, the Web Console, or the runtime edge-token registry. Add `--production` to fail on short admin tokens, missing live edge connectivity, missing active runtime edge tokens, and incomplete enabled Telegram control wiring.
+It exits non-zero only on hard failures. Warnings are meant to guide setup without blocking local experimentation. For example, `/rooms` may warn with an edge token because room listing is an operator/admin endpoint, while `/v1/models` may warn with an edge token unless the gateway has edge agent models enabled. Edge doctor also warns when older configs are missing observation-only agent metadata such as `permission_profile`, `allowed_rooms`, `allowed_wake_targets`, `owner`, `runtime`, `cost_class`, or `latency_class`; add those fields to make `status` and the Web Console clearer, not to enforce permissions. In central mode, placeholder admin tokens, unwritable data directories, malformed ports, duplicate static edge tokens, and invalid backend URLs are hard failures; missing backend key environment variables or Telegram allowlists are warnings. Empty `edgeTokens` in `central.config.json` is healthy when edges were created through pair codes, the Web Console, or the runtime edge-token registry. Add `--production` to fail on short admin tokens, missing live edge connectivity, missing active runtime edge tokens, and incomplete enabled Telegram control wiring.
 
 When a command adapter uses a bundled or local script such as `./scripts/codex-agent-bus.sh`, doctor now checks that path using the same cwd rules as the edge runtime. A pinned `config.cwd` or `agent.cwd` plus a missing script is a hard failure; an unpinned relative path is a warning because it depends on the process launch directory. Pin the cwd in config or generate/start the service with `--cwd` pointing at the repo or portable bundle root that contains the script.
 

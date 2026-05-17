@@ -19,6 +19,8 @@ const state = {
   currentTrace: null,
   composerAssist: null,
   roomPolling: null,
+  roomPollingFastTimer: null,
+  roomPendingTyping: new Map(),
   polling: null,
   lang: localStorage.getItem("agentBusLanguage") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"),
   tokenStatusKey: null,
@@ -26,6 +28,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const ROOM_PENDING_TYPING_MS = 18000;
 const messages = {
   en: {
     agent: "Agent",
@@ -174,6 +177,7 @@ const messages = {
     roomHistoryFallback: "room chat history endpoint unavailable; using room snapshot: {message}",
     roomLoadFailed: "room load failed: {message}",
     roomControls: "Room Controls",
+    roomMembers: "Room Members",
     roomAgents: "Room Agents",
     roomSettingsFailed: "room settings failed: {message}",
     roomSettingsSaved: "room settings saved",
@@ -384,6 +388,7 @@ const messages = {
     roomHistoryFallback: "房间聊天记录接口不可用，已使用房间快照：{message}",
     roomLoadFailed: "房间加载失败：{message}",
     roomControls: "房间控制",
+    roomMembers: "房间成员",
     roomAgents: "房间 Agent",
     roomSettingsFailed: "房间设置保存失败：{message}",
     roomSettingsSaved: "房间设置已保存",
@@ -454,6 +459,7 @@ $("tokenInput").value = initialConsoleToken();
 $("languageSelect").value = state.lang;
 applyLanguage();
 renderRoomSettings({});
+renderRoomMembers({});
 setTokenStatus($("tokenInput").value ? "tokenSaved" : "tokenRequired", $("tokenInput").value ? "" : "");
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -1351,9 +1357,11 @@ async function createRoom(event) {
     const room = await request("rooms", { method: "POST", body });
     state.currentRoomId = room.id;
     state.rooms = [room, ...state.rooms.filter((item) => item.id !== room.id)];
+    activateTab("rooms");
     renderRooms();
-    await loadRoom(room.id);
-    startRoomPolling(room.id);
+    renderRoom(room);
+    startRoomPolling(room.id, { fast: true });
+    loadRoom(room.id);
     logEvent(t("roomCreated", { id: room.id }));
   } catch (err) {
     logEvent(t("roomFailed", { message: err.message }));
@@ -1366,7 +1374,7 @@ async function wakeCurrentRoom() {
     const room = await request(`rooms/${encodeURIComponent(state.currentRoomId)}/wake`, { method: "POST", body: {} });
     upsertRoom(room);
     renderRoom(room);
-    startRoomPolling(room.id);
+    startRoomPolling(room.id, { fast: true });
   } catch (err) {
     logEvent(t("wakeRoomFailed", { message: err.message }));
   }
@@ -1419,6 +1427,7 @@ async function sendRoomMessage(event) {
   const message = $("roomMessage").value.trim();
   if (!message) return logEvent(t("roomMessageEmpty"));
   const directed = roomMessagePayload(message);
+  const pendingAgents = roomMessagePendingAgents(directed.agents, state.currentRoom);
   const body = { message: directed.message, speaker: "user", wake: true };
   if (directed.agents.length) {
     body.agents = directed.agents;
@@ -1432,8 +1441,10 @@ async function sendRoomMessage(event) {
     });
     $("roomMessage").value = "";
     upsertRoom(room);
-    await loadRoom(room.id);
-    startRoomPolling(room.id);
+    queueRoomPendingTyping(room.id, pendingAgents, room);
+    renderRoom(room);
+    startRoomPolling(room.id, { fast: true });
+    loadRoom(room.id);
     logEvent(t("roomMessageSent"));
   } catch (err) {
     logEvent(t("roomMessageFailed", { message: err.message }));
@@ -1459,9 +1470,33 @@ function canonicalAgentId(value) {
   return knownAgents.find((agentId) => String(agentId).toLowerCase() === needle) || "";
 }
 
-function startRoomPolling(roomId) {
+function roomMessagePendingAgents(directedAgents = [], room = {}) {
+  if (directedAgents.length) return directedAgents;
+  const agents = Array.isArray(room?.agents) ? room.agents : [];
+  if (!agents.length) return [];
+  const nextIndex = Number(room?.autonomy?.next_index || 0);
+  return [agents[((Number.isFinite(nextIndex) ? nextIndex : 0) % agents.length + agents.length) % agents.length]];
+}
+
+function startRoomPolling(roomId, options = {}) {
   if (state.roomPolling) clearInterval(state.roomPolling);
-  state.roomPolling = setInterval(() => loadRoom(roomId), 3000);
+  if (state.roomPollingFastTimer) clearTimeout(state.roomPollingFastTimer);
+  const intervalMs = options.fast ? 850 : 3000;
+  state.roomPolling = setInterval(() => loadRoom(roomId), intervalMs);
+  if (options.fast) {
+    state.roomPollingFastTimer = setTimeout(() => {
+      if (state.currentRoomId === roomId) startRoomPolling(roomId);
+    }, 14000);
+  } else {
+    state.roomPollingFastTimer = null;
+  }
+}
+
+function stopRoomPolling() {
+  if (state.roomPolling) clearInterval(state.roomPolling);
+  if (state.roomPollingFastTimer) clearTimeout(state.roomPollingFastTimer);
+  state.roomPolling = null;
+  state.roomPollingFastTimer = null;
 }
 
 async function loadRoom(roomId) {
@@ -1480,9 +1515,8 @@ async function loadRoom(roomId) {
     }
     renderRoom(room);
     const active = roomActiveRunItems(room).length > 0;
-    if (!active && room.status !== "active" && state.roomPolling) {
-      clearInterval(state.roomPolling);
-      state.roomPolling = null;
+    if (!active && !roomPendingTypingItems(room).length && room.status !== "active" && state.roomPolling) {
+      stopRoomPolling();
     }
   } catch (err) {
     logEvent(t("roomLoadFailed", { message: err.message }));
@@ -1547,7 +1581,9 @@ function renderRoom(room) {
   const messageList = $("roomMessages");
   messageList.textContent = "";
   const chatItems = roomChatItems(room);
-  if (!chatItems.length && !activeRuns.length) {
+  const typingItems = roomTypingItems(room, chatItems, activeRuns);
+  renderRoomMembers(room, typingItems);
+  if (!chatItems.length && !typingItems.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state room-chat-empty";
     empty.textContent = room?.id ? t("noAgentChat") : t("noRoom");
@@ -1556,7 +1592,7 @@ function renderRoom(room) {
   for (const item of chatItems) {
     messageList.append(renderRoomChatItem(item));
   }
-  for (const run of activeRuns) {
+  for (const run of typingItems) {
     messageList.append(renderRoomTypingItem(run));
   }
   requestAnimationFrame(() => {
@@ -1658,6 +1694,46 @@ function renderRoomSettings(room = {}) {
       ${option.status ? `<span class="status ${escapeHtml(option.status)}">${escapeHtml(statusText(option.status))}</span>` : ""}
     `;
     editor.append(label);
+  }
+}
+
+function renderRoomMembers(room = {}, typingItems = []) {
+  const list = $("roomMembers");
+  if (!list) return;
+  list.textContent = "";
+  if (!room?.id) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = t("noRoom");
+    list.append(empty);
+    return;
+  }
+  const roomAgents = Array.isArray(room.agents) ? room.agents : [];
+  if (!roomAgents.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = t("noAgents");
+    list.append(empty);
+    return;
+  }
+  const typingAgentKeys = new Set(typingItems.map((item) => normalizeAgentKey(roomRunAgentId(item))).filter(Boolean));
+  const agentsById = new Map((state.agents || []).filter((agent) => agent.id).map((agent) => [String(agent.id).toLowerCase(), agent]));
+  for (const agentId of roomAgents) {
+    const agent = agentsById.get(String(agentId).toLowerCase()) || {};
+    const isTyping = typingAgentKeys.has(normalizeAgentKey(agentId));
+    const status = isTyping ? "running" : (agent.status || agent.node_status || "unknown");
+    const detail = [agent.role || agent.kind || "", agent.node_id || ""].filter(Boolean).join(" / ");
+    const row = document.createElement("div");
+    row.className = `room-member-row ${isTyping ? "is-typing" : ""}`;
+    row.innerHTML = `
+      <div class="room-member-avatar" aria-hidden="true">${escapeHtml(chatInitials(agentId))}</div>
+      <div class="room-member-main">
+        <strong>${escapeHtml(agentId)}</strong>
+        ${detail ? `<span>${escapeHtml(detail)}</span>` : ""}
+      </div>
+      <span class="status ${escapeHtml(status)}">${escapeHtml(isTyping ? t("typing") : statusText(status))}</span>
+    `;
+    list.append(row);
   }
 }
 
@@ -1875,9 +1951,9 @@ function renderRoomChatItem(item) {
 }
 
 function renderRoomTypingItem(run = {}) {
-  const speaker = run.agent_id || run.agent || run.id || "agent";
+  const speaker = roomRunAgentId(run) || "agent";
   const node = document.createElement("article");
-  node.className = "chat-message is-agent is-typing";
+  node.className = `chat-message is-agent is-typing ${run.pending ? "is-pending" : ""}`.trim();
   node.innerHTML = `
     <div class="chat-avatar" aria-hidden="true">${escapeHtml(chatInitials(speaker))}</div>
     <div class="chat-bubble">
@@ -2619,6 +2695,7 @@ function applyLanguage() {
   renderEdgeJoin();
   renderRooms();
   if (state.currentRoom) renderRoom(state.currentRoom);
+  else renderRoomMembers({});
   if (state.currentThread) renderThread(state.currentThread);
   if (state.currentTrace) renderTrace(state.currentTrace);
 }
@@ -2670,6 +2747,68 @@ function roomActiveRunItems(room) {
     .map((run) => typeof run === "string" ? { id: run, agent_id: run, status: "running" } : run)
     .filter((run) => ["queued", "running"].includes(String(run.status || "").toLowerCase()))
     .sort((a, b) => String(a.started_at || a.created_at || "").localeCompare(String(b.started_at || b.created_at || "")));
+}
+
+function queueRoomPendingTyping(roomId, agents = [], room = {}) {
+  const cleanAgents = [...new Map((agents || [])
+    .map((agent) => String(agent || "").trim())
+    .filter(Boolean)
+    .map((agent) => [agent.toLowerCase(), agent])).values()];
+  if (!roomId || !cleanAgents.length) return;
+  const afterOrdinal = maxRoomChatOrdinal(roomChatItems(room));
+  const nowMs = Date.now();
+  state.roomPendingTyping.set(roomId, cleanAgents.map((agentId) => ({
+    agent_id: agentId,
+    pending: true,
+    status: "running",
+    afterOrdinal,
+    createdAt: nowMs,
+    expiresAt: nowMs + ROOM_PENDING_TYPING_MS
+  })));
+}
+
+function roomTypingItems(room, chatItems = roomChatItems(room), activeRuns = roomActiveRunItems(room)) {
+  const activeKeys = new Set(activeRuns.map((run) => normalizeAgentKey(roomRunAgentId(run))).filter(Boolean));
+  const pending = roomPendingTypingItems(room, chatItems, activeRuns)
+    .filter((item) => !activeKeys.has(normalizeAgentKey(roomRunAgentId(item))));
+  return [...activeRuns, ...pending];
+}
+
+function roomPendingTypingItems(room, chatItems = roomChatItems(room), activeRuns = roomActiveRunItems(room)) {
+  const roomId = room?.id;
+  if (!roomId) return [];
+  const entries = state.roomPendingTyping.get(roomId) || [];
+  if (!entries.length) return [];
+  const nowMs = Date.now();
+  const activeKeys = new Set(activeRuns.map((run) => normalizeAgentKey(roomRunAgentId(run))).filter(Boolean));
+  const kept = [];
+  const visible = [];
+  for (const entry of entries) {
+    const agentKey = normalizeAgentKey(roomRunAgentId(entry));
+    if (!agentKey || Number(entry.expiresAt || 0) <= nowMs) continue;
+    const hasReply = chatItems.some((item) => (
+      normalizeAgentKey(item.speaker) === agentKey
+      && Number(item.ordinal || 0) > Number(entry.afterOrdinal || 0)
+    ));
+    if (hasReply) continue;
+    kept.push(entry);
+    if (!activeKeys.has(agentKey)) visible.push(entry);
+  }
+  if (kept.length) state.roomPendingTyping.set(roomId, kept);
+  else state.roomPendingTyping.delete(roomId);
+  return visible;
+}
+
+function roomRunAgentId(run = {}) {
+  return run.agent_id || run.agent || run.id || "";
+}
+
+function normalizeAgentKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function maxRoomChatOrdinal(items = []) {
+  return items.reduce((max, item) => Math.max(max, Number(item.ordinal || 0)), 0);
 }
 
 function roomExportSummary(room) {

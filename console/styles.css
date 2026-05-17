@@ -316,6 +316,17 @@ tbody tr:last-child td {
   gap: 16px;
 }
 
+.agents-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.38fr) minmax(680px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.agents-table-column {
+  min-width: 0;
+}
+
 .overview-grid {
   display: grid;
   grid-template-columns: minmax(340px, 0.9fr) minmax(520px, 1.1fr);
@@ -404,6 +415,59 @@ tbody tr:last-child td {
 .room-agent-check span:nth-child(2) {
   overflow-wrap: anywhere;
   font-weight: 720;
+}
+
+.room-members-list {
+  display: grid;
+  gap: 8px;
+}
+
+.room-member-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.room-member-row.is-typing {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.room-member-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.room-member-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.room-member-main strong,
+.room-member-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-member-main span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .room-inspector-surface {
@@ -1311,6 +1375,10 @@ tbody tr:last-child td {
     grid-template-columns: repeat(3, minmax(120px, 1fr));
   }
 
+  .agents-grid {
+    grid-template-columns: 1fr;
+  }
+
   .rooms-grid {
     grid-template-columns: minmax(280px, 0.75fr) minmax(420px, 1.25fr);
   }
@@ -1344,6 +1412,7 @@ tbody tr:last-child td {
 
   .status-band,
   .split,
+  .agents-grid,
   .overview-grid,
   .rooms-grid,
   .form-row,

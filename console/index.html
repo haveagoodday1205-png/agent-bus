@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260517-console20" />
+    <link rel="stylesheet" href="./styles.css?v=20260517-console21" />
   </head>
   <body>
     <header class="topbar">
@@ -152,28 +152,56 @@
       </section>
 
       <section id="agentsPanel" class="panel">
-        <div class="section-head">
-          <h2 data-i18n="agents">Agents</h2>
-          <button id="loadAgentsButton" type="button" data-i18n="reload">Reload</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th></th>
-                <th data-i18n="agent">Agent</th>
-                <th data-i18n="node">Node</th>
-                <th data-i18n="health">Health</th>
-                <th data-i18n="activity">Activity</th>
-                <th data-i18n="kind">Kind</th>
-                <th data-i18n="role">Role</th>
-                <th data-i18n="permissionProfile">Permission</th>
-                <th data-i18n="capabilities">Capabilities</th>
-                <th data-i18n="seen">Seen</th>
-              </tr>
-            </thead>
-            <tbody id="agentsTable"></tbody>
-          </table>
+        <div class="agents-grid">
+          <form id="roomForm" class="tool-surface room-create-surface agents-room-create-surface">
+            <div class="section-head">
+              <h2 data-i18n="autonomousRoom">Autonomous Room</h2>
+            </div>
+            <label>
+              <span data-i18n="goal">Goal</span>
+              <textarea id="roomGoal" rows="5" placeholder="Describe the goal for the autonomous agent room" data-i18n-placeholder="roomGoalPlaceholder"></textarea>
+            </label>
+            <div class="form-row">
+              <label>
+                <span data-i18n="maxSteps">Max Steps</span>
+                <input id="roomMaxSteps" type="number" min="0" value="0" />
+              </label>
+              <label>
+                <span data-i18n="wake">Wake</span>
+                <select id="roomWakeMode">
+                  <option value="first" data-i18n="wakeFirst">first selected</option>
+                  <option value="all" data-i18n="wakeAll">all selected</option>
+                </select>
+              </label>
+              <button type="submit" data-i18n="createRoom">Create Room</button>
+            </div>
+          </form>
+
+          <div class="agents-table-column">
+            <div class="section-head">
+              <h2 data-i18n="agents">Agents</h2>
+              <button id="loadAgentsButton" type="button" data-i18n="reload">Reload</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th data-i18n="agent">Agent</th>
+                    <th data-i18n="node">Node</th>
+                    <th data-i18n="health">Health</th>
+                    <th data-i18n="activity">Activity</th>
+                    <th data-i18n="kind">Kind</th>
+                    <th data-i18n="role">Role</th>
+                    <th data-i18n="permissionProfile">Permission</th>
+                    <th data-i18n="capabilities">Capabilities</th>
+                    <th data-i18n="seen">Seen</th>
+                  </tr>
+                </thead>
+                <tbody id="agentsTable"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -212,29 +240,12 @@
             <div id="roomMessages" class="conversation-list"></div>
           </div>
           <div class="room-tools-column">
-            <form id="roomForm" class="tool-surface room-create-surface">
+            <section class="tool-surface room-members-surface">
               <div class="section-head">
-                <h2 data-i18n="autonomousRoom">Autonomous Room</h2>
+                <h2 data-i18n="roomMembers">Room Members</h2>
               </div>
-              <label>
-                <span data-i18n="goal">Goal</span>
-                <textarea id="roomGoal" rows="7" placeholder="Describe the goal for the autonomous agent room" data-i18n-placeholder="roomGoalPlaceholder"></textarea>
-              </label>
-              <div class="form-row">
-                <label>
-                  <span data-i18n="maxSteps">Max Steps</span>
-                  <input id="roomMaxSteps" type="number" min="0" value="0" />
-                </label>
-                <label>
-                  <span data-i18n="wake">Wake</span>
-                  <select id="roomWakeMode">
-                    <option value="first" data-i18n="wakeFirst">first selected</option>
-                    <option value="all" data-i18n="wakeAll">all selected</option>
-                  </select>
-                </label>
-                <button type="submit" data-i18n="createRoom">Create Room</button>
-              </div>
-            </form>
+              <div id="roomMembers" class="room-members-list"></div>
+            </section>
             <form id="roomSettingsForm" class="tool-surface room-settings-surface">
               <div class="section-head">
                 <h2 data-i18n="roomControls">Room Controls</h2>
@@ -402,6 +413,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260517-console20"></script>
+    <script type="module" src="./app.js?v=20260517-console21"></script>
   </body>
 </html>

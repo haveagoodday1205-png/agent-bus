@@ -1286,18 +1286,21 @@ function renderRooms() {
     button.type = "button";
     button.className = `room-list-item ${room.id === state.currentRoomId ? "active" : ""}`;
     const activeRuns = roomActiveRunCount(room);
+    const preview = roomListPreview(room);
+    const title = roomDisplayTitle(room);
     button.innerHTML = `
-      <div class="room-list-title">
-        <strong>${escapeHtml(room.title || room.id)}</strong>
-        <span class="status ${escapeHtml(room.status || "unknown")}">${escapeHtml(statusText(room.status || "unknown"))}</span>
-      </div>
-      <div class="room-list-meta">
-        <span>${escapeHtml((room.agents || []).join(", ") || "-")}</span>
-        <span>${escapeHtml(room.updated_at || room.created_at || "")}</span>
-      </div>
-      <div class="room-list-meta">
-        <span>${escapeHtml(roomReportCount(room))} ${escapeHtml(t("reports"))}</span>
-        <span>${escapeHtml(activeRuns)} ${escapeHtml(t("activeRuns"))}</span>
+      <div class="room-list-avatar" aria-hidden="true">${escapeHtml(chatInitials(title))}</div>
+      <div class="room-list-body">
+        <div class="room-list-title">
+          <strong>${escapeHtml(title)}</strong>
+          <time>${escapeHtml(formatChatTime(room.updated_at || room.created_at || ""))}</time>
+        </div>
+        <div class="room-list-preview">${escapeHtml(preview)}</div>
+        <div class="room-list-meta">
+          <span class="status ${escapeHtml(room.status || "unknown")}">${escapeHtml(statusText(room.status || "unknown"))}</span>
+          <span>${escapeHtml(roomReportCount(room))} ${escapeHtml(t("reports"))}</span>
+          <span>${escapeHtml(activeRuns)} ${escapeHtml(t("activeRuns"))}</span>
+        </div>
       </div>
     `;
     button.addEventListener("click", () => loadRoom(room.id));
@@ -1321,7 +1324,7 @@ async function createRoom(event) {
     state.currentRoomId = room.id;
     state.rooms = [room, ...state.rooms.filter((item) => item.id !== room.id)];
     renderRooms();
-    renderRoom(room);
+    await loadRoom(room.id);
     startRoomPolling(room.id);
     logEvent(t("roomCreated", { id: room.id }));
   } catch (err) {
@@ -1367,7 +1370,7 @@ async function sendRoomMessage(event) {
     });
     $("roomMessage").value = "";
     upsertRoom(room);
-    renderRoom(room);
+    await loadRoom(room.id);
     startRoomPolling(room.id);
     logEvent(t("roomMessageSent"));
   } catch (err) {
@@ -1432,14 +1435,22 @@ function renderRoom(room) {
   upsertRoom(room);
   $("roomSummary").removeAttribute("data-i18n");
   $("roomSummary").innerHTML = `
-    <div class="summary-grid">
-      <div><span class="metric-label">ID</span><strong>${escapeHtml(room.id)}</strong></div>
-      <div><span class="metric-label">${escapeHtml(t("status"))}</span><strong class="status ${escapeHtml(room.status || "unknown")}">${escapeHtml(statusText(room.status || "unknown"))}</strong></div>
-      <div><span class="metric-label">${escapeHtml(t("agents"))}</span><strong>${escapeHtml((room.agents || []).length)}</strong></div>
-      <div><span class="metric-label">${escapeHtml(t("maxSteps"))}</span><strong>${escapeHtml(room.autonomy?.steps || 0)}/${escapeHtml(room.autonomy?.max_steps || 0)}</strong></div>
-      <div><span class="metric-label">${escapeHtml(t("message"))}</span><strong>${escapeHtml(roomMessageCount(room))}</strong></div>
-      <div><span class="metric-label">${escapeHtml(t("reports"))}</span><strong>${escapeHtml(roomReportCount(room))}</strong></div>
-      <div><span class="metric-label">${escapeHtml(t("trace"))}</span><strong>${escapeHtml(room.trace_id || "-")}</strong></div>
+    <div class="chat-room-head">
+      <div class="chat-room-avatar" aria-hidden="true">${escapeHtml(chatInitials(roomDisplayTitle(room)))}</div>
+      <div class="chat-room-main">
+        <div class="chat-room-title">
+          <h3>${escapeHtml(roomDisplayTitle(room))}</h3>
+          <span class="status ${escapeHtml(room.status || "unknown")}">${escapeHtml(statusText(room.status || "unknown"))}</span>
+        </div>
+        <div class="chat-room-subtitle">${escapeHtml(roomAgentLine(room))}</div>
+        <div class="chat-room-id">${escapeHtml(room.id)}</div>
+      </div>
+      <div class="chat-room-stats">
+        <span>${escapeHtml(roomMessageCount(room))} ${escapeHtml(t("message"))}</span>
+        <span>${escapeHtml(roomReportCount(room))} ${escapeHtml(t("reports"))}</span>
+        <span>${escapeHtml(room.autonomy?.steps || 0)}/${escapeHtml(room.autonomy?.max_steps || 0)} ${escapeHtml(t("maxSteps"))}</span>
+        ${room.trace_id ? `<span>${escapeHtml(t("trace"))}: ${escapeHtml(room.trace_id)}</span>` : ""}
+      </div>
     </div>
   `;
   $("roomDoctorButton").disabled = !room.id;
@@ -1462,6 +1473,9 @@ function renderRoom(room) {
   for (const item of chatItems) {
     messageList.append(renderRoomChatItem(item));
   }
+  requestAnimationFrame(() => {
+    messageList.scrollTop = messageList.scrollHeight;
+  });
   const reports = $("roomReports");
   reports.textContent = "";
   if ((room.reports || []).length) {
@@ -1580,6 +1594,26 @@ function roomChatItems(room = {}) {
     }));
   }
   return sortRoomChatItems(items);
+}
+
+function roomDisplayTitle(room = {}) {
+  return String(room.title || room.goal || room.id || "Room").trim().slice(0, 96);
+}
+
+function roomAgentLine(room = {}) {
+  const agents = Array.isArray(room.agents) ? room.agents : [];
+  if (!agents.length) return "-";
+  return agents.join(", ");
+}
+
+function roomListPreview(room = {}) {
+  const chat = roomChatItems(room);
+  const last = chat[chat.length - 1];
+  if (last?.content) return `${last.speaker}: ${last.content}`.slice(0, 150);
+  const goal = String(room.goal || room.title || "").trim();
+  if (goal) return goal.slice(0, 150);
+  const agents = roomAgentLine(room);
+  return agents === "-" ? room.id || "-" : agents;
 }
 
 function sortRoomChatItems(items) {

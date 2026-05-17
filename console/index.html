@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent Bus Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260517-console9" />
+    <link rel="stylesheet" href="./styles.css?v=20260517-console10" />
   </head>
   <body>
     <header class="topbar">
@@ -179,34 +179,13 @@
 
       <section id="roomsPanel" class="panel">
         <div class="rooms-grid">
-          <form id="roomForm" class="tool-surface">
-            <div class="section-head">
-              <h2 data-i18n="autonomousRoom">Autonomous Room</h2>
-              <button id="loadRoomsButton" type="button" data-i18n="reload">Reload</button>
-            </div>
-            <label>
-              <span data-i18n="goal">Goal</span>
-              <textarea id="roomGoal" rows="7" placeholder="Describe the goal for the autonomous agent room" data-i18n-placeholder="roomGoalPlaceholder"></textarea>
-            </label>
-            <div class="form-row">
-              <label>
-                <span data-i18n="maxSteps">Max Steps</span>
-                <input id="roomMaxSteps" type="number" min="0" value="0" />
-              </label>
-              <label>
-                <span data-i18n="wake">Wake</span>
-                <select id="roomWakeMode">
-                  <option value="first" data-i18n="wakeFirst">first selected</option>
-                  <option value="all" data-i18n="wakeAll">all selected</option>
-                </select>
-              </label>
-              <button type="submit" data-i18n="createRoom">Create Room</button>
-            </div>
-          </form>
           <div class="tool-surface room-list-surface">
             <div class="section-head">
               <h2 data-i18n="recentRooms">Recent Rooms</h2>
-              <span id="roomListCount" class="muted">-</span>
+              <div class="button-row">
+                <span id="roomListCount" class="muted">-</span>
+                <button id="loadRoomsButton" type="button" data-i18n="reload">Reload</button>
+              </div>
             </div>
             <div id="roomList" class="room-list"></div>
           </div>
@@ -231,7 +210,37 @@
               <button type="submit" data-i18n="send">Send</button>
             </form>
             <div id="roomMessages" class="conversation-list"></div>
-            <div id="roomReports" class="runs-list"></div>
+          </div>
+          <div class="room-tools-column">
+            <form id="roomForm" class="tool-surface room-create-surface">
+              <div class="section-head">
+                <h2 data-i18n="autonomousRoom">Autonomous Room</h2>
+              </div>
+              <label>
+                <span data-i18n="goal">Goal</span>
+                <textarea id="roomGoal" rows="7" placeholder="Describe the goal for the autonomous agent room" data-i18n-placeholder="roomGoalPlaceholder"></textarea>
+              </label>
+              <div class="form-row">
+                <label>
+                  <span data-i18n="maxSteps">Max Steps</span>
+                  <input id="roomMaxSteps" type="number" min="0" value="0" />
+                </label>
+                <label>
+                  <span data-i18n="wake">Wake</span>
+                  <select id="roomWakeMode">
+                    <option value="first" data-i18n="wakeFirst">first selected</option>
+                    <option value="all" data-i18n="wakeAll">all selected</option>
+                  </select>
+                </label>
+                <button type="submit" data-i18n="createRoom">Create Room</button>
+              </div>
+            </form>
+            <div class="tool-surface room-inspector-surface">
+              <div class="section-head">
+                <h2 data-i18n="roomTimeline">Room Timeline</h2>
+              </div>
+              <div id="roomReports" class="runs-list"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -363,6 +372,6 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=20260517-console9"></script>
+    <script type="module" src="./app.js?v=20260517-console10"></script>
   </body>
 </html>

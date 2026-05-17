@@ -1,0 +1,46 @@
+name: Issue-to-PR demo feedback
+description: Tell us what happened when you tried the flagship no-secret issue demo.
+title: "[Issue demo]: "
+labels: ["feedback", "demo", "flagship", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for trying the planner -> coder -> reviewer demo. Please review generated artifacts before sharing them, and do not post tokens, private repository content, private hosts, SSH paths, model keys, or secrets.
+  - type: dropdown
+    id: command
+    attributes:
+      label: Command used
+      options:
+        - npx agent-bus-cli@latest demo issue
+        - agent-bus demo issue
+        - npm run demo:issue
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened?
+      description: Did the demo complete, and which artifact did you inspect first?
+      placeholder: The demo completed and I opened README.md, but I expected the PR draft to include more verification detail.
+    validations:
+      required: true
+  - type: textarea
+    id: artifact_summary
+    attributes:
+      label: Redacted artifact summary
+      description: Paste the reviewed README.md summary or attach reviewed artifacts. Remove private issue text if you used --issue or --issue-file.
+      render: markdown
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, terminal, Node.js version, install method, and whether this was npx, npm, or a checkout.
+      placeholder: Ubuntu 24.04, bash, Node 22, npx
+    validations:
+      required: true
+  - type: textarea
+    id: next_step
+    attributes:
+      label: What should the flagship demo do next?
+      description: Examples: fetch a live issue after approval, create a local branch, run tests, draft a GitHub PR, improve reviewer output, or make the artifact folder easier to scan.

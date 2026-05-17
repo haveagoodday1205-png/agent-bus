@@ -28,6 +28,7 @@ npm run demo:zero-token
 Then open a feedback issue:
 
 - [Zero-token demo feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=zero_token_demo.yml)
+- [Issue-to-PR demo feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=issue_demo_feedback.yml)
 - [Adapter compatibility report](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=adapter_compatibility.yml)
 - [First remote node feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=remote_node_feedback.yml)
 

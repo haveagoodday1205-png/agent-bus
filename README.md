@@ -9,6 +9,8 @@ A lightweight distributed agent and OpenAI-compatible model router for connectin
 
 Agent Bus is also an early AI-to-AI protocol surface: agents can discover each other, advertise capabilities, report shallow health, receive tasks, and coordinate inside shared rooms.
 
+![Agent Bus social preview](docs/assets/agent-bus-social-card.svg)
+
 ## Try It Without Secrets
 
 The fastest way to understand Agent Bus is to run the zero-token room demo. It starts a private local Central, connects an Edge with two deterministic fake agents, creates a room, captures `REPORT` / `BLACKBOARD` / `DONE`, and exits without API keys, Telegram, remote machines, or model quota.
@@ -41,7 +43,7 @@ Then open a feedback issue:
 - [Adapter compatibility report](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=adapter_compatibility.yml)
 - [First remote node feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=remote_node_feedback.yml)
 
-See [Try Agent Bus](docs/try-agent-bus.md) for the 2-minute, 5-minute, 10-minute, and adapter-author paths. See [Launch Kit](docs/launch.md) for the public pitch, demo boundary, and feedback links.
+See [Try Agent Bus](docs/try-agent-bus.md) for the 2-minute, 5-minute, 10-minute, and adapter-author paths. See [Beta Testers](docs/beta-testers.md) if you can run the demo and report first-run feedback. See [Launch Kit](docs/launch.md) for the public pitch, demo boundary, and feedback links.
 
 There are three entrypoint families:
 
@@ -68,7 +70,7 @@ Agent Bus is a self-hosted remote-assistant CLI for making AI tools addressable 
 - Compatibility verification: `npm run compat:check` starts a temporary gateway plus `examples/hello-agent` and validates registration, `agent:<id>` chat/responses calls, and room directives without spending model quota.
 - Protocol conformance: `agent-bus protocol conformance --json` runs the no-quota v1 contract gate for discovery, scoped edge auth, agent-backed model calls, room directives, event-log, event export, and replay. Add `--artifact-dir conformance-artifacts` or run `agent-bus protocol certify` / `npm run protocol:certify` to write JSON, Markdown, and Shields badge artifacts; validate the artifact set with `agent-bus protocol validate-result --artifact-dir conformance-artifacts`. The result JSON is documented by `docs/protocol-conformance-result.schema.json`. Adapter authors can test their own command with `agent-bus protocol conformance --profile adapter-command --agent-command "./my-agent" --agent-id my-agent --json`.
 
-Start with `docs/try-agent-bus.md` for the public no-secret trial paths, `docs/launch.md` for the public pitch and feedback links, `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `docs/protocol-v1.md` for the emerging stable protocol contract, `docs/adapter-conformance-ci.md` for publishing adapter compatibility proof, `docs/trust-boundaries.md` plus `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
+Start with `docs/try-agent-bus.md` for the public no-secret trial paths, `docs/beta-testers.md` for early feedback requests, `docs/launch.md` for the public pitch and feedback links, `docs/remote-assistant-quickstart.md` for the first remote node, `docs/cli.md` for CLI setup, `docs/ai-to-ai.md` for the room protocol, `docs/protocol-v1.md` for the emerging stable protocol contract, `docs/adapter-conformance-ci.md` for publishing adapter compatibility proof, `docs/trust-boundaries.md` plus `SECURITY.md` for trust boundaries, `CONTRIBUTING.md` for contributor workflow, `docs/good-first-issues.md` for starter tasks, and `CHANGELOG.md` for release highlights.
 
 New adapter authors can start with `examples/hello-agent/`; it is a no-model, no-secret reference adapter that reads `AGENT_MESSAGE_FILE` and emits `REPORT`, `BLACKBOARD`, and `DONE`.
 

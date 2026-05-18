@@ -65,4 +65,5 @@ The issue-to-PR demo does not read live GitHub issues, create branches or commit
 - Try Agent Bus: https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/try-agent-bus.md
 - Architecture: https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/architecture.md
 - Protocol v1: https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/protocol-v1.md
+- Promotion Playbook: https://github.com/haveagoodday1205-png/agent-bus/blob/main/docs/promotion-playbook.md
 - npm: https://www.npmjs.com/package/agent-bus-cli

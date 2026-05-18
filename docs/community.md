@@ -21,6 +21,7 @@ Use a clear sentence everywhere:
 - Add GitHub topics: `ai`, `ai-agents`, `agent-framework`, `openai`, `cli`, `distributed-systems`, `model-router`, `remote-assistant`, `self-hosted`.
 - Publish the first GitHub Release with checksums and install instructions.
 - Put one visual proof near the top of the README so visitors can understand the successful demo shape before reading architecture docs.
+- Use `docs/promotion-playbook.md` as the launch-week checklist and measurement loop.
 - Add Windows, Linux, Ubuntu, and macOS binaries as soon as packaging is stable.
 - Record a short GIF: create a pair code, join a second machine, run a room with two agents, show the final report.
 - Keep the README focused on a real first run instead of a long vision essay.

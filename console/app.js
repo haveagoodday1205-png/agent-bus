@@ -22,7 +22,7 @@ const state = {
   roomPollingFastTimer: null,
   roomForceScrollBottom: true,
   polling: null,
-  lang: localStorage.getItem("agentBusLanguage") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en"),
+  lang: initialConsoleLanguage(),
   tokenStatusKey: null,
   tokenStatusClass: ""
 };
@@ -2827,6 +2827,23 @@ function initialConsoleToken() {
     return hashToken;
   }
   return sessionStorage.getItem("agentBusToken") || "";
+}
+
+function initialConsoleLanguage() {
+  const stored = normalizeLanguage(localStorage.getItem("agentBusLanguage"));
+  if (stored) return stored;
+  const urlLang = normalizeLanguage(new URLSearchParams(window.location.search || "").get("lang"));
+  if (urlLang) return urlLang;
+  const hash = String(window.location.hash || "").replace(/^#/, "");
+  const hashLang = normalizeLanguage(new URLSearchParams(hash).get("lang"));
+  return hashLang || "en";
+}
+
+function normalizeLanguage(value) {
+  const lang = String(value || "").trim().toLowerCase();
+  if (["zh", "zh-cn", "zh-hans", "cn", "chinese"].includes(lang)) return "zh";
+  if (["en", "en-us", "en-gb", "english"].includes(lang)) return "en";
+  return "";
 }
 
 function normalizeToken(value) {

@@ -9,6 +9,7 @@ https://YOUR-GATEWAY-DOMAIN/agent-bus/console/
 
 The console can:
 
+- Default to English for first-time visitors, with a language selector for Chinese. The selected language is saved in browser local storage; `?lang=zh` can open the console directly in Chinese.
 - Show a quickstart checklist plus central readiness, active-room counts, and next-action guidance from `GET /v1/agent-bus/status`, including copy buttons for command-level next actions.
 - When stale queued room work is reported, include copyable `room inspect`, guarded `room recover --yes`, and explicit `room pause` commands in the quickstart command box with the current gateway and redacted token placeholders.
 - Create, audit, and revoke scoped edge tokens while copying ready-to-run `agent-bus setup edge --gateway ... --token ...` join commands.

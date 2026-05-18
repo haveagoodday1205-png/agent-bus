@@ -1,48 +1,53 @@
 # Agent Bus Project Handoff
 
-更新时间：2026-05-17
+Last updated: 2026-05-18
 
-这份文档给后续维护者、远程 agent、开源贡献者接手用。它只记录公开仓库可以安全共享的信息；服务器 IP、SSH key、Telegram token、npm token、模型 API key、真实 Central admin token 等敏感信息必须放在私有运维笔记或 secret store，不能提交到仓库。
+This handoff is for future maintainers, remote agents, and open-source contributors. It only records information that is safe to keep in the public repository. Server IPs, SSH key paths, Telegram tokens, npm tokens, model API keys, real Central admin tokens, and private deployment details belong in a private operations note or secret store, never in this repository.
 
-## 一句话目标
+## One-Sentence Goal
 
-Agent Bus 是一个自托管的远程助手和 AI-to-AI 连接层：
+Agent Bus is a self-hosted remote-assistant and AI-to-AI connection layer:
 
 ```text
 MCP connects models to tools.
 Agent Bus connects agents to agents.
 ```
 
-它的核心价值是让 Codex、Hermes、OpenClaw、Claude Code、Ollama、自定义脚本、OpenAI-compatible 模型网关等不同运行时变成可发现、可路由、可协作的 agent。用户只需要部署一个公网可访问的 Central，再让各台私有机器上的 Edge 主动连出去，就能把远程 AI/工具接入同一个 bus。
+Its core value is making Codex, Hermes, OpenClaw, Claude Code, Ollama, custom command adapters, and OpenAI-compatible model gateways discoverable, routable, and collaborative. A user deploys one public Central, then private Edge machines connect outward and expose local AI tools to the same bus without opening inbound ports.
 
-## 当前项目状态
+## Current Project State
 
-当前主线已经具备可公开试用和可贡献的基础：
+The main branch is now ready for public trial and outside contribution:
 
-- npm CLI 包名：`agent-bus-cli`，安装后命令是 `agent-bus`。
-- Central/Edge 架构：Central 负责鉴权、房间、run 队列、事件、模型路由；Edge 主动长轮询连接 Central 并执行本机 agent。
-- 支持 Node 和 Python 运行时：`central-gateway.mjs` / `edge-node.mjs`，以及更完整的 `central_gateway.py` / `edge_node.py`。
-- 支持 AI-to-AI rooms：agent 可用 `@agent-id`、`REPORT`、`BLACKBOARD`、`WAKE`、`DONE` 协作。
-- 支持 OpenAI-compatible model router：`/v1/models`、`/v1/chat/completions`、`/v1/responses`。
-- 支持 edge-to-edge model replacement：在线 agent 会暴露为 `agent:<agent-id>` 虚拟模型，其他机器可通过 Central 调用它。
-- 支持 Telegram operator bot：状态、agent 选择、process/thread、room draft、多选 agent、按钮、poller/webhook。
-- 支持本地 room memory cache：按“目录/书签”方式压缩历史上下文，不依赖向量库、数据库或模型调用。
-- 支持 conformance/certification：可生成 JSON、Markdown、Shields badge，并验证 artifact set。
-- 支持 SDK：`sdk/js/` 和 `sdk/python/` 覆盖 discovery、rooms、agent-backed model calls、room replay。
-- 支持 no-quota demos/smokes：大量测试不需要真实模型 key 或私有服务器。
-- README、`agent-bus --help`、`docs/try-agent-bus.md` 已把 `agent-bus demo zero-token` 作为公开首跑路径。
-- `agent-bus demo zero-token` 会写出 share-safe Markdown report，方便新用户附到 GitHub feedback issue。
-- GitHub issue templates 已覆盖 zero-token demo feedback、adapter compatibility、first remote node feedback。
+- npm CLI package: `agent-bus-cli`; the installed command is `agent-bus`.
+- Central/Edge architecture: Central handles auth, rooms, run queues, events, model routing, and pairing; Edge nodes long-poll Central and execute local agents.
+- Node and Python runtimes: `central-gateway.mjs` / `edge-node.mjs`, plus the more complete `central_gateway.py` / `edge_node.py`.
+- AI-to-AI rooms: agents coordinate with `@agent-id`, `REPORT`, `BLACKBOARD`, `WAKE`, and `DONE`.
+- OpenAI-compatible model router: `/v1/models`, `/v1/chat/completions`, and `/v1/responses`.
+- Edge-to-edge model replacement: online agents are exposed as `agent:<agent-id>` virtual models so one machine can call another agent through Central.
+- Telegram operator bot: status, agent selection, process/thread controls, room drafts, multi-agent selection, inline buttons, poller, and webhook support.
+- Local room memory cache: extractive, book-style compressed context with source locations, without vector databases, databases, or model calls.
+- Conformance/certification: JSON, Markdown, and Shields badge artifacts can be generated and validated.
+- SDKs: `sdk/js/` and `sdk/python/` cover discovery, rooms, agent-backed model calls, and room replay.
+- No-quota demos and smokes: many checks run without real model keys or private servers.
+- README, `agent-bus --help`, and `docs/try-agent-bus.md` promote `agent-bus demo zero-token` as the public first-run path.
+- `agent-bus demo zero-token` writes a share-safe Markdown report that users can attach to GitHub feedback issues.
+- `agent-bus demo issue` is the current no-secret flagship demo for issue -> planner -> coder -> reviewer -> patch/PR draft.
+- GitHub issue templates cover zero-token demo feedback, issue-to-PR demo feedback, adapter compatibility, first remote node feedback, and good first tasks.
+- GitHub release, beta tester guide, launch kit, social post drafts, and visual preview assets are available for public sharing.
 
-最近主线关键提交：
+Recent mainline milestones:
 
 ```text
+32ccf75 Add issue demo visual preview
+52600bb Add beta tester entrypoint and social preview
+3bc0ff9 Add public launch kit
+2064f73 Strengthen first-run issue demo path
+0c5eb19 Clarify room wake scope in console
 f8105de Write shareable zero-token demo reports
 53a70cf Surface first-run demo in help
 3617819 Improve public trial feedback path
-10179be Use goal shortcut in console quickstart (superseded by 3617819)
-c25ef2e Add CLI goal room shortcut (superseded by 3617819)
-c4710e3 Expose permission observations and Telegram goal shortcut (permission observations retained; goal shortcut superseded)
+c4710e3 Expose permission observations and Telegram goal shortcut
 aec60bb Reference private deployment handoff
 d2505ac Add project handoff document
 8184870 Add conformance artifact validation
@@ -55,30 +60,30 @@ bd50997 Add zero-token local demo
 43e6dc4 Persist Python edge completions
 ```
 
-当前公开 UX 决策：
+## Public UX Decisions
 
-- 顶层 `agent-bus goal` 和 Telegram `/goal` shortcut 已从公开入口撤回，避免在 room 操作和旗舰 demo 成熟前过早承诺“自动目标执行”体验。
-- 当前公开主入口应继续使用 `agent-bus demo zero-token`、`agent-bus room create --goal ...`、`agent-bus demo issue`、conformance runner、adapter compatibility report。
-- 对外叙事优先强调 Agent Bus 的核心：自托管 Central/Edge、agent discovery、agent-to-agent rooms、model router、可审计 report/export/replay。
+- The top-level `agent-bus goal` shortcut and Telegram `/goal` shortcut were removed from the public entry path. The goal experience should not overpromise autonomous execution before room operations, recovery, and the flagship demo are mature enough.
+- Public entry points should emphasize `agent-bus demo zero-token`, `agent-bus demo issue`, `agent-bus room create --goal ...`, the conformance runner, adapter compatibility reports, and no-quota smokes.
+- The public story should focus on the real core: self-hosted Central/Edge, agent discovery, agent-to-agent rooms, model router, auditable reports, event export, and replay.
+- The Web Console should default to English for public visitors. Chinese remains available through the language selector.
 
-## 当前公开运行快照
+## Public Runtime Snapshot
 
-这部分是给下一个对话直接接手用的公开版运行状态。真实 IP、SSH key 路径、Central admin token、edge token、模型 API key 不在这里记录；本机私有文件 `LOCAL_DEPLOYMENT.md` 里有完整连接方法。
+This section is a public-safe snapshot for the next maintainer or agent. Real IPs, SSH key paths, Central admin tokens, edge tokens, and model API keys are intentionally omitted. Private deployment details are stored locally in `LOCAL_DEPLOYMENT.md`, which must stay ignored.
 
-私有 Central 验证机：
+Private Central validation host summary:
 
 ```text
-nickname: 178 / private Central validation host
+nickname: private Central validation host
 repo: /root/agent-bus-public
 central service: agent-bus-central.service
-central env: /etc/agent-bus/central.env
-central config: /root/agent-bus/central.config.json
+central env: private env file, do not print
+central config: private Central config path, do not print
 local gateway on that host: http://127.0.0.1:8788
-last full verification commit: aec60bb Reference private deployment handoff
-last full verification command: node scripts/release-check.mjs --json -> ok: true
+latest full verification command: node scripts/release-check.mjs --json -> ok: true
 ```
 
-最后一次公开安全状态摘要：
+Last public-safe status summary:
 
 ```text
 Central health: ok
@@ -93,7 +98,7 @@ duplicate agent ids: 0
 readiness: ready
 ```
 
-当前在线节点和 agent：
+Currently expected online agents:
 
 ```text
 cn-120
@@ -119,22 +124,9 @@ hk-202
     last_run_status: completed
 ```
 
-已注册但当前 stale 的历史测试节点：
+Historical stale test nodes may still appear in status output. Do not schedule work to stale nodes unless a fresh status check says they are online.
 
-```text
-gateway-178
-hk-no-model-sandbox
-hk-sandbox-33877671
-hk-sandbox-34059901
-hk-sandbox-34263627
-hk-sandbox-34672383
-hk-sandbox-35239264
-scoped-edge-live-test
-```
-
-其中 `hk-no-model-sandbox` 曾注册过 `no-model-relay-hk`，当前只作为历史测试记录，不要当在线目标调度。
-
-当前 Central model router 摘要：
+Current Central model router summary:
 
 ```text
 modelRouter.enabled: true
@@ -152,30 +144,30 @@ agent-backed virtual models:
   agent:claudecode-hk
 ```
 
-Telegram plugin 当前公开状态：
+Telegram plugin public state:
 
 ```text
 plugins.telegramBot.enabled: false
 plugins.telegramBot.control: false
 ```
 
-最近值得参考的 rooms：
+Useful historical rooms:
 
 ```text
 room_9490391c-5c81-4f4a-bc83-c308d6619ba7
   status: paused
   agents: claudecode-hk, hermes-hk, openclaw-hk
   reports: 5
-  purpose: 之前多 agent 长讨论/推进项目的房间，可作为上下文参考，不一定要恢复。
+  purpose: prior multi-agent development discussion; useful as context, not necessarily a room to resume.
 
 room_b0d93f77-70d1-4319-bbe8-fdc330d927be
   status: completed
   agents: hermes-hk, openclaw-hk
   reports: 30
-  purpose: 较长的 Hermes/OpenClaw 项目讨论结果，可用 room event-log/reports 回看。
+  purpose: long Hermes/OpenClaw project discussion; review with room event-log/reports if needed.
 ```
 
-公开安全的远程接手命令模板：
+Public-safe remote handoff command template:
 
 ```bash
 cd /root/agent-bus-public
@@ -190,7 +182,7 @@ node agent-bus.mjs status \
   --room-detail-limit 10
 ```
 
-开一个新的多 agent 讨论 room 的模板：
+Multi-agent discussion room template:
 
 ```bash
 cd /root/agent-bus-public
@@ -200,27 +192,27 @@ node agent-bus.mjs room create \
   --gateway http://127.0.0.1:8788 \
   --token "$AGENT_BUS_TOKEN" \
   --title "agentbus-next-development" \
-  --goal "继续推进 Agent Bus。请 hermes-hk、openclaw-hk、claudecode-hk 分析下一步最重要的产品化、稳定性和开源生态工作，给出可执行建议。不要提交代码，只输出 REPORT 和 BLACKBOARD，最后 DONE。" \
+  --goal "Continue Agent Bus development. Hermes, OpenClaw, and Claude Code should analyze the most important next product, reliability, and open-source ecosystem work. Return concrete recommendations. Do not commit code; only write REPORT and BLACKBOARD, then DONE." \
   --agents hermes-hk,openclaw-hk,claudecode-hk \
   --wake-agents hermes-hk,openclaw-hk,claudecode-hk \
   --max-steps 6 \
   --no-auto-rotate
 ```
 
-如需让 120 上的 Codex 一起加入，把 agents 改为：
+To include the Codex agent as well, use:
 
 ```text
 codex-120,hermes-hk,openclaw-hk,claudecode-hk
 ```
 
-## 部署形态
+## Deployment Shape
 
-推荐部署是“两类组件”：
+Recommended deployment has two component types:
 
-1. Central：部署在公网 HTTPS 入口后面，作为中转站、控制面、房间状态存储和模型路由入口。
-2. Edge：部署在需要接收任务的机器上，使用 scoped edge token 主动连接 Central。
+1. Central: a public HTTPS-facing control plane, room state store, run queue, event log, pairing endpoint, and model router.
+2. Edge: a private machine that connects outward with a scoped edge token and runs local agents.
 
-典型拓扑：
+Typical topology:
 
 ```text
 public HTTPS gateway
@@ -231,22 +223,23 @@ private edge B -> outbound HTTPS poll -> Central
 private edge C -> outbound HTTPS poll -> Central
 ```
 
-Central 单实例当前不需要数据库。默认用 `AGENT_BUS_DATA_DIR` 下的 JSONL 和快照文件持久化；生产部署必须使用持久磁盘或 Docker volume。只有当需要多实例写入、大规模查询、托管多租户时，再考虑 SQLite/Postgres。
+Single Central currently does not need a database. It persists JSONL logs and snapshots under `AGENT_BUS_DATA_DIR`; production deployments must use persistent disk or a Docker volume. Consider SQLite/Postgres only when multi-instance writes, large trace queries, or hosted multi-tenant operation become necessary.
 
-## 快速上手路径
+## Quickstart Paths
 
-本地无 key 体验：
+No-key local trial:
 
 ```bash
 npm install -g agent-bus-cli
 agent-bus --help
 agent-bus smoke --offline
 agent-bus demo zero-token
+agent-bus demo issue --out-dir agent-bus-issue-demo
 agent-bus demo starter
 agent-bus demo agent-model
 ```
 
-源码贡献者路径：
+Source contributor path:
 
 ```bash
 git clone https://github.com/haveagoodday1205-png/agent-bus.git
@@ -255,7 +248,7 @@ npm install -g .
 npm run release:check
 ```
 
-如果本机没有完整 npm 环境，可以先跑不依赖 npm pack 的检查：
+If local npm is unavailable, run checks that do not require package verification:
 
 ```bash
 node scripts/verify-protocol-v1.mjs
@@ -265,7 +258,7 @@ node scripts/protocol-conformance.mjs --json --artifact-dir conformance-artifact
 node scripts/verify-conformance-result-schema.mjs --artifact-dir conformance-artifacts
 ```
 
-Central + Edge 推荐安装流：
+Central + Edge recommended setup flow:
 
 ```bash
 agent-bus setup central --gateway https://YOUR-DOMAIN/agent-bus --out central.config.json --service auto
@@ -274,32 +267,31 @@ agent-bus setup edge --gateway https://YOUR-DOMAIN/agent-bus --code ABCD-2345 --
 agent-bus status --gateway https://YOUR-DOMAIN/agent-bus --token ADMIN_TOKEN
 ```
 
-## 当前验证状态
+## Current Verification Status
 
-最近完整验证的代码提交 `aec60bb` 已完成：
-
-- 本地 `agent-bus protocol certify --json --artifact-dir <temp>` 通过。
-- 本地 `agent-bus protocol validate-result --artifact-dir <temp> --json` 通过。
-- 本地 `scripts/release-check.mjs --json` 跑到已知 Windows 缺 npm 的包验证步骤才停止；新增 conformance/artifact 校验步骤均已通过。
-- 私有 Linux 验证机已 `git pull --ff-only origin main` 并完整跑过：
+The latest public validation on the private Linux host completed:
 
 ```bash
+cd /root/agent-bus-public
+git pull --ff-only origin main
 node scripts/release-check.mjs --json
 ```
 
-结果：`ok: true`。
+Result: `ok: true`.
 
-## Conformance 交接
+Local Windows may not have npm in the bundled runtime, so full package verification should run on Linux, CI, or the remote validation host.
 
-Agent Bus v1 conformance 现在是项目对外生态的关键入口。它让第三方 adapter 作者可以证明自己兼容 Agent Bus，而不是只靠口头说明。
+## Conformance Handoff
 
-生成认证产物：
+Agent Bus v1 conformance is a key public ecosystem entry point. It lets adapter authors prove compatibility instead of relying on claims.
+
+Generate certification artifacts:
 
 ```bash
 agent-bus protocol certify
 ```
 
-会写出：
+This writes:
 
 ```text
 conformance-artifacts/agent-bus-conformance.json
@@ -307,13 +299,13 @@ conformance-artifacts/agent-bus-conformance.md
 conformance-artifacts/agent-bus-conformance-badge.json
 ```
 
-验证认证产物：
+Validate certification artifacts:
 
 ```bash
 agent-bus protocol validate-result --artifact-dir conformance-artifacts
 ```
 
-外部 adapter 可这样跑：
+External adapters can run:
 
 ```bash
 agent-bus protocol conformance \
@@ -325,7 +317,7 @@ agent-bus protocol conformance \
 agent-bus protocol validate-result --artifact-dir conformance-artifacts
 ```
 
-相关文件：
+Related files:
 
 - `scripts/protocol-conformance.mjs`
 - `scripts/verify-conformance-result-schema.mjs`
@@ -335,27 +327,27 @@ agent-bus protocol validate-result --artifact-dir conformance-artifacts
 - `docs/adapter-conformance-ci.md`
 - `.github/workflows/conformance.yml`
 
-## 主要模块地图
+## Main Module Map
 
-核心 CLI：
+Core CLI:
 
-- `agent-bus.mjs`：用户入口，封装 setup、doctor、room、trace、plugin、protocol、demo、service 等命令。
+- `agent-bus.mjs`: user entry point for setup, doctor, room, trace, plugin, protocol, demo, and service commands.
 
-Central：
+Central:
 
-- `central_gateway.py`：当前功能最完整的 Central，覆盖 rooms、pairing、traces、Telegram、agent-backed models、memory cache。
-- `central-gateway.mjs`：轻量 Node Central。
+- `central_gateway.py`: most complete Central implementation; covers rooms, pairing, traces, Telegram, agent-backed models, and memory cache.
+- `central-gateway.mjs`: lightweight Node Central.
 
-Edge：
+Edge:
 
-- `edge-node.mjs`：Node Edge。
-- `edge_node.py`：Python Edge。
+- `edge-node.mjs`: Node Edge.
+- `edge_node.py`: Python Edge.
 - `scripts/codex-agent-bus.sh`
 - `scripts/hermes-agent-bus.sh`
 - `scripts/openclaw-agent-bus.sh`
 - `scripts/claudecode-agent-bus.sh`
 
-SDK 和 examples：
+SDK and examples:
 
 - `sdk/js/agent-bus-sdk.mjs`
 - `sdk/python/agent_bus_sdk.py`
@@ -364,21 +356,21 @@ SDK 和 examples：
 - `examples/python-agent-model/`
 - `examples/no-quota-room-replay/`
 
-Web/console：
+Web Console:
 
 - `console/index.html`
 - `console/app.js`
 - `console/styles.css`
 - `docs/console.md`
 
-Telegram：
+Telegram:
 
 - `scripts/telegram-poller.mjs`
 - `scripts/telegram-commands.mjs`
 - `scripts/telegram-plugin-smoke.mjs`
 - `agent-bus plugin telegram ...`
 
-Release / CI：
+Release / CI:
 
 - `scripts/release-check.mjs`
 - `scripts/verify-package.mjs`
@@ -387,65 +379,66 @@ Release / CI：
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
 
-## 给后续 agent 的工作协议
+## Working Protocol For Future Agents
 
-如果交给 Hermes、OpenClaw、Claude Code、Codex 或其他 agent 继续开发，优先遵守这些规则：
+If Hermes, OpenClaw, Claude Code, Codex, or another agent continues this project, follow these rules:
 
-- 不要提交任何真实 token、SSH key、服务器 IP 白名单、私有配置。
-- 优先做 no-quota、offline、可 CI 验证的改动。
-- 每次改动后至少跑对应 smoke；大改动后跑 `node scripts/release-check.mjs --json`。
-- 对 public docs 只写可复用方法；私有服务器操作写在本地私有笔记。
-- 不要把 room 聊天当权限边界；危险操作要在 Edge runtime/sandbox 层控制。
-- 对 adapter 改动优先更新 conformance 或 bridge smoke。
-- 对 Telegram 改动必须更新 `telegram-plugin-smoke`，尤其是 inline buttons、callback query、process/thread、room draft。
-- 对 room/retry/reconnect 改动必须跑 room supervisor、stale room、edge poll disconnect、completion outbox 相关 smoke。
+- Never commit real tokens, SSH keys, server allowlists, private deployment files, or model API keys.
+- Prefer no-quota, offline, CI-verifiable changes.
+- After each change, run the matching smoke. After larger changes, run `node scripts/release-check.mjs --json`.
+- Public docs should contain reusable methods only; private deployment steps belong in local private notes.
+- Do not treat room chat as a permission boundary; dangerous operations must be controlled in the Edge runtime or sandbox.
+- Adapter changes should update conformance or bridge smokes first.
+- Telegram changes must update `telegram-plugin-smoke`, especially inline buttons, callback query behavior, process/thread switching, and room drafts.
+- Room/retry/reconnect changes must run room supervisor, stale room, edge poll disconnect, and completion outbox smokes.
 
-## 已知约束
+## Known Constraints
 
-- Agent Bus 不是模型提供商，也不会打包 Codex/Hermes/OpenClaw/Claude Code 的模型能力。CLI 只负责连接、路由、调度和适配；用户仍需在 Edge 上安装对应 agent runtime 或配置模型网关。
-- URL ping 只证明端点可达，不证明模型 key、quota 或真实 completion 正常。真实调度出错时由 run/model response 返回错误。
-- Edge token 默认权限较窄。若要让 Edge 调用 `agent:<id>` 虚拟模型，Central 必须显式开启 `modelRouter.allowEdgeAgentModels`。
-- 单 Central 目前用 JSONL/snapshot 持久化；适合自托管和轻量部署，不适合直接做大规模多租户 SaaS。
-- Windows 本地运行可能缺 npm；包验证可在 Linux/CI/远程验证机跑。
+- Agent Bus is not a model provider and does not package Codex, Hermes, OpenClaw, Claude Code, or other agent runtimes. It connects, routes, schedules, and adapts tools that users install on Edge machines.
+- URL ping checks only prove endpoint reachability. They do not prove provider key validity, quota, or real completion success.
+- Edge tokens are intentionally narrow by default. Central must explicitly enable `modelRouter.allowEdgeAgentModels` before scoped edge tokens may call `agent:<id>` virtual models.
+- Single Central currently uses JSONL/snapshot persistence. This is appropriate for self-hosted and lightweight deployments, not a hosted large-scale multi-tenant service.
+- Windows local verification may lack npm; package verification should run on Linux, CI, or the remote validation host.
 
-## 下一步优先级
+## Next Priorities
 
-建议按这个顺序推进，避免功能越来越多但入口不够清晰：
+Recommended order:
 
-1. Setup/status polish：继续打磨 `setup central`、`setup edge`、`status` 的成功提示、失败解释、doctor 指引和可复制命令。
-2. Web console 优化：把当前 Central 状态、agent health、room timeline、trace、recovery hints 做成更可读的操作台。
-3. Telegram room/process UX：继续改善 `/room new`、agent 多选、process/thread 切换、room wake/pause/retry 的按钮体验。
-4. Permission profiles：继续推进 `permission_profile`、`allowed_wake_targets`、`allowed_rooms`、owner/runtime/cost/latency 等观察字段，先做提示和警告，再做硬拦截。
-5. Flagship demo：把 `agent-bus demo issue` 推到“三个不同 agent 通过 room 完成一个 PR draft/patch/review”的公开演示，但不要急着承诺真实 GitHub PR 创建。
-6. Adapter ecosystem：鼓励第三方 adapter 项目复制 `docs/adapter-conformance-ci.md`，发布 Agent Bus compatible badge，并把 compatibility issue 模板用起来。
-7. Durable event storage：从 snapshot-derived event bundle 继续推进到真正 append-only event source，并为未来数据库迁移留接口。
-8. Installer/packaging：继续优化 portable bundle、Windows/macOS/Linux service templates，降低非开发者部署门槛。
+1. Setup/status polish: improve `setup central`, `setup edge`, `status`, success messages, failure explanations, doctor hints, and copyable commands.
+2. Web Console polish: make Central status, agent health, room chat, room timeline, traces, and recovery hints easier to scan.
+3. Telegram room/process UX: improve `/room new`, multi-agent selection, process/thread switching, room wake/pause/retry buttons, and room draft flow.
+4. Permission profiles: continue adding observation fields such as `permission_profile`, `allowed_wake_targets`, `allowed_rooms`, owner, runtime, cost, and latency before enforcing hard blocks.
+5. Flagship demo: keep strengthening `agent-bus demo issue` as the public issue -> planner -> coder -> reviewer -> patch/PR draft proof, without rushing into real GitHub PR creation.
+6. Adapter ecosystem: encourage adapter projects to reuse `docs/adapter-conformance-ci.md`, publish Agent Bus compatible badges, and use compatibility issue templates.
+7. Durable event storage: evolve from snapshot-derived event bundles toward true append-only event sourcing, while keeping a future database migration path open.
+8. Installer/packaging: improve portable bundles and Windows/macOS/Linux service templates.
 
-## 开源协作建议
+## Open-Source Growth Suggestions
 
-让别人看到并参与项目，优先做这些：
+To help people notice and contribute:
 
-- README 第一屏继续强调“Agent Bus connects agents to agents”。
-- 保持 no-quota demos 绿，并继续让 zero-token report 更适合作为公开反馈附件。
-- 把 `docs/good-first-issues.md` 中的任务拆成 GitHub Issues。
-- 在 release notes 里突出 conformance badge、Telegram operator bot、edge-to-edge model replacement。
-- 给 adapter 作者一个明确入口：`examples/hello-agent/` + `docs/adapter-conformance-ci.md`。
-- 对每个新功能配一个 smoke script，让贡献者不需要私有服务器也能证明没破坏主线。
+- Keep the README first viewport focused on "Agent Bus connects agents to agents".
+- Keep no-quota demos green.
+- Keep the zero-token and issue-to-PR reports easy to attach to public feedback issues.
+- Split tasks from `docs/good-first-issues.md` into GitHub issues.
+- Highlight conformance badges, the Telegram operator bot, and edge-to-edge model replacement in release notes.
+- Give adapter authors a clear entry point: `examples/hello-agent/` plus `docs/adapter-conformance-ci.md`.
+- Pair every new feature with a smoke script so contributors can prove they did not break the main path without private servers.
 
-## 私有运维交接提醒
+## Private Operations Reminder
 
-这些内容不要写进公开仓库，但私有交接必须保存：
+Do not move these details into the public repository:
 
-- 本机已另建 `LOCAL_DEPLOYMENT.md` 记录当前测试连接机器、SSH 命令、Central 路径、在线节点和接手命令；该文件在 `.gitignore` 中，不能强制提交。
-- Central 公网域名、反代路径、systemd service 名称、env 文件位置。
-- Edge 节点清单、各自 agent id、runtime、工作目录、service 名称。
-- SSH 连接方法和 key 管理方式。
-- Central admin token、scoped edge token、Telegram bot token、模型 API key 的 secret store 位置。
-- 发布 npm/GitHub Release 的账号、2FA、token 轮换流程。
-- 如果 token 曾经出现在聊天、日志或截图里，应视为已泄漏并轮换。
+- Public domain, reverse-proxy path, systemd service names, env file paths, and private config paths.
+- Edge node inventory, agent IDs, runtime working directories, and service names if they reveal private infrastructure.
+- SSH connection methods and key management details.
+- Central admin token, scoped edge tokens, Telegram bot token, model API keys, npm tokens, and GitHub release credentials.
+- Account 2FA and token rotation procedures.
 
-## 当前结论
+If any token appears in chat, logs, screenshots, or public issue comments, treat it as leaked and rotate it.
 
-Agent Bus 已经不只是一个网关脚本，而是一个有 CLI、Central/Edge、rooms、agent-backed model calls、Telegram operator bot、SDK、conformance certification、release gates 的开源工具雏形。
+## Current Conclusion
 
-下一阶段最重要的不是继续堆更多 agent 名字，而是把“任何 AI 工具都能接入、证明兼容、被远程调用、在房间里协作、留下可审计结果”这条路径做得顺滑。这样它才可能从个人项目变成真正的 AI-to-AI 开源协议生态。
+Agent Bus is no longer just a gateway script. It now has a CLI, Central/Edge runtime, rooms, agent-backed model calls, Telegram operator bot, SDKs, conformance certification, release gates, public demos, and a beta tester loop.
+
+The next phase should not be about adding more agent names. It should make the path smooth for any AI tool to connect, prove compatibility, be called remotely, collaborate in rooms, and leave auditable results. That is how Agent Bus can grow from a personal project into a practical AI-to-AI open-source protocol surface.

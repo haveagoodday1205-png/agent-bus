@@ -29,6 +29,8 @@ npx agent-bus-cli@latest demo issue --out-dir agent-bus-issue-demo
 
 Open `agent-bus-issue-demo/README.md` for the share-safe index, generated patch draft, PR draft, event replay, and the explicit "what this proves / does not prove" boundary.
 
+![Successful issue-to-PR demo output](docs/assets/issue-to-pr-demo-terminal.svg)
+
 From a checkout, run the same path with:
 
 ```bash
@@ -43,7 +45,7 @@ Then open a feedback issue:
 - [Adapter compatibility report](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=adapter_compatibility.yml)
 - [First remote node feedback](https://github.com/haveagoodday1205-png/agent-bus/issues/new?template=remote_node_feedback.yml)
 
-See [Try Agent Bus](docs/try-agent-bus.md) for the 2-minute, 5-minute, 10-minute, and adapter-author paths. See [Beta Testers](docs/beta-testers.md) if you can run the demo and report first-run feedback. See [Launch Kit](docs/launch.md) for the public pitch, demo boundary, and feedback links.
+See [Try Agent Bus](docs/try-agent-bus.md) for the 2-minute, 5-minute, 10-minute, and adapter-author paths. See [Beta Testers](docs/beta-testers.md) if you can run the demo and report first-run feedback. Maintainers can use the [Launch Kit](docs/launch.md), [Social Posts](docs/social-posts.md), and [Good First Issues](docs/good-first-issues.md) to share the project without exposing private infrastructure.
 
 There are three entrypoint families:
 

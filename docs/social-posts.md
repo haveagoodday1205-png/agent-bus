@@ -81,6 +81,23 @@ npx agent-bus-cli@latest demo issue --out-dir agent-bus-issue-demo
 https://github.com/haveagoodday1205-png/agent-bus
 ```
 
+Attach either `docs/assets/agent-bus-social-card.svg` or `docs/assets/issue-to-pr-demo-terminal.svg` when the platform supports image uploads.
+
+## GitHub Discussion Follow-Up
+
+```text
+I am looking for a few first-run testers for Agent Bus v0.5.5.
+
+The useful feedback right now is not "is this finished?" but "does this first run make sense?"
+
+npx agent-bus-cli@latest demo issue --out-dir agent-bus-issue-demo
+
+The run should finish with planner/coder/reviewer REPORT lines and write README, issue, room report, event replay, patch draft, PR draft, and manifest artifacts.
+
+If anything is confusing, please comment here or open the feedback issue:
+https://github.com/haveagoodday1205-png/agent-bus/issues/44
+```
+
 ## Product Hunt
 
 Tagline:

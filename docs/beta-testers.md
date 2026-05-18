@@ -16,6 +16,10 @@ Open `agent-bus-issue-demo/README.md` and check whether the flow makes sense:
 issue -> planner -> coder -> reviewer -> patch / PR draft
 ```
 
+Expected shape of a successful run:
+
+![Agent Bus issue-to-PR demo terminal preview](assets/issue-to-pr-demo-terminal.svg)
+
 ## What To Report
 
 Please open feedback if any of these are true:

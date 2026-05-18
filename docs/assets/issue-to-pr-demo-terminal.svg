@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Bus issue-to-PR demo terminal output</title>
+  <desc id="desc">A terminal-style preview of the Agent Bus no-secret issue-to-PR demo completing with planner, coder, reviewer reports, patch draft, PR draft, and manifest artifacts.</desc>
+  <rect width="1200" height="720" fill="#f8fafc"/>
+  <rect x="56" y="48" width="1088" height="624" rx="22" fill="#0b1220" stroke="#d8e2ea" stroke-width="2"/>
+  <rect x="56" y="48" width="1088" height="54" rx="22" fill="#111827"/>
+  <circle cx="92" cy="75" r="8" fill="#ef4444"/>
+  <circle cx="120" cy="75" r="8" fill="#f59e0b"/>
+  <circle cx="148" cy="75" r="8" fill="#22c55e"/>
+  <text x="590" y="82" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#cbd5e1">agent-bus demo issue</text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="24">
+    <text x="88" y="146" fill="#5eead4">$ npx agent-bus-cli@latest demo issue --out-dir agent-bus-issue-demo</text>
+    <text x="88" y="196" fill="#e5e7eb">Agent Bus issue-to-PR flagship demo</text>
+    <text x="88" y="236" fill="#94a3b8">No API keys. No GitHub writes. No model quota.</text>
+
+    <text x="88" y="294" fill="#e5e7eb">1. Starting a private local gateway</text>
+    <text x="128" y="334" fill="#94a3b8">central-gateway.py listening on 127.0.0.1</text>
+    <text x="88" y="382" fill="#e5e7eb">2. Starting a local edge with demo agents</text>
+    <text x="128" y="422" fill="#94a3b8">planner / coder / reviewer connected</text>
+    <text x="88" y="470" fill="#e5e7eb">3. Creating an issue room and waking the planner</text>
+
+    <text x="88" y="528" fill="#bbf7d0">REPORT planner: triaged issue and delegated implementation</text>
+    <text x="88" y="568" fill="#bbf7d0">REPORT coder: prepared a PR-ready patch artifact</text>
+    <text x="88" y="608" fill="#bbf7d0">REPORT reviewer: accepted issue.md, replay, patch, PR draft</text>
+  </g>
+
+  <g transform="translate(742 228)">
+    <rect x="0" y="0" width="326" height="260" rx="16" fill="#f8fafc" opacity="0.98"/>
+    <text x="28" y="48" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="22" font-weight="800" fill="#0f172a">Artifacts written</text>
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#334155">
+      <text x="28" y="92">README.md</text>
+      <text x="28" y="126">issue.md</text>
+      <text x="28" y="160">room-report.md</text>
+      <text x="28" y="194">room-events.json</text>
+      <text x="28" y="228">patch.diff + pr-draft.md</text>
+    </g>
+  </g>
+
+  <g transform="translate(88 652)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="18" font-weight="700">
+    <text x="0" y="0" fill="#2dd4bf">issue</text>
+    <text x="60" y="0" fill="#64748b">-&gt;</text>
+    <text x="96" y="0" fill="#2dd4bf">planner</text>
+    <text x="186" y="0" fill="#64748b">-&gt;</text>
+    <text x="222" y="0" fill="#2dd4bf">coder</text>
+    <text x="292" y="0" fill="#64748b">-&gt;</text>
+    <text x="328" y="0" fill="#2dd4bf">reviewer</text>
+    <text x="424" y="0" fill="#64748b">-&gt;</text>
+    <text x="460" y="0" fill="#2dd4bf">patch / PR draft</text>
+  </g>
+</svg>

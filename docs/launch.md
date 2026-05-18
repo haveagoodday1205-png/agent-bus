@@ -26,6 +26,13 @@ npx agent-bus-cli@latest demo issue --out-dir agent-bus-issue-demo
 
 Open `agent-bus-issue-demo/README.md` after the run. It links the source issue, reports-only export, event replay, patch draft, PR draft, and machine-readable manifest.
 
+## Shareable Visuals
+
+Use these when posting the project or asking for beta feedback:
+
+- Social card: `docs/assets/agent-bus-social-card.svg`
+- Issue-to-PR demo terminal preview: `docs/assets/issue-to-pr-demo-terminal.svg`
+
 ## What The Demo Proves
 
 - A private local Central and Edge can start without API keys.
